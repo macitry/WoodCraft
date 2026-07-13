@@ -1,0 +1,39 @@
+@import "tailwindcss";
+
+@theme {
+  --color-wood-50: #faf6f1;
+  --color-wood-100: #f0e6d8;
+  --color-wood-200: #e0ccb3;
+  --color-wood-300: #d0b08e;
+  --color-wood-400: #c0986e;
+  --color-wood-500: #b08050;
+  --color-wood-600: #8c6438;
+  --color-wood-700: #6b4c2a;
+  --color-wood-800: #4a3420;
+  --color-wood-900: #2d1f12;
+  --color-wood-950: #1a1109;
+
+  --color-surface: #1a1a2e;
+  --color-surface-light: #252540;
+  --color-surface-lighter: #303050;
+  --color-accent: #d4a574;
+  --color-accent-dim: #a07848;
+}
+
+* {
+  scrollbar-width: thin;
+  scrollbar-color: #303050 transparent;
+}
+
+body {
+  margin: 0;
+  overflow: hidden;
+  font-family: 'Inter', 'SF Pro Display', -apple-system, BlinkMacSystemFont, sans-serif;
+  background-color: #0d0d1a;
+  color: #e0e0e0;
+}
+
+#root {
+  width: 100vw;
+  height: 100vh;
+}
