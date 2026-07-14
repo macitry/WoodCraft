@@ -1,6 +1,7 @@
 import { Canvas } from '@react-three/fiber';
 import Scene from './Scene';
 import { useModelStore } from '../store/modelStore';
+import ProgressBar from '../components/ProgressBar';
 import type { ViewPreset } from '../types/furniture';
 import type { OrbitControls as OrbitControlsImpl } from 'three-stdlib';
 
@@ -70,13 +71,21 @@ const EmptyState: React.FC = () => {
   );
 };
 
-/** Shown while model is generating. */
+/** Shown while model is generating. Shows progress bar from server. */
 const LoadingOverlay: React.FC = () => {
+  const progress = useModelStore((s) => s.progress);
+
   return (
     <div className="absolute inset-0 flex items-center justify-center pointer-events-none z-10">
       <div className="text-center">
-        <div className="w-12 h-12 border-2 border-wood-400 border-t-transparent rounded-full animate-spin mx-auto mb-4" />
-        <p className="text-neutral-400">Generating model...</p>
+        {progress ? (
+          <ProgressBar progress={progress} />
+        ) : (
+          <>
+            <div className="w-12 h-12 border-2 border-wood-400 border-t-transparent rounded-full animate-spin mx-auto mb-4" />
+            <p className="text-neutral-400">Generating model...</p>
+          </>
+        )}
       </div>
     </div>
   );

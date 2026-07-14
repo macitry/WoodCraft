@@ -10,6 +10,9 @@ const ParameterPanel: React.FC = () => {
   const model = useModelStore((s) => s.model);
   const isLoading = useModelStore((s) => s.isLoading);
   const updateParameter = useModelStore((s) => s.updateParameter);
+  const updateLayoutParam = useModelStore((s) => s.updateLayoutParam);
+  const insetX = useModelStore((s) => s.currentParams.insetRatioX);
+  const insetZ = useModelStore((s) => s.currentParams.insetRatioZ);
 
   if (!model) {
     return (
@@ -109,6 +112,46 @@ const ParameterPanel: React.FC = () => {
               </button>
             ))}
           </div>
+        </div>
+
+        {/* Inset ratio sliders — frontend-only, no API call */}
+        <div className="pt-2 border-t border-neutral-800 space-y-4">
+          <p className="text-xs uppercase tracking-wider text-neutral-500 font-medium">
+            Frame Inset
+          </p>
+          {[
+            { id: 'insetRatioX', label: '宽边内缩', value: insetX },
+            { id: 'insetRatioZ', label: '深边内缩', value: insetZ },
+          ].map((s) => (
+            <div key={s.id} className="space-y-2">
+              <div className="flex items-center justify-between">
+                <label className="text-sm text-neutral-300">{s.label}</label>
+                <span className="text-sm font-mono text-white tabular-nums">
+                  {(s.value * 100).toFixed(0)}%
+                </span>
+              </div>
+              <input
+                type="range"
+                min={0}
+                max={0.5}
+                step={0.01}
+                value={s.value}
+                onChange={(e) => updateLayoutParam(s.id, Number(e.target.value))}
+                className="w-full h-2 bg-neutral-800 rounded-lg appearance-none cursor-pointer
+                  accent-wood-500
+                  [&::-webkit-slider-thumb]:appearance-none
+                  [&::-webkit-slider-thumb]:w-4
+                  [&::-webkit-slider-thumb]:h-4
+                  [&::-webkit-slider-thumb]:rounded-full
+                  [&::-webkit-slider-thumb]:bg-wood-400
+                  [&::-webkit-slider-thumb]:shadow-md"
+              />
+              <div className="flex justify-between text-[10px] text-neutral-600">
+                <span>0%</span>
+                <span>50%</span>
+              </div>
+            </div>
+          ))}
         </div>
 
         {/* Board material */}

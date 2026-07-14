@@ -5,7 +5,9 @@ import type {
   Component,
   GenerateModelResponse,
 } from '../types/furniture';
-import { generateModel, fetchDefaultModel } from '../api/modelApi';
+import { TEMPLATE_BACKEND_ID } from '../types/furniture';
+import { generateModel, fetchDefaultModel, fetchProgress } from '../api/modelApi';
+import type { ServerProgress } from '../api/modelApi';
 import { mockModel, delay } from '../mock/exampleModel';
 
 // ============================================================
@@ -79,6 +81,8 @@ interface ModelState {
   isLoading: boolean;
   error: string | null;
   selectedComponentId: string | null;
+  /** Server warmup/generation progress for progress bar. */
+  progress: ServerProgress | null;
 
   // Current generation params (for regeneration on param change)
   currentParams: {
@@ -89,12 +93,18 @@ interface ModelState {
     tabletopThickness: number;
     profile: string;
     boardMaterial: string;
+    /** Frontend-only: width inset ratio (0–0.5). */
+    insetRatioX: number;
+    /** Frontend-only: depth inset ratio (0–0.5). */
+    insetRatioZ: number;
   };
 
   // Actions
   loadMockModel: () => Promise<void>;
   loadModelFromApi: () => Promise<void>;
   updateParameter: (parameterId: string, value: number) => Promise<void>;
+  /** Update a frontend-only layout param (no API call). */
+  updateLayoutParam: (key: string, value: number) => void;
   selectComponent: (componentId: string | null) => void;
   setComponentVisibility: (componentId: string, visible: boolean) => void;
   setLoading: (loading: boolean) => void;
@@ -106,6 +116,7 @@ export const useModelStore = create<ModelState>((set, get) => ({
   isLoading: false,
   error: null,
   selectedComponentId: null,
+  progress: null,
   currentParams: {
     templateId: 'basic-desk',
     width: 1200,
@@ -114,6 +125,8 @@ export const useModelStore = create<ModelState>((set, get) => ({
     tabletopThickness: 18,
     profile: '3030',
     boardMaterial: 'plywood',
+    insetRatioX: 0,
+    insetRatioZ: 0,
   },
 
   loadMockModel: async () => {
@@ -127,13 +140,22 @@ export const useModelStore = create<ModelState>((set, get) => ({
   },
 
   loadModelFromApi: async () => {
-    set({ isLoading: true, error: null });
+    set({ isLoading: true, error: null, progress: null });
+
+    // Start polling server progress
+    const progressTimer = setInterval(async () => {
+      try {
+        const p = await fetchProgress();
+        useModelStore.setState({ progress: p });
+      } catch { /* ignore */ }
+    }, 500);
 
     console.log('[WoodCraft] Fetching default model...');
 
     try {
       const response: GenerateModelResponse = await fetchDefaultModel();
 
+      clearInterval(progressTimer);
       console.log('[WoodCraft] Status:', response.status,
         'STLs:', response.parts.filter((p) => p.stl_url).length);
 
@@ -146,9 +168,8 @@ export const useModelStore = create<ModelState>((set, get) => ({
         components,
       };
 
-      set({ model, isLoading: false, error: null });
+      set({ model, isLoading: false, error: null, progress: null });
 
-      // If still warming, poll until STL files are ready
       if (response.status === 'warming') {
         console.log('[WoodCraft] Warmup in progress — polling for STL...');
         pollForStl();
@@ -156,62 +177,66 @@ export const useModelStore = create<ModelState>((set, get) => ({
         console.warn('[WoodCraft]', response.message);
       }
     } catch (err) {
+      clearInterval(progressTimer);
       console.error('[WoodCraft] API failed:', err);
       try {
         await delay(300);
-        set({ model: { ...mockModel }, isLoading: false });
+        set({ model: { ...mockModel }, isLoading: false, progress: null });
       } catch {
-        set({ error: 'Failed to load model', isLoading: false });
+        set({ error: 'Failed to load model', isLoading: false, progress: null });
       }
     }
   },
 
   updateParameter: async (parameterId: string, value: number) => {
-    const { model, currentParams } = get();
+    const { model } = get();
     if (!model) return;
 
-    // Optimistic local update
-    const updatedParams: Parameter[] = model.parameters.map((p) =>
+    // 1. Instant: update model parameters + currentParams → layout re-positions instantly
+    const updatedModelParams: Parameter[] = model.parameters.map((p) =>
       p.id === parameterId ? { ...p, value } : p,
     );
-    set({ model: { ...model, parameters: updatedParams }, isLoading: true });
-
-    // Build new params object
-    const newParams = { ...currentParams };
+    const newParams = { ...get().currentParams };
     if (parameterId in newParams) {
       (newParams as Record<string, number>)[parameterId] = value;
     }
-    set({ currentParams: newParams });
+    set({
+      model: { ...model, parameters: updatedModelParams },
+      currentParams: newParams,
+    });
 
-    try {
-      const response: GenerateModelResponse = await generateModel({
-        templateId: newParams.templateId,
+    // 2. Debounced background regeneration (only fires after 2s of inactivity)
+    const backendId = TEMPLATE_BACKEND_ID[newParams.templateId] || 'basic-desk';
+    const key = 'regen_timer';
+    if ((window as Record<string, unknown>)[key]) {
+      clearTimeout((window as Record<string, number>)[key]);
+    }
+    (window as Record<string, unknown>)[key] = setTimeout(() => {
+      generateModel({
+        templateId: backendId,
         width: newParams.width,
         depth: newParams.depth,
         height: newParams.height,
         tabletopThickness: newParams.tabletopThickness,
         profile: newParams.profile,
         boardMaterial: newParams.boardMaterial,
-        stlQuality: 'trimesh',
-      });
-
-      const updatedModel: FurnitureModel = {
-        ...model,
-        id: response.model_id,
-        parameters: dimensionsToParameters(response.dimensions),
-        components: apiPartsToComponents(response),
-      };
-
-      set({ model: updatedModel, isLoading: false, error: null });
-
-      if (response.status !== 'full' && response.message) {
-        console.warn(`Backend: ${response.message}`);
-      }
-    } catch (err) {
-      console.error('API call failed on parameter update:', err);
-      // Keep the optimistic update but mark as not loading
-      set({ isLoading: false });
-    }
+        stlQuality: 'web',
+      })
+        .then((response) => {
+          if (response.status === 'full') {
+            const updatedModel: FurnitureModel = {
+              ...get().model!,
+              id: response.model_id,
+              parameters: dimensionsToParameters(response.dimensions),
+              components: apiPartsToComponents(response),
+            };
+            set({ model: updatedModel });
+          }
+        })
+        .catch((err) => {
+          console.error('[WoodCraft] Background regeneration failed:', err);
+        });
+    }, 2000);
   },
 
   selectComponent: (componentId: string | null) => {
@@ -230,6 +255,12 @@ export const useModelStore = create<ModelState>((set, get) => ({
 
   setLoading: (loading: boolean) => set({ isLoading: loading }),
   setError: (error: string | null) => set({ error }),
+
+  updateLayoutParam: (key: string, value: number) => {
+    set((s) => ({
+      currentParams: { ...s.currentParams, [key]: value },
+    }));
+  },
 }));
 
 // ============================================================

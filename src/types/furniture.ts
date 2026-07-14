@@ -183,3 +183,26 @@ export interface Motion {
   axis?: [number, number, number];
   range?: [number, number];
 }
+
+/** Frontend layout configuration per template. */
+export interface TemplateLayoutConfig {
+  /** Inset ratio from tabletop width edge (0 = edge, 0.10 = 10% in). */
+  insetRatioX: number;
+  /** Inset ratio from tabletop depth edge (0 = edge, 0.05 = 5% in). */
+  insetRatioZ: number;
+  /** Profile size in mm (matches the profile parameter). */
+  profileSize: number;
+}
+
+/** Map of template ID → layout config. */
+export const TEMPLATE_LAYOUTS: Record<string, TemplateLayoutConfig> = {
+  'basic-desk': { insetRatioX: 0, insetRatioZ: 0, profileSize: 30 },
+  'inset-desk': { insetRatioX: 0.05, insetRatioZ: 0.10, profileSize: 30 },
+};
+
+/** Frontend template ID → backend template ID (some share the same YAML). */
+export const TEMPLATE_BACKEND_ID: Record<string, string> = {
+  'basic-desk': 'basic-desk',
+  'inset-desk': 'basic-desk',  // same YAML, different layout
+  'standing-desk': 'standing-desk',
+};

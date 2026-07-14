@@ -119,6 +119,29 @@ export const mockTemplates: FurnitureTemplate[] = [
       { name: 'tabletop', partType: 'tabletop', profile: null, board: 'oak', material: 'wood' },
     ],
   },
+  {
+    id: 'inset-desk',
+    name: 'Inset Desk',
+    type: 'desk',
+    description: 'Elegant desk with legs and frame inset 15% from tabletop edges.',
+    parameters: [
+      { id: 'width', name: '桌面宽度', defaultValue: 1200, unit: 'mm', min: 600, max: 3000, step: 10 },
+      { id: 'depth', name: '桌面深度', defaultValue: 600, unit: 'mm', min: 400, max: 1200, step: 10 },
+      { id: 'height', name: '桌面高度', defaultValue: 750, unit: 'mm', min: 500, max: 1300, step: 10 },
+      { id: 'tabletop_thickness', name: '桌板厚度', defaultValue: 18, unit: 'mm', min: 12, max: 40, step: 1 },
+    ],
+    parts: [
+      { name: 'leg_front_left', partType: 'leg', profile: '3030', board: null, material: 'aluminum' },
+      { name: 'leg_front_right', partType: 'leg', profile: '3030', board: null, material: 'aluminum' },
+      { name: 'leg_back_left', partType: 'leg', profile: '3030', board: null, material: 'aluminum' },
+      { name: 'leg_back_right', partType: 'leg', profile: '3030', board: null, material: 'aluminum' },
+      { name: 'beam_front', partType: 'beam', profile: '3030', board: null, material: 'aluminum' },
+      { name: 'beam_back', partType: 'beam', profile: '3030', board: null, material: 'aluminum' },
+      { name: 'beam_left', partType: 'beam', profile: '3030', board: null, material: 'aluminum' },
+      { name: 'beam_right', partType: 'beam', profile: '3030', board: null, material: 'aluminum' },
+      { name: 'tabletop', partType: 'tabletop', profile: null, board: 'plywood', material: 'wood' },
+    ],
+  },
 ];
 
 // ============================================================

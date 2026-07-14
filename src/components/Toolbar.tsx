@@ -38,7 +38,21 @@ const Toolbar: React.FC<ToolbarProps> = ({
   const handleTemplateSelect = useCallback(
     (templateId: string) => {
       setTemplateMenuOpen(false);
-      if (templateId === 'basic-desk') {
+      const prevTemplate = useModelStore.getState().currentParams.templateId;
+      const defaults: Record<string, { insetRatioX: number; insetRatioZ: number }> = {
+        'basic-desk': { insetRatioX: 0, insetRatioZ: 0 },
+        'inset-desk': { insetRatioX: 0.05, insetRatioZ: 0.10 },
+        'standing-desk': { insetRatioX: 0, insetRatioZ: 0 },
+      };
+      const d = defaults[templateId] || { insetRatioX: 0, insetRatioZ: 0 };
+      useModelStore.setState((s) => ({
+        currentParams: { ...s.currentParams, templateId, ...d },
+      }));
+
+      // Only call backend if switching to a different backend template.
+      // basic-desk and inset-desk share the same STL (just different layout).
+      const needsRegen = templateId === 'standing-desk' || prevTemplate === 'standing-desk';
+      if (needsRegen || !useModelStore.getState().model) {
         loadModelFromApi();
       }
     },
@@ -53,7 +67,7 @@ const Toolbar: React.FC<ToolbarProps> = ({
   ];
 
   return (
-    <div className="h-12 px-4 flex items-center gap-3 border-b border-neutral-800 bg-neutral-950/90 backdrop-blur-sm flex-shrink-0">
+    <div className="h-12 px-4 flex items-center gap-3 border-b border-neutral-800 bg-neutral-950/90 backdrop-blur-sm flex-shrink-0 relative z-50">
       {/* Logo */}
       <div className="flex items-center gap-2 mr-4">
         <div className="w-8 h-8 rounded-lg bg-wood-600 flex items-center justify-center text-white font-bold text-sm">
@@ -84,7 +98,7 @@ const Toolbar: React.FC<ToolbarProps> = ({
         {templateMenuOpen && (
           <div
             className="absolute top-full mt-1 left-0 w-64 bg-neutral-900 border border-neutral-700
-            rounded-lg shadow-xl z-50 overflow-hidden"
+            rounded-lg shadow-xl z-[100] overflow-hidden"
           >
             <div className="px-3 py-2 text-[10px] uppercase tracking-wider text-neutral-600">
               Furniture Templates
