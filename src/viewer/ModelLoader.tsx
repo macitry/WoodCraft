@@ -2,7 +2,7 @@ import { useMemo, Suspense, useRef } from 'react';
 import * as THREE from 'three';
 import { useLoader } from '@react-three/fiber';
 import { STLLoader } from 'three-stdlib';
-import type { FurnitureModel, Component } from '../types/furniture';
+import type { FurnitureModel, Component, TabletopHole } from '../types/furniture';
 import { TEMPLATE_LAYOUTS } from '../types/furniture';
 import { useModelStore } from '../store/modelStore';
 
@@ -12,7 +12,8 @@ const { Euler, Quaternion } = THREE;
  * Hybrid 3D model loader for furniture.
  *
  * - Parts with `stlUrl` (from successful backend CAD build) → load STL mesh
- * - Parts without `stlUrl` → fall back to procedural BoxGeometry
+ * - Parts without `stlUrl` → fall back to procedural geometry
+ * - Tabletop with user holes → always procedural ExtrudeGeometry (true cutouts)
  *
  * Backend STL coordinates are in mm; we scale to meters (0.001x).
  */
@@ -44,6 +45,69 @@ const MATERIALS: Record<string, THREE.MeshStandardMaterialProps> = {
   oak: { color: '#a07848', metalness: 0.0, roughness: 0.5 },
   walnut: { color: '#5c3a1e', metalness: 0.05, roughness: 0.45 },
 };
+
+// ============================================================
+// Tabletop geometry with real holes (ExtrudeGeometry + Shape.holes)
+// ============================================================
+
+/**
+ * Build a tabletop BufferGeometry with actual cylindrical cutouts.
+ *
+ * Uses THREE.ExtrudeGeometry with a Shape containing circular holes.
+ * The resulting geometry has proper walls inside each hole, visible
+ * from any camera angle — not just a surface decal.
+ *
+ * @param w   Tabletop width in meters
+ * @param d   Tabletop depth in meters
+ * @param t   Tabletop thickness in meters
+ * @param holes Array of hole definitions (coordinates in mm, radius in mm)
+ */
+function createHoledTabletopGeometry(
+  w: number,
+  d: number,
+  t: number,
+  holes: TabletopHole[],
+): THREE.BufferGeometry {
+  const hw = w / 2;
+  const hd = d / 2;
+
+  // Outer shape (tabletop outline in XY)
+  const shape = new THREE.Shape();
+  shape.moveTo(-hw, -hd);
+  shape.lineTo(hw, -hd);
+  shape.lineTo(hw, hd);
+  shape.lineTo(-hw, hd);
+  shape.closePath();
+
+  // Each hole as a circular Path → Shape.holes
+  for (const hole of holes) {
+    const hr = mm(hole.radius);
+    const hx = mm(hole.x);
+    const hy = mm(hole.y);
+    const holePath = new THREE.Path();
+    // absarc(cx, cy, radius, startAngle, endAngle, clockwise)
+    holePath.absarc(hx, hy, hr, 0, Math.PI * 2, true);
+    shape.holes.push(holePath);
+  }
+
+  // Extrude along Z by thickness.
+  // Shape lives in XY; after extrude, the solid occupies Z ∈ [0, t].
+  // We then rotate so it lies flat on XZ (thickness → Y).
+  const geom = new THREE.ExtrudeGeometry(shape, {
+    depth: t,
+    bevelEnabled: false,
+  });
+
+  // Rotate -90° around X:  X→X,  Y→Z,  Z→-Y
+  geom.rotateX(-Math.PI / 2);
+  // Now: X = width, Y ∈ [-t, 0], Z = depth.
+  // Translate Y so the geometry is centered at origin.
+  geom.translate(0, t / 2, 0);
+  // Now: X ∈ [-hw, hw], Y ∈ [-t/2, t/2], Z ∈ [-hd, hd] — matches BoxGeometry.
+
+  geom.computeVertexNormals();
+  return geom;
+}
 
 // ============================================================
 // STL Part — loads a mesh from the backend
@@ -110,7 +174,6 @@ const StlPart: React.FC<StlPartProps> = ({
 
   const pose = part.pose;
 
-  // Position: use worldPosition if provided, otherwise derive from solver pose.
   const position: [number, number, number] = useMemo(
     () => worldPosition ?? [
       (pose?.x ?? 0) * MM_TO_M,
@@ -120,7 +183,6 @@ const StlPart: React.FC<StlPartProps> = ({
     [pose, worldPosition],
   );
 
-  // Rotation: always from solver pose (orienting beams horizontal, legs vertical).
   const rotation: [number, number, number] = useMemo(() => {
     const coordQ = new Quaternion().setFromEuler(
       new Euler(-Math.PI / 2, 0, 0, 'XYZ'),
@@ -179,6 +241,7 @@ const ProceduralPart: React.FC<ProceduralPartProps> = ({
   const depth = getParam(model, 'depth', 600);
   const height = getParam(model, 'height', 750);
   const thickness = getParam(model, 'tabletop_thickness', 18);
+  const holes = useModelStore((s) => s.holes);
 
   const { insetRatioX, insetRatioZ, profileSize } = layout;
   const ps = mm(profileSize);
@@ -193,6 +256,9 @@ const ProceduralPart: React.FC<ProceduralPartProps> = ({
   const geometry = useMemo(() => {
     switch (part.partType) {
       case 'tabletop':
+        if (holes.length > 0) {
+          return createHoledTabletopGeometry(mm(width), mm(depth), mm(thickness), holes);
+        }
         return new THREE.BoxGeometry(mm(width), mm(thickness), mm(depth));
 
       case 'leg':
@@ -210,7 +276,7 @@ const ProceduralPart: React.FC<ProceduralPartProps> = ({
       default:
         return new THREE.BoxGeometry(0.05, 0.05, 0.05);
     }
-  }, [part.partType, part.id, part.material, width, depth, height, thickness, frameW, frameD, ps]);
+  }, [part.partType, part.id, part.material, width, depth, height, thickness, frameW, frameD, ps, holes]);
 
   const position = useMemo((): [number, number, number] => {
     const h = mm(height);
@@ -233,7 +299,6 @@ const ProceduralPart: React.FC<ProceduralPartProps> = ({
       }
 
       case 'beam': {
-        // Beam outer face at frame boundary, center inset by half profile
         const bz = mm(depth) / 2 - insetZ - ps / 2;
         const bx = mm(width) / 2 - insetX - ps / 2;
         if (part.id === 'beam_front') return [0, beamY, bz];
@@ -283,11 +348,6 @@ interface PartRendererProps {
 /**
  * Frame-style furniture layout with configurable inset.
  *
- *   - Beams form a perimeter frame flush to tabletop bottom,
- *     inset from edges by `insetRatio * width` / `insetRatio * depth`.
- *   - Legs sit under the beam frame corners.
- *   - Tabletop unchanged.
- *
  * All positions are Three.js world coords (meters), Y=up.
  */
 function computeFrameLayout(
@@ -301,18 +361,15 @@ function computeFrameLayout(
   const tt = getParam(model, 'tabletop_thickness', 18);
   const ps = layout.profileSize;
 
-  // Beam/leg frame inset from each edge
   const insetX = w * layout.insetRatioX;
   const insetZ = d * layout.insetRatioZ;
   const frameW = w - insetX * 2;
   const frameD = d - insetZ * 2;
 
-  // Backend uses "extrusion_length" (solver-only) or "length" (full build).
   const extrusionLen = part.dimensions?.extrusion_length ?? part.dimensions?.length;
 
   // --- Tabletop ---
   if (part.partType === 'tabletop') {
-    // Scale STL to match current width/depth/thickness.
     const origW = part.dimensions?.width ?? part.dimensions?.tabletop_width ?? w;
     const origD = part.dimensions?.depth ?? part.dimensions?.tabletop_depth ?? d;
     const origT = part.dimensions?.thickness ?? part.dimensions?.tabletop_thickness ?? tt;
@@ -323,18 +380,14 @@ function computeFrameLayout(
     };
   }
 
-  // --- Beams: perimeter frame at tabletop bottom, inset from edges ---
+  // --- Beams ---
   if (part.partType === 'beam' && extrusionLen) {
     const isWidthBeam = part.id.includes('front') || part.id.includes('back');
-    const beamY = mm(h - tt - ps / 2); // flush to tabletop bottom
-
-    // Picture-frame: long beams span frame, short beams fit between.
+    const beamY = mm(h - tt - ps / 2);
     const longDim = Math.max(frameW, frameD);
     const shortDim = Math.min(frameW, frameD);
     const isLong = (isWidthBeam && frameW >= frameD) || (!isWidthBeam && frameD > frameW);
     const targetLen = isLong ? longDim : shortDim - 2 * ps;
-
-    // Beam outer face at frame boundary, center inset by half profile
     const beamZ = d / 2 - insetZ - ps / 2;
     const beamX = w / 2 - insetX - ps / 2;
     let bx = 0, bz = 0;
@@ -342,29 +395,20 @@ function computeFrameLayout(
     if (part.id === 'beam_back')   bz = -mm(beamZ);
     if (part.id === 'beam_left')   bx = mm(beamX);
     if (part.id === 'beam_right')  bx = -mm(beamX);
-
-    return {
-      worldPosition: [bx, beamY, bz],
-      zScale: targetLen / extrusionLen,
-    };
+    return { worldPosition: [bx, beamY, bz], zScale: targetLen / extrusionLen };
   }
 
-  // --- Legs: from ground to beam bottom, at frame corners ---
+  // --- Legs ---
   if (part.partType === 'leg' && extrusionLen) {
     const legH = h - tt - ps;
     const lx = w / 2 - insetX - ps / 2;
     const lz = d / 2 - insetZ - ps / 2;
-
     let px = 0, pz = 0;
     if (part.id.includes('front_left'))  { px = mm(lx); pz = mm(lz); }
     if (part.id.includes('front_right')) { px = -mm(lx); pz = mm(lz); }
     if (part.id.includes('back_left'))   { px = mm(lx); pz = -mm(lz); }
     if (part.id.includes('back_right'))  { px = -mm(lx); pz = -mm(lz); }
-
-    return {
-      worldPosition: [px, mm(legH / 2), pz],
-      zScale: legH / extrusionLen,
-    };
+    return { worldPosition: [px, mm(legH / 2), pz], zScale: legH / extrusionLen };
   }
 
   return null;
@@ -380,17 +424,20 @@ const PartRenderer: React.FC<PartRendererProps> = ({
   const materialProps =
     MATERIALS[part.material || 'wood'] || MATERIALS.wood;
 
-  // Get live layout params from store (template defaults + user adjustments)
   const cp = useModelStore((s) => s.currentParams);
+  const holes = useModelStore((s) => s.holes);
   const layoutCfg = {
     insetRatioX: cp.insetRatioX,
     insetRatioZ: cp.insetRatioZ,
     profileSize: 30,
   };
 
-  if (part.stlUrl) {
-    const layout = computeFrameLayout(model, part, layoutCfg);
+  // When tabletop has user holes, use procedural ExtrudeGeometry with
+  // real cutouts instead of the hole-free STL from the backend.
+  const hasTabletopHoles = part.partType === 'tabletop' && holes.length > 0;
 
+  if (part.stlUrl && !hasTabletopHoles) {
+    const layout = computeFrameLayout(model, part, layoutCfg);
     return (
       <Suspense key={part.stlUrl} fallback={null}>
         <StlPart
@@ -443,7 +490,7 @@ const ModelLoader: React.FC<ModelLoaderProps> = ({ model }) => {
   const selectedComponentId = useModelStore((s) => s.selectedComponentId);
   const selectComponent = useModelStore((s) => s.selectComponent);
 
-  // Debug: log all layout positions when model changes
+  // Debug logging
   const loggedRef = useRef(false);
   if (!loggedRef.current || model.id !== loggedRef.current) {
     (loggedRef as React.MutableRefObject<string>).current = model.id;
@@ -467,7 +514,6 @@ const ModelLoader: React.FC<ModelLoaderProps> = ({ model }) => {
   return (
     <group>
       <GroundPlane />
-
       {visibleParts.map((part) => (
         <PartRenderer
           key={part.id}

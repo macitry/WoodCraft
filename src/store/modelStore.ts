@@ -4,6 +4,7 @@ import type {
   Parameter,
   Component,
   GenerateModelResponse,
+  TabletopHole,
 } from '../types/furniture';
 import { TEMPLATE_BACKEND_ID } from '../types/furniture';
 import { generateModel, fetchDefaultModel, fetchProgress } from '../api/modelApi';
@@ -99,6 +100,10 @@ interface ModelState {
     insetRatioZ: number;
   };
 
+  // Hole editing (shared between Plan view and 3D view)
+  holes: TabletopHole[];
+  selectedHoleId: string | null;
+
   // Actions
   loadMockModel: () => Promise<void>;
   loadModelFromApi: () => Promise<void>;
@@ -109,6 +114,12 @@ interface ModelState {
   setComponentVisibility: (componentId: string, visible: boolean) => void;
   setLoading: (loading: boolean) => void;
   setError: (error: string | null) => void;
+  // Hole actions
+  addHole: (hole: TabletopHole) => void;
+  updateHole: (id: string, patch: Partial<TabletopHole>) => void;
+  removeHole: (id: string) => void;
+  selectHole: (id: string | null) => void;
+  setHoles: (holes: TabletopHole[]) => void;
 }
 
 export const useModelStore = create<ModelState>((set, get) => ({
@@ -261,6 +272,28 @@ export const useModelStore = create<ModelState>((set, get) => ({
       currentParams: { ...s.currentParams, [key]: value },
     }));
   },
+
+  // ---- Hole editing state (shared) ----
+  holes: [],
+  selectedHoleId: null,
+
+  addHole: (hole: TabletopHole) =>
+    set((s) => ({ holes: [...s.holes, hole], selectedHoleId: hole.id })),
+
+  updateHole: (id: string, patch: Partial<TabletopHole>) =>
+    set((s) => ({
+      holes: s.holes.map((h) => (h.id === id ? { ...h, ...patch } : h)),
+    })),
+
+  removeHole: (id: string) =>
+    set((s) => ({
+      holes: s.holes.filter((h) => h.id !== id),
+      selectedHoleId: s.selectedHoleId === id ? null : s.selectedHoleId,
+    })),
+
+  selectHole: (id: string | null) => set({ selectedHoleId: id }),
+
+  setHoles: (holes: TabletopHole[]) => set({ holes }),
 }));
 
 // ============================================================

@@ -206,3 +206,12 @@ export const TEMPLATE_BACKEND_ID: Record<string, string> = {
   'inset-desk': 'basic-desk',  // same YAML, different layout
   'standing-desk': 'standing-desk',
 };
+
+/** A user-defined hole/cutout on the tabletop plan. */
+export interface TabletopHole {
+  id: string;
+  x: number;       // center X (mm, from tabletop center, right = +X)
+  y: number;       // center Y (mm, from tabletop center, depth = +Y)
+  radius: number;  // mm
+  type: 'circle';
+}
