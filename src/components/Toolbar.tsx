@@ -1,6 +1,9 @@
 import { useRef, useState, useEffect, useCallback } from 'react';
-import { useModelStore } from '../store/modelStore';
+import { useModelStore, injectVirtualComponents } from '../store/modelStore';
 import { mockTemplates } from '../mock/exampleModel';
+import { parseTabletopDxf } from '../utils/dxfImport';
+import { generateTabletopDxf, dxfShapeToDxf } from '../utils/dxfExport';
+import { computeBom, bomToCsv } from '../utils/bomExport';
 import type { ViewPreset } from '../types/furniture';
 import type { ViewMode } from '../app/App';
 
@@ -38,21 +41,26 @@ const Toolbar: React.FC<ToolbarProps> = ({
   const handleTemplateSelect = useCallback(
     (templateId: string) => {
       setTemplateMenuOpen(false);
-      const prevTemplate = useModelStore.getState().currentParams.templateId;
-      const defaults: Record<string, { insetRatioX: number; insetRatioZ: number }> = {
-        'basic-desk': { insetRatioX: 0, insetRatioZ: 0 },
-        'inset-desk': { insetRatioX: 0.05, insetRatioZ: 0.10 },
-        'standing-desk': { insetRatioX: 0, insetRatioZ: 0 },
+      const defaults: Record<string, { insetRatioX: number; insetRatioZ: number; crossBeamHeightRatio: number }> = {
+        'basic-desk': { insetRatioX: 0, insetRatioZ: 0, crossBeamHeightRatio: 0.5 },
+        'inset-desk': { insetRatioX: 0.05, insetRatioZ: 0.10, crossBeamHeightRatio: 0.5 },
+        'cross-beam-desk': { insetRatioX: 0, insetRatioZ: 0, crossBeamHeightRatio: 0.3 },
+        'side-cross-desk': { insetRatioX: 0, insetRatioZ: 0, crossBeamHeightRatio: 0.3 },
       };
-      const d = defaults[templateId] || { insetRatioX: 0, insetRatioZ: 0 };
+      const d = defaults[templateId] || { insetRatioX: 0, insetRatioZ: 0, crossBeamHeightRatio: 0.5 };
       useModelStore.setState((s) => ({
         currentParams: { ...s.currentParams, templateId, ...d },
       }));
 
-      // Only call backend if switching to a different backend template.
-      // basic-desk and inset-desk share the same STL (just different layout).
-      const needsRegen = templateId === 'standing-desk' || prevTemplate === 'standing-desk';
-      if (needsRegen || !useModelStore.getState().model) {
+      // All desk templates share the same YAML — just update components, no API call
+      const { model } = useModelStore.getState();
+      if (model) {
+        const updated = injectVirtualComponents(
+          model.components.filter((c) => !c.id.startsWith('cross_beam') && !c.id.startsWith('bracket_')),
+          templateId,
+        );
+        useModelStore.setState({ model: { ...model, components: updated } });
+      } else {
         loadModelFromApi();
       }
     },
@@ -91,7 +99,7 @@ const Toolbar: React.FC<ToolbarProps> = ({
           disabled={isLoading}
         >
           <span className="text-xs">📐</span>
-          {model ? model.name : 'Select Template'}
+          {mockTemplates.find((t) => t.id === useModelStore.getState().currentParams.templateId)?.name || 'Select Template'}
           <span className="text-neutral-600 text-[10px] ml-1">▼</span>
         </button>
 
@@ -174,23 +182,96 @@ const Toolbar: React.FC<ToolbarProps> = ({
 
       <div className="w-px h-6 bg-neutral-800" />
 
-      {/* Future: Import / Save buttons */}
-      <button
-        className="px-3 py-1.5 text-xs rounded-md text-neutral-500
-          hover:text-neutral-300 hover:bg-neutral-900 transition-colors cursor-pointer"
-        title="Import — coming soon"
+      {/* DXF Import */}
+      <label
+        className="px-3 py-1.5 text-xs rounded-md text-neutral-400
+          hover:text-white hover:bg-neutral-900 transition-colors cursor-pointer"
+        title="Import DXF tabletop"
       >
-        Import
+        📐 Import DXF
+        <input
+          type="file"
+          accept=".dxf"
+          className="hidden"
+          onChange={async (e) => {
+            const file = e.target.files?.[0];
+            if (!file) return;
+            try {
+              const buf = await file.arrayBuffer();
+              const shape = parseTabletopDxf(buf);
+              useModelStore.getState().setDxfTabletop(shape);
+              console.log('[DXF] Imported:', shape.bounds.width, 'x', shape.bounds.depth, 'mm,',
+                shape.holes.length, 'holes');
+              // Reset file input so the same file can be re-imported
+              (e.target as HTMLInputElement).value = '';
+            } catch (err) {
+              console.error('[DXF] Import failed:', err);
+              alert('DXF import failed: ' + (err as Error).message);
+            }
+          }}
+        />
+      </label>
+      {/* Export DXF */}
+      <button
+        className="px-3 py-1.5 text-xs rounded-md text-neutral-400
+          hover:text-white hover:bg-neutral-900 transition-colors cursor-pointer"
+        title="Export tabletop as DXF"
+        onClick={() => {
+          const store = useModelStore.getState();
+          const model = store.model;
+          if (!model) return;
+          let dxf: string;
+          if (store.dxfTabletop) {
+            dxf = dxfShapeToDxf(store.dxfTabletop);
+          } else {
+            const w = model.parameters.find((p) => p.id === 'width')?.value ?? 1200;
+            const d = model.parameters.find((p) => p.id === 'depth')?.value ?? 600;
+            dxf = generateTabletopDxf(w, d, store.holes);
+          }
+          downloadFile(`tabletop_${model.id}.dxf`, dxf, 'application/dxf');
+        }}
+      >
+        📤 DXF
       </button>
+      {/* Export BOM */}
+      <button
+        className="px-3 py-1.5 text-xs rounded-md text-neutral-400
+          hover:text-white hover:bg-neutral-900 transition-colors cursor-pointer"
+        title="Export BOM as CSV"
+        onClick={() => {
+          const model = useModelStore.getState().model;
+          if (!model) return;
+          const bom = computeBom(model);
+          const csv = bomToCsv(bom);
+          downloadFile(`bom_${model.id}.csv`, csv, 'text/csv');
+        }}
+      >
+        📋 BOM
+      </button>
+      {/* Clear DXF */}
       <button
         className="px-3 py-1.5 text-xs rounded-md text-neutral-500
           hover:text-neutral-300 hover:bg-neutral-900 transition-colors cursor-pointer"
-        title="Save — coming soon"
+        title="Clear imported DXF"
+        onClick={() => useModelStore.getState().setDxfTabletop(null)}
       >
-        Save
+        ↺
       </button>
     </div>
   );
 };
+
+/** Trigger a file download in the browser. */
+function downloadFile(filename: string, content: string, mimeType: string) {
+  const blob = new Blob([content], { type: mimeType });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}
 
 export default Toolbar;

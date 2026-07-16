@@ -6,7 +6,8 @@ import type {
   GenerateModelResponse,
   TabletopHole,
 } from '../types/furniture';
-import { TEMPLATE_BACKEND_ID } from '../types/furniture';
+import { TEMPLATE_BACKEND_ID, TEMPLATE_LAYOUTS } from '../types/furniture';
+import type { DxfTabletopShape } from '../utils/dxfImport';
 import { generateModel, fetchDefaultModel, fetchProgress } from '../api/modelApi';
 import type { ServerProgress } from '../api/modelApi';
 import { mockModel, delay } from '../mock/exampleModel';
@@ -73,8 +74,82 @@ function formatPartName(name: string): string {
     beam_back: '后横梁',
     beam_left: '左横梁',
     beam_right: '右横梁',
+    cross_beam_front: '前加强横梁',
+    cross_beam_back: '后加强横梁',
+    cross_beam_left: '左加强横梁',
+    cross_beam_right: '右加强横梁',
+    bracket_corner_fl: '角铁-前左角',
+    bracket_corner_fr: '角铁-前右角',
+    bracket_corner_bl: '角铁-后左角',
+    bracket_corner_br: '角铁-后右角',
+    bracket_leg_fl_front: '角铁-左前腿-前',
+    bracket_leg_fl_left: '角铁-左前腿-左',
+    bracket_leg_fr_front: '角铁-右前腿-前',
+    bracket_leg_fr_right: '角铁-右前腿-右',
+    bracket_leg_bl_back: '角铁-左后腿-后',
+    bracket_leg_bl_left: '角铁-左后腿-左',
+    bracket_leg_br_back: '角铁-右后腿-后',
+    bracket_leg_br_right: '角铁-右后腿-右',
   };
   return map[name] || name;
+}
+
+/** Inject cross-beam + bracket virtual components based on template config. */
+export function injectVirtualComponents(components: Component[], templateId: string): Component[] {
+  const cfg = TEMPLATE_LAYOUTS[templateId];
+  if (!cfg) return components;
+
+  // Strip old virtual components
+  let filtered = components.filter((c) =>
+    !c.id.startsWith('cross_beam') && !c.id.startsWith('bracket_'),
+  );
+
+  // --- Cross beams ---
+  if (cfg.hasCrossBeams) {
+    const isFrontBack = cfg.crossBeamOrientation === 'front_back';
+    const refBeam = filtered.find((c) => isFrontBack ? c.id === 'beam_front' : c.id === 'beam_left');
+    const beamStlUrl = refBeam?.stlUrl;
+    const refDims = refBeam?.dimensions ?? { extrusion_length: 1080 };
+    const pose = isFrontBack
+      ? { x: 0, y: 0, z: 0, roll: 0, pitch: -Math.PI / 2, yaw: 0 }
+      : { x: 0, y: 0, z: 0, roll: -Math.PI / 2, pitch: 0, yaw: 0 };
+    const ids = isFrontBack
+      ? ['cross_beam_front', 'cross_beam_back']
+      : ['cross_beam_left', 'cross_beam_right'];
+    for (const id of ids) {
+      filtered.push({
+        id, name: formatPartName(id), modelUrl: '', visible: true,
+        partType: 'cross_beam', material: 'aluminum', dimensions: refDims,
+        stlUrl: beamStlUrl, pose,
+      });
+    }
+  }
+
+  // --- Corner brackets ---
+  if (cfg.brackets.enabled) {
+    const ps = cfg.profileSize;
+    const bracketIds: string[] = [];
+    if (cfg.brackets.placements.includes('beam_corners')) {
+      bracketIds.push('bracket_corner_fl', 'bracket_corner_fr', 'bracket_corner_bl', 'bracket_corner_br');
+    }
+    if (cfg.brackets.placements.includes('leg_tops')) {
+      bracketIds.push(
+        'bracket_leg_fl_front', 'bracket_leg_fl_left',
+        'bracket_leg_fr_front', 'bracket_leg_fr_right',
+        'bracket_leg_bl_back', 'bracket_leg_bl_left',
+        'bracket_leg_br_back', 'bracket_leg_br_right',
+      );
+    }
+    for (const id of bracketIds) {
+      filtered.push({
+        id, name: formatPartName(id), modelUrl: '', visible: true,
+        partType: 'bracket', material: 'steel',
+        dimensions: { extrusion_length: ps }, stlUrl: undefined, pose: undefined,
+      });
+    }
+  }
+
+  return filtered;
 }
 
 interface ModelState {
@@ -98,7 +173,15 @@ interface ModelState {
     insetRatioX: number;
     /** Frontend-only: depth inset ratio (0–0.5). */
     insetRatioZ: number;
+    /** Frontend-only: cross-beam height ratio (0=ground, 1=leg top). */
+    crossBeamHeightRatio: number;
   };
+
+  // DXF-imported tabletop shape (null = use default rectangle)
+  dxfTabletop: DxfTabletopShape | null;
+
+  /** Saved visibility state for solo restore. */
+  _preSoloVisibility: Record<string, boolean> | null;
 
   // Hole editing (shared between Plan view and 3D view)
   holes: TabletopHole[];
@@ -120,6 +203,9 @@ interface ModelState {
   removeHole: (id: string) => void;
   selectHole: (id: string | null) => void;
   setHoles: (holes: TabletopHole[]) => void;
+  setDxfTabletop: (shape: DxfTabletopShape | null) => void;
+  /** Toggle solo: hide all other parts, show only this one. */
+  soloComponent: (componentId: string) => void;
 }
 
 export const useModelStore = create<ModelState>((set, get) => ({
@@ -138,6 +224,7 @@ export const useModelStore = create<ModelState>((set, get) => ({
     boardMaterial: 'plywood',
     insetRatioX: 0,
     insetRatioZ: 0,
+    crossBeamHeightRatio: 0.5,
   },
 
   loadMockModel: async () => {
@@ -170,7 +257,10 @@ export const useModelStore = create<ModelState>((set, get) => ({
       console.log('[WoodCraft] Status:', response.status,
         'STLs:', response.parts.filter((p) => p.stl_url).length);
 
-      const components = apiPartsToComponents(response);
+      const components = injectVirtualComponents(
+        apiPartsToComponents(response),
+        get().currentParams.templateId,
+      );
       const model: FurnitureModel = {
         id: response.model_id,
         name: response.name,
@@ -209,7 +299,7 @@ export const useModelStore = create<ModelState>((set, get) => ({
     );
     const newParams = { ...get().currentParams };
     if (parameterId in newParams) {
-      (newParams as Record<string, number>)[parameterId] = value;
+      (newParams as Record<string, unknown>)[parameterId] = value;
     }
     set({
       model: { ...model, parameters: updatedModelParams },
@@ -239,7 +329,10 @@ export const useModelStore = create<ModelState>((set, get) => ({
               ...get().model!,
               id: response.model_id,
               parameters: dimensionsToParameters(response.dimensions),
-              components: apiPartsToComponents(response),
+              components: injectVirtualComponents(
+                apiPartsToComponents(response),
+                get().currentParams.templateId,
+              ),
             };
             set({ model: updatedModel });
           }
@@ -264,6 +357,31 @@ export const useModelStore = create<ModelState>((set, get) => ({
     set({ model: { ...model, components: updatedComponents } });
   },
 
+  // Internal: stores pre-solo visibility state for restore
+  _preSoloVisibility: null as Record<string, boolean> | null,
+
+  soloComponent: (componentId: string) => {
+    const { model, _preSoloVisibility } = get();
+    if (!model) return;
+
+    // If already solo'd this part, restore all
+    if (_preSoloVisibility) {
+      const restored = model.components.map((c) => ({
+        ...c, visible: _preSoloVisibility[c.id] ?? true,
+      }));
+      set({ model: { ...model, components: restored }, _preSoloVisibility: null });
+      return;
+    }
+
+    // Save current visibility and solo this part
+    const saved: Record<string, boolean> = {};
+    const updated = model.components.map((c) => {
+      saved[c.id] = c.visible;
+      return { ...c, visible: c.id === componentId };
+    });
+    set({ model: { ...model, components: updated }, _preSoloVisibility: saved });
+  },
+
   setLoading: (loading: boolean) => set({ isLoading: loading }),
   setError: (error: string | null) => set({ error }),
 
@@ -272,6 +390,9 @@ export const useModelStore = create<ModelState>((set, get) => ({
       currentParams: { ...s.currentParams, [key]: value },
     }));
   },
+
+  // ---- DXF tabletop ----
+  dxfTabletop: null,
 
   // ---- Hole editing state (shared) ----
   holes: [],
@@ -294,6 +415,20 @@ export const useModelStore = create<ModelState>((set, get) => ({
   selectHole: (id: string | null) => set({ selectedHoleId: id }),
 
   setHoles: (holes: TabletopHole[]) => set({ holes }),
+
+  setDxfTabletop: (shape: DxfTabletopShape | null) => {
+    set({ dxfTabletop: shape });
+    // When importing custom tabletop, set width/depth from DXF bounds
+    if (shape) {
+      set((s) => ({
+        currentParams: {
+          ...s.currentParams,
+          width: Math.round(shape.bounds.width),
+          depth: Math.round(shape.bounds.depth),
+        },
+      }));
+    }
+  },
 }));
 
 // ============================================================
@@ -313,7 +448,10 @@ async function pollForStl(attempt: number = 1) {
     const response = await fetchDefaultModel();
     if (response.status !== 'warming') {
       console.log('[WoodCraft] STL ready! Swapping model.');
-      const components = apiPartsToComponents(response);
+      const components = injectVirtualComponents(
+        apiPartsToComponents(response),
+        useModelStore.getState().currentParams.templateId,
+      );
       const { model } = useModelStore.getState();
       if (model) {
         useModelStore.setState({

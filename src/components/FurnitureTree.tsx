@@ -22,6 +22,8 @@ const FurnitureTree: FC = () => {
   const selectedComponentId = useModelStore((s) => s.selectedComponentId);
   const selectComponent = useModelStore((s) => s.selectComponent);
   const setComponentVisibility = useModelStore((s) => s.setComponentVisibility);
+  const soloComponent = useModelStore((s) => s.soloComponent);
+  const isSolo = useModelStore((s) => s._preSoloVisibility !== null);
   const [collapsedGroups, setCollapsedGroups] = useState<Record<string, boolean>>({});
 
   if (!model) {
@@ -132,6 +134,18 @@ const FurnitureTree: FC = () => {
                         title={part.visible ? 'Hide' : 'Show'}
                       >
                         {part.visible ? '👁' : '👁‍🗨'}
+                      </span>
+
+                      {/* Solo toggle */}
+                      <span
+                        className={`text-xs cursor-pointer hover:opacity-80 ml-0.5 ${isSolo && part.visible ? 'text-wood-400' : ''}`}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          soloComponent(part.id);
+                        }}
+                        title={isSolo && part.visible ? 'Restore all' : 'Show only this'}
+                      >
+                        {isSolo && part.visible ? '◉' : '◎'}
                       </span>
 
                       <span className="truncate">{part.name}</span>

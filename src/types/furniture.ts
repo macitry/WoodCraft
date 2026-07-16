@@ -185,26 +185,53 @@ export interface Motion {
 }
 
 /** Frontend layout configuration per template. */
+export interface BracketConfig {
+  enabled: boolean;
+  /** Which connections get brackets. */
+  placements: ('beam_corners' | 'leg_tops')[];
+}
+
 export interface TemplateLayoutConfig {
-  /** Inset ratio from tabletop width edge (0 = edge, 0.10 = 10% in). */
   insetRatioX: number;
-  /** Inset ratio from tabletop depth edge (0 = edge, 0.05 = 5% in). */
   insetRatioZ: number;
-  /** Profile size in mm (matches the profile parameter). */
   profileSize: number;
+  crossBeamHeightRatio: number;
+  hasCrossBeams: boolean;
+  crossBeamOrientation: 'front_back' | 'left_right';
+  /** Corner bracket configuration. */
+  brackets: BracketConfig;
 }
 
 /** Map of template ID → layout config. */
 export const TEMPLATE_LAYOUTS: Record<string, TemplateLayoutConfig> = {
-  'basic-desk': { insetRatioX: 0, insetRatioZ: 0, profileSize: 30 },
-  'inset-desk': { insetRatioX: 0.05, insetRatioZ: 0.10, profileSize: 30 },
+  'basic-desk': {
+    insetRatioX: 0, insetRatioZ: 0, profileSize: 30,
+    crossBeamHeightRatio: 0.5, hasCrossBeams: false, crossBeamOrientation: 'front_back',
+    brackets: { enabled: true, placements: ['beam_corners', 'leg_tops'] },
+  },
+  'inset-desk': {
+    insetRatioX: 0.05, insetRatioZ: 0.10, profileSize: 30,
+    crossBeamHeightRatio: 0.5, hasCrossBeams: false, crossBeamOrientation: 'front_back',
+    brackets: { enabled: true, placements: ['beam_corners', 'leg_tops'] },
+  },
+  'cross-beam-desk': {
+    insetRatioX: 0, insetRatioZ: 0, profileSize: 30,
+    crossBeamHeightRatio: 0.3, hasCrossBeams: true, crossBeamOrientation: 'front_back',
+    brackets: { enabled: true, placements: ['beam_corners', 'leg_tops'] },
+  },
+  'side-cross-desk': {
+    insetRatioX: 0, insetRatioZ: 0, profileSize: 30,
+    crossBeamHeightRatio: 0.3, hasCrossBeams: true, crossBeamOrientation: 'left_right',
+    brackets: { enabled: true, placements: ['beam_corners', 'leg_tops'] },
+  },
 };
 
 /** Frontend template ID → backend template ID (some share the same YAML). */
 export const TEMPLATE_BACKEND_ID: Record<string, string> = {
   'basic-desk': 'basic-desk',
-  'inset-desk': 'basic-desk',  // same YAML, different layout
-  'standing-desk': 'standing-desk',
+  'inset-desk': 'basic-desk',
+  'cross-beam-desk': 'basic-desk',  // same YAML, different layout
+  'side-cross-desk': 'basic-desk',  // same YAML, different layout
 };
 
 /** A user-defined hole/cutout on the tabletop plan. */

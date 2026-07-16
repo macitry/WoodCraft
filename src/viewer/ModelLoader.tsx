@@ -3,6 +3,7 @@ import * as THREE from 'three';
 import { useLoader } from '@react-three/fiber';
 import { STLLoader } from 'three-stdlib';
 import type { FurnitureModel, Component, TabletopHole } from '../types/furniture';
+import type { DxfTabletopShape } from '../utils/dxfImport';
 import { TEMPLATE_LAYOUTS } from '../types/furniture';
 import { useModelStore } from '../store/modelStore';
 
@@ -105,6 +106,52 @@ function createHoledTabletopGeometry(
   geom.translate(0, t / 2, 0);
   // Now: X ∈ [-hw, hw], Y ∈ [-t/2, t/2], Z ∈ [-hd, hd] — matches BoxGeometry.
 
+  geom.computeVertexNormals();
+  return geom;
+}
+
+/**
+ * Build a tabletop BufferGeometry from a DXF-imported shape.
+ *
+ * Converts DXF outline + holes (mm) to a Three.js ExtrudeGeometry.
+ * The shape is centered at origin and oriented flat (Y = thickness).
+ */
+function createDxfTabletopGeometry(
+  dxf: DxfTabletopShape,
+  thickness: number, // meters
+): THREE.BufferGeometry {
+  const t = thickness;
+  const { outline, holes, bounds } = dxf;
+  const cx = (bounds.minX + bounds.maxX) / 2;
+  const cy = (bounds.minY + bounds.maxY) / 2;
+
+  // Build outline Shape (XY plane, center at origin)
+  const shape = new THREE.Shape();
+  shape.moveTo(mm(outline[0].x) - mm(cx), mm(outline[0].y) - mm(cy));
+  for (let i = 1; i < outline.length; i++) {
+    shape.lineTo(mm(outline[i].x) - mm(cx), mm(outline[i].y) - mm(cy));
+  }
+  shape.closePath();
+
+  // Add DXF holes
+  for (const holePts of holes) {
+    const holePath = new THREE.Path();
+    holePath.moveTo(mm(holePts[0].x) - mm(cx), mm(holePts[0].y) - mm(cy));
+    for (let i = 1; i < holePts.length; i++) {
+      holePath.lineTo(mm(holePts[i].x) - mm(cx), mm(holePts[i].y) - mm(cy));
+    }
+    holePath.closePath();
+    shape.holes.push(holePath);
+  }
+
+  const geom = new THREE.ExtrudeGeometry(shape, {
+    depth: t,
+    bevelEnabled: false,
+  });
+
+  // Rotate -90° X → flat on XZ, thickness along Y
+  geom.rotateX(-Math.PI / 2);
+  geom.translate(0, t / 2, 0);
   geom.computeVertexNormals();
   return geom;
 }
@@ -227,7 +274,7 @@ interface ProceduralPartProps {
   model: FurnitureModel;
   isSelected: boolean;
   onClick: () => void;
-  layout: { insetRatioX: number; insetRatioZ: number; profileSize: number };
+  layout: { insetRatioX: number; insetRatioZ: number; profileSize: number; crossBeamHeightRatio: number };
 }
 
 const ProceduralPart: React.FC<ProceduralPartProps> = ({
@@ -273,6 +320,11 @@ const ProceduralPart: React.FC<ProceduralPartProps> = ({
         return new THREE.BoxGeometry(len, ps, ps);
       }
 
+      case 'cross_beam': {
+        const longDim = Math.max(frameW, frameD);
+        return new THREE.BoxGeometry(longDim - 2 * ps, ps, ps);
+      }
+
       default:
         return new THREE.BoxGeometry(0.05, 0.05, 0.05);
     }
@@ -308,10 +360,24 @@ const ProceduralPart: React.FC<ProceduralPartProps> = ({
         return [0, beamY, 0];
       }
 
+      case 'cross_beam': {
+        const legH = h - t - ps;
+        const ratio = layout.crossBeamHeightRatio;
+        const beamCY = Math.max(ps / 2, ratio * (legH - ps / 2));
+        const isFrontBack = part.id.includes('front') || part.id.includes('back');
+        if (isFrontBack) {
+          const bz = mm(depth) / 2 - insetZ - ps / 2;
+          return part.id.includes('front') ? [0, beamCY, bz] : [0, beamCY, -bz];
+        } else {
+          const bx = mm(width) / 2 - insetX - ps / 2;
+          return part.id.includes('left') ? [bx, beamCY, 0] : [-bx, beamCY, 0];
+        }
+      }
+
       default:
         return [0, 0, 0];
     }
-  }, [part.partType, part.id, width, depth, height, thickness, ps, insetX, insetZ]);
+  }, [part.partType, part.id, width, depth, height, thickness, ps, insetX, insetZ, frameW, layout.crossBeamHeightRatio]);
 
   return (
     <mesh
@@ -353,7 +419,7 @@ interface PartRendererProps {
 function computeFrameLayout(
   model: FurnitureModel,
   part: Component,
-  layout: { insetRatioX: number; insetRatioZ: number; profileSize: number },
+  layout: { insetRatioX: number; insetRatioZ: number; profileSize: number; crossBeamHeightRatio: number },
 ): { worldPosition: [number, number, number]; zScale: number; xyScale?: [number, number] } | null {
   const w = getParam(model, 'width', 1200);
   const d = getParam(model, 'depth', 600);
@@ -411,8 +477,193 @@ function computeFrameLayout(
     return { worldPosition: [px, mm(legH / 2), pz], zScale: legH / extrusionLen };
   }
 
+  // --- Cross beams: additional horizontal rails between leg pairs ---
+  if (part.partType === 'cross_beam' && extrusionLen) {
+    const legH = h - tt - ps;
+    const ratio = layout.crossBeamHeightRatio;
+    const beamCY = Math.max(ps / 2, ratio * (legH - ps / 2));
+    const beamY = mm(beamCY);
+
+    const isFrontBack = part.id.includes('front') || part.id.includes('back');
+
+    if (isFrontBack) {
+      // Span between front/back legs (runs left-right, long dimension)
+      const longDim = Math.max(w - insetX * 2, d - insetZ * 2);
+      const targetLen = longDim - 2 * ps;
+      const legZ = d / 2 - insetZ - ps / 2;
+      const bz = part.id.includes('front') ? mm(legZ) : -mm(legZ);
+      return { worldPosition: [0, beamY, bz], zScale: targetLen / (extrusionLen || targetLen) };
+    } else {
+      // Span between left/right legs (runs front-back, short dimension)
+      const shortDim = Math.min(w - insetX * 2, d - insetZ * 2);
+      const targetLen = shortDim - 2 * ps;
+      const legX = w / 2 - insetX - ps / 2;
+      const bx = part.id.includes('left') ? mm(legX) : -mm(legX);
+      return { worldPosition: [bx, beamY, 0], zScale: targetLen / (extrusionLen || targetLen) };
+    }
+  }
+
   return null;
 }
+
+
+// ============================================================
+// DxfTabletopPart — renders imported DXF tabletop shape
+// ============================================================
+
+interface DxfTabletopPartProps {
+  dxf: DxfTabletopShape;
+  model: FurnitureModel;
+  isSelected: boolean;
+  onClick: () => void;
+  materialProps: THREE.MeshStandardMaterialProps;
+}
+
+const DxfTabletopPart: React.FC<DxfTabletopPartProps> = ({
+  dxf,
+  model,
+  isSelected,
+  onClick,
+  materialProps,
+}) => {
+  const h = getParam(model, 'height', 750);
+  const tt = getParam(model, 'tabletop_thickness', 18);
+  const geometry = useMemo(
+    () => createDxfTabletopGeometry(dxf, mm(tt)),
+    [dxf, tt],
+  );
+  const posY = mm(h - tt / 2);
+
+  return (
+    <mesh
+      geometry={geometry}
+      position={[0, posY, 0]}
+      castShadow
+      receiveShadow
+      onClick={(e) => { e.stopPropagation(); onClick(); }}
+    >
+      <meshStandardMaterial
+        {...materialProps}
+        emissive={isSelected ? '#ffffff' : '#000000'}
+        emissiveIntensity={isSelected ? 0.15 : 0}
+      />
+    </mesh>
+  );
+};
+
+
+// ============================================================
+// BracketPart — renders a single corner bracket gusset
+// ============================================================
+
+interface BracketPartProps {
+  part: Component;
+  model: FurnitureModel;
+  isSelected: boolean;
+  onClick: () => void;
+  materialProps: THREE.MeshStandardMaterialProps;
+  layout: { insetRatioX: number; insetRatioZ: number; profileSize: number };
+}
+
+/** Compute bracket position + scale from bracket ID.
+ *  Triangle in ExtrudeGeometry XY, extrude Z. After -PI/2 X rotation:
+ *    local X→world X, local Y→world Z, local Z→world -Y.
+ *  So the triangle fills world +X,+Z quadrant from its corner.
+ *  We use mesh scale to mirror for different corners (no yaw rot needed).
+ *
+ *  Position: bracket top (beam top), extrusion goes downward filling beam height.
+ */
+function getBracketPose(
+  id: string, model: FurnitureModel,
+  w: number, d: number, h: number, tt: number, ps: number, ix: number, iz: number,
+): { pos: [number, number, number]; scale: [number, number, number] } {
+  const beamTopY = mm(h - tt);  // bracket top = tabletop bottom = beam top
+  const innerX = mm(ix - ps / 2);
+  const innerZ = mm(iz - ps / 2);
+  const s = mm(ps);
+
+  // Scale: mirror X / Z to point triangle legs inward
+  // Default (+X,+Z). Flips: front→-Z, back→+Z, left→-X, right→+X
+  const isFront = id.includes('fl') || id.includes('fr');
+  const isBack  = id.includes('bl') || id.includes('br');
+  const isLeft  = id.includes('fl') || id.includes('bl');
+  const isRight = id.includes('fr') || id.includes('br');
+
+  const sx = isLeft ? -1 : 1;   // left corners: triangle goes -X (inward)
+  const sz = isFront ? 1 : -1;  // front corners: triangle goes +Z? hmm
+
+  // For corner brackets: at the inner corner, legs along beam faces inward
+  if (id.startsWith('bracket_corner')) {
+    // Corner triangle fills: left→-X, right→+X, front→-Z (inward), back→+Z (inward)
+    const scaleX = id.includes('_fl') || id.includes('_bl') ? -1 : 1;
+    const scaleZ = id.includes('_fr') || id.includes('_br') ? 1 : -1;
+    // Front corners: inward along Z is -Z, so scaleZ = -1. Back: +Z, so scaleZ = 1.
+    // Actually: front-left = -X,-Z → scale [-1,1,-1]. front-right = +X,-Z → [1,1,-1].
+    // back-left = -X,+Z → [-1,1,1]. back-right = +X,+Z → [1,1,1].
+    const sx2 = id.includes('_fl') || id.includes('_bl') ? -1 : 1;
+    const sz2 = id.includes('_fl') || id.includes('_fr') ? -1 : 1;
+    return { pos: [sx2 < 0 ? innerX : -innerX, beamTopY, sz2 > 0 ? innerZ : -innerZ], scale: [sx2, 1, sz2] };
+  }
+
+  // Leg top brackets: offset from corner, same scale logic
+  const sx3 = id.includes('_fl') || id.includes('_bl') ? -1 : 1;
+  const sz3 = id.includes('_fl') || id.includes('_fr') ? -1 : 1;
+
+  // Offset: shift along beam direction
+  let ox = 0, oz = 0;
+  if (id.includes('_front') || id.includes('_back')) ox = sx3 < 0 ? -s : s;
+  if (id.includes('_left') || id.includes('_right')) oz = sz3 > 0 ? -s : s;
+
+  const px = sx3 < 0 ? innerX : -innerX;
+  const pz = sz3 > 0 ? innerZ : -innerZ;
+
+  return { pos: [px + ox, beamTopY, pz + oz], scale: [sx3, 1, sz3] };
+}
+
+const BracketPart: React.FC<BracketPartProps> = ({
+  part, model, isSelected, onClick, materialProps, layout,
+}) => {
+  const w = getParam(model, 'width', 1200);
+  const d = getParam(model, 'depth', 600);
+  const hh = getParam(model, 'height', 750);
+  const tt = getParam(model, 'tabletop_thickness', 18);
+  const ps = layout.profileSize;
+  const ix = w / 2 - layout.insetRatioX * w - ps / 2;
+  const iz = d / 2 - layout.insetRatioZ * d - ps / 2;
+
+  const { pos, scale } = getBracketPose(part.id, model, w, d, hh, tt, ps, ix, iz);
+  const size = mm(ps);
+  const height = mm(ps);
+
+  const geom = useMemo(() => {
+    const shape = new THREE.Shape();
+    shape.moveTo(0, 0);
+    shape.lineTo(size, 0);
+    shape.lineTo(0, size);
+    shape.closePath();
+    return new THREE.ExtrudeGeometry(shape, { depth: height, bevelEnabled: false });
+  }, [size, height]);
+
+  // Triangle in XY → rotate -PI/2 X to make horizontal in XZ.
+  // Scale mirrors for the correct corner quadrant (scale handles direction).
+  // Position at beam top (tabletop bottom), extrusion goes downward.
+  return (
+    <mesh
+      geometry={geom}
+      position={pos}
+      rotation={[-Math.PI / 2, 0, 0]}
+      scale={scale}
+      castShadow
+      onClick={(e) => { e.stopPropagation(); onClick(); }}
+    >
+      <meshStandardMaterial
+        {...materialProps}
+        emissive={isSelected ? '#ffffff' : '#000000'}
+        emissiveIntensity={isSelected ? 0.15 : 0}
+      />
+    </mesh>
+  );
+};
 
 
 const PartRenderer: React.FC<PartRendererProps> = ({
@@ -422,18 +673,37 @@ const PartRenderer: React.FC<PartRendererProps> = ({
   onClick,
 }) => {
   const materialProps =
-    MATERIALS[part.material || 'wood'] || MATERIALS.wood;
+    MATERIALS[part.material || (part.partType === 'cross_beam' ? 'aluminum' : part.partType === 'bracket' ? 'steel' : 'wood')] || MATERIALS.wood;
 
   const cp = useModelStore((s) => s.currentParams);
   const holes = useModelStore((s) => s.holes);
+  const dxfTabletop = useModelStore((s) => s.dxfTabletop);
   const layoutCfg = {
     insetRatioX: cp.insetRatioX,
     insetRatioZ: cp.insetRatioZ,
     profileSize: 30,
+    crossBeamHeightRatio: cp.crossBeamHeightRatio,
   };
 
-  // When tabletop has user holes, use procedural ExtrudeGeometry with
-  // real cutouts instead of the hole-free STL from the backend.
+  // When DXF tabletop shape is imported, use custom ExtrudeGeometry
+  if (part.partType === 'tabletop' && dxfTabletop) {
+    return (
+      <DxfTabletopPart
+        dxf={dxfTabletop}
+        model={model}
+        isSelected={isSelected}
+        onClick={onClick}
+        materialProps={materialProps}
+      />
+    );
+  }
+
+  // When tabletop has user holes, use procedural ExtrudeGeometry with cutouts
+  // Bracket parts — render procedural gusset
+  if (part.partType === 'bracket') {
+    return <BracketPart part={part} model={model} isSelected={isSelected} onClick={onClick} materialProps={materialProps} layout={layoutCfg} />;
+  }
+
   const hasTabletopHoles = part.partType === 'tabletop' && holes.length > 0;
 
   if (part.stlUrl && !hasTabletopHoles) {
@@ -467,6 +737,10 @@ const PartRenderer: React.FC<PartRendererProps> = ({
 
 // ============================================================
 // Ground Plane
+// ============================================================
+
+// ============================================================
+// Corner brackets — L-shaped connectors at beam/leg joints
 // ============================================================
 
 const GroundPlane: React.FC = () => {
@@ -510,6 +784,26 @@ const ModelLoader: React.FC<ModelLoaderProps> = ({ model }) => {
   }
 
   const visibleParts = model.components.filter((c) => c.visible);
+
+  // Debug: log bracket positions
+  const bracketParts = visibleParts.filter((c) => c.partType === 'bracket');
+  if (bracketParts.length > 0 && model.id !== (loggedRef as React.MutableRefObject<string>).current.split(':')[0]) {
+    console.group('[WoodCraft Brackets] ' + model.id);
+    const bbW = getParam(model, 'width', 1200);
+    const bbD = getParam(model, 'depth', 600);
+    const bbH = getParam(model, 'height', 750);
+    const bbTt = getParam(model, 'tabletop_thickness', 18);
+    const bbPs = useModelStore.getState().currentParams.insetRatioX !== undefined ? 30 : 30;
+    const bbIx = bbW / 2 - useModelStore.getState().currentParams.insetRatioX * bbW - bbPs / 2;
+    const bbIz = bbD / 2 - useModelStore.getState().currentParams.insetRatioZ * bbD - bbPs / 2;
+    for (const bp of bracketParts) {
+      const bpPose = getBracketPose(bp.id, model, bbW, bbD, bbH, bbTt, bbPs, bbIx, bbIz);
+      console.log(bp.name.padEnd(20), 'pos:', bpPose.pos.map((v) => v.toFixed(4)), 'scale:', bpPose.scale);
+    }
+    console.groupEnd();
+  }
+
+  const templateId = useModelStore((s) => s.currentParams.templateId);
 
   return (
     <group>

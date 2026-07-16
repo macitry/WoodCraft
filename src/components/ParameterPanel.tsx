@@ -13,6 +13,7 @@ const ParameterPanel: React.FC = () => {
   const updateLayoutParam = useModelStore((s) => s.updateLayoutParam);
   const insetX = useModelStore((s) => s.currentParams.insetRatioX);
   const insetZ = useModelStore((s) => s.currentParams.insetRatioZ);
+  const crossBeamRatio = useModelStore((s) => s.currentParams.crossBeamHeightRatio);
 
   if (!model) {
     return (
@@ -114,7 +115,8 @@ const ParameterPanel: React.FC = () => {
           </div>
         </div>
 
-        {/* Inset ratio sliders — frontend-only, no API call */}
+        {/* Inset ratio sliders — only for inset-desk */}
+        {useModelStore.getState().currentParams.templateId === 'inset-desk' && (
         <div className="pt-2 border-t border-neutral-800 space-y-4">
           <p className="text-xs uppercase tracking-wider text-neutral-500 font-medium">
             Frame Inset
@@ -153,6 +155,42 @@ const ParameterPanel: React.FC = () => {
             </div>
           ))}
         </div>
+        )}
+
+        {/* Cross beam height — only for templates with hasCrossBeams */}
+        {['cross-beam-desk', 'side-cross-desk'].includes(useModelStore.getState().currentParams.templateId) && (
+          <div className="pt-2 border-t border-neutral-800 space-y-2">
+            <p className="text-xs uppercase tracking-wider text-neutral-500 font-medium">
+              Cross Beam Height
+            </p>
+            <div className="flex items-center justify-between">
+              <label className="text-sm text-neutral-300">加强横梁高度</label>
+              <span className="text-sm font-mono text-white tabular-nums">
+                {Math.round(crossBeamRatio * 100)}%
+              </span>
+            </div>
+            <input
+              type="range"
+              min={0}
+              max={1}
+              step={0.01}
+              value={crossBeamRatio}
+              onChange={(e) => updateLayoutParam('crossBeamHeightRatio', Number(e.target.value))}
+              className="w-full h-2 bg-neutral-800 rounded-lg appearance-none cursor-pointer
+                accent-wood-500
+                [&::-webkit-slider-thumb]:appearance-none
+                [&::-webkit-slider-thumb]:w-4
+                [&::-webkit-slider-thumb]:h-4
+                [&::-webkit-slider-thumb]:rounded-full
+                [&::-webkit-slider-thumb]:bg-wood-400
+                [&::-webkit-slider-thumb]:shadow-md"
+            />
+            <div className="flex justify-between text-[10px] text-neutral-600">
+              <span>0% (地面)</span>
+              <span>100% (桌腿顶)</span>
+            </div>
+          </div>
+        )}
 
         {/* Board material */}
         <div>
