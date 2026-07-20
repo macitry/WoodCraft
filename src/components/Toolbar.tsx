@@ -1,4 +1,5 @@
 import { useRef, useState, useEffect, useCallback } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { useModelStore, injectVirtualComponents } from '../store/modelStore';
 import { mockTemplates } from '../mock/exampleModel';
 import { parseTabletopDxf } from '../utils/dxfImport';
@@ -20,6 +21,7 @@ const Toolbar: React.FC<ToolbarProps> = ({
   viewMode,
   onViewMode,
 }) => {
+  const navigate = useNavigate();
   const loadModelFromApi = useModelStore((s) => s.loadModelFromApi);
   const loadMockModel = useModelStore((s) => s.loadMockModel);
   const model = useModelStore((s) => s.model);
@@ -85,6 +87,16 @@ const Toolbar: React.FC<ToolbarProps> = ({
           WoodCraft
         </span>
       </div>
+
+      <div className="w-px h-6 bg-neutral-800" />
+
+      {/* DIY link */}
+      <button
+        onClick={() => navigate('/diy')}
+        className="px-3 py-1 text-xs rounded bg-neutral-800 hover:bg-neutral-700 text-wood-400 hover:text-wood-300 transition-colors cursor-pointer font-medium"
+      >
+        🔧 DIY
+      </button>
 
       <div className="w-px h-6 bg-neutral-800" />
 

@@ -1,10 +1,14 @@
 import { create } from 'zustand';
+import * as THREE from 'three';
 import type {
   FurnitureModel,
   Parameter,
   Component,
   GenerateModelResponse,
   TabletopHole,
+  BracketInstance,
+  MateState,
+  MateHit,
 } from '../types/furniture';
 import { TEMPLATE_BACKEND_ID, TEMPLATE_LAYOUTS } from '../types/furniture';
 import type { DxfTabletopShape } from '../utils/dxfImport';
@@ -125,29 +129,8 @@ export function injectVirtualComponents(components: Component[], templateId: str
     }
   }
 
-  // --- Corner brackets ---
-  if (cfg.brackets.enabled) {
-    const ps = cfg.profileSize;
-    const bracketIds: string[] = [];
-    if (cfg.brackets.placements.includes('beam_corners')) {
-      bracketIds.push('bracket_corner_fl', 'bracket_corner_fr', 'bracket_corner_bl', 'bracket_corner_br');
-    }
-    if (cfg.brackets.placements.includes('leg_tops')) {
-      bracketIds.push(
-        'bracket_leg_fl_front', 'bracket_leg_fl_left',
-        'bracket_leg_fr_front', 'bracket_leg_fr_right',
-        'bracket_leg_bl_back', 'bracket_leg_bl_left',
-        'bracket_leg_br_back', 'bracket_leg_br_right',
-      );
-    }
-    for (const id of bracketIds) {
-      filtered.push({
-        id, name: formatPartName(id), modelUrl: '', visible: true,
-        partType: 'bracket', material: 'steel',
-        dimensions: { extrusion_length: ps }, stlUrl: undefined, pose: undefined,
-      });
-    }
-  }
+  // Corner brackets are now user-editable via BracketEditor (store.brackets[]).
+  // No longer injected as faux Components.
 
   return filtered;
 }
@@ -187,6 +170,21 @@ interface ModelState {
   holes: TabletopHole[];
   selectedHoleId: string | null;
 
+  // Bracket editing — user-defined corner bracket placements
+  brackets: BracketInstance[];
+  selectedBracketId: string | null;
+  defaultBracketCount: number; // how many were auto-generated (locked)
+  placementMode: boolean; // when true, clicking 3D view places bracket at hit point
+
+  // Mate (SolidWorks-style assembly)
+  mateState: MateState;
+  /** ID of the bracket being mated. */
+  mateBracketId: string | null;
+  /** Source face hit data (on the bracket). */
+  mateSourceHit: MateHit | null;
+  /** Target face hit data (on the target part). */
+  mateTargetHit: MateHit | null;
+
   // Actions
   loadMockModel: () => Promise<void>;
   loadModelFromApi: () => Promise<void>;
@@ -206,6 +204,80 @@ interface ModelState {
   setDxfTabletop: (shape: DxfTabletopShape | null) => void;
   /** Toggle solo: hide all other parts, show only this one. */
   soloComponent: (componentId: string) => void;
+  // Bracket actions
+  addBracket: (bracket: BracketInstance) => void;
+  updateBracket: (id: string, patch: Partial<BracketInstance>) => void;
+  removeBracket: (id: string) => void;
+  selectBracket: (id: string | null) => void;
+  togglePlacementMode: () => void;
+  // Mate actions
+  startMate: (bracketId: string) => void;
+  cancelMate: () => void;
+  setMateSourceHit: (hit: MateHit) => void;
+  setMateTargetHit: (hit: MateHit) => void;
+  applyMate: () => void;
+  /** Reset brackets to default auto-generated set. */
+  resetBracketsToDefault: () => void;
+  /** Replace all brackets (e.g. when switching templates). */
+  setBrackets: (brackets: BracketInstance[]) => void;
+}
+
+/** Generate default bracket instances for a template + dimensions. */
+function generateDefaultBrackets(templateId: string, width: number, depth: number, height: number, tabletopThickness: number, profileSize: number): BracketInstance[] {
+  const cfg = TEMPLATE_LAYOUTS[templateId];
+  if (!cfg || !cfg.brackets.enabled) return [];
+
+  const ps = profileSize;
+  const h = height;
+  const tt = tabletopThickness;
+  const beamTopY = h - tt;          // top of beams = bottom of tabletop
+  const beamBotY = h - tt - ps;     // bottom of beams
+  const halfW = width / 2;
+  const halfD = depth / 2;
+  const ix = cfg.insetRatioX * width;
+  const iz = cfg.insetRatioZ * depth;
+  const cx = halfW - ix - ps / 2;   // corner X (absolute, positive = right)
+  const cz = halfD - iz - ps / 2;   // corner Z (absolute, positive = front)
+
+  const brackets: BracketInstance[] = [];
+  let idx = 0;
+
+  // Helper to add a bracket
+  const add = (name: string, pos: {x:number;y:number;z:number}, rot: {roll:number;pitch:number;yaw:number}, parts: string[]) => {
+    brackets.push({ id: `bracket_${idx++}`, name, position: pos, rotation: rot, connectedParts: parts, enabled: true });
+  };
+
+  if (cfg.brackets.placements.includes('beam_corners')) {
+    // Corner L brackets at each beam corner (on the OUTSIDE face of beams)
+    // These sit at the beam intersection at the top outer edge
+    // Front-left corner: beam_front meets beam_left
+    add('角铁-前左角', { x: cx, y: beamTopY, z: cz }, { roll: 0, pitch: 0, yaw: 0 }, ['beam_front', 'beam_left']);
+    // Front-right corner
+    add('角铁-前右角', { x: -cx, y: beamTopY, z: cz }, { roll: 0, pitch: 0, yaw: 0 }, ['beam_front', 'beam_right']);
+    // Back-left corner
+    add('角铁-后左角', { x: cx, y: beamTopY, z: -cz }, { roll: 0, pitch: 0, yaw: 0 }, ['beam_back', 'beam_left']);
+    // Back-right corner
+    add('角铁-后右角', { x: -cx, y: beamTopY, z: -cz }, { roll: 0, pitch: 0, yaw: 0 }, ['beam_back', 'beam_right']);
+  }
+
+  if (cfg.brackets.placements.includes('leg_tops')) {
+    // Leg-top L brackets: connect each leg's top to the beam above it
+    // Position at leg top inner face
+    // Front-left leg
+    add('角铁-左前腿-前', { x: cx, y: beamBotY, z: cz }, { roll: 0, pitch: 0, yaw: 0 }, ['leg_front_left', 'beam_front']);
+    add('角铁-左前腿-左', { x: cx, y: beamBotY, z: cz }, { roll: 0, pitch: 0, yaw: 0 }, ['leg_front_left', 'beam_left']);
+    // Front-right leg
+    add('角铁-右前腿-前', { x: -cx, y: beamBotY, z: cz }, { roll: 0, pitch: 0, yaw: 0 }, ['leg_front_right', 'beam_front']);
+    add('角铁-右前腿-右', { x: -cx, y: beamBotY, z: cz }, { roll: 0, pitch: 0, yaw: 0 }, ['leg_front_right', 'beam_right']);
+    // Back-left leg
+    add('角铁-左后腿-后', { x: cx, y: beamBotY, z: -cz }, { roll: 0, pitch: 0, yaw: 0 }, ['leg_back_left', 'beam_back']);
+    add('角铁-左后腿-左', { x: cx, y: beamBotY, z: -cz }, { roll: 0, pitch: 0, yaw: 0 }, ['leg_back_left', 'beam_left']);
+    // Back-right leg
+    add('角铁-右后腿-后', { x: -cx, y: beamBotY, z: -cz }, { roll: 0, pitch: 0, yaw: 0 }, ['leg_back_right', 'beam_back']);
+    add('角铁-右后腿-右', { x: -cx, y: beamBotY, z: -cz }, { roll: 0, pitch: 0, yaw: 0 }, ['leg_back_right', 'beam_right']);
+  }
+
+  return brackets;
 }
 
 export const useModelStore = create<ModelState>((set, get) => ({
@@ -214,6 +286,10 @@ export const useModelStore = create<ModelState>((set, get) => ({
   error: null,
   selectedComponentId: null,
   progress: null,
+  brackets: [],
+  selectedBracketId: null,
+  defaultBracketCount: 0,
+  placementMode: false,
   currentParams: {
     templateId: 'basic-desk',
     width: 1200,
@@ -269,7 +345,25 @@ export const useModelStore = create<ModelState>((set, get) => ({
         components,
       };
 
-      set({ model, isLoading: false, error: null, progress: null });
+      // Generate default brackets for this model
+      const defaultBrackets = generateDefaultBrackets(
+        get().currentParams.templateId,
+        get().currentParams.width,
+        get().currentParams.depth,
+        get().currentParams.height,
+        get().currentParams.tabletopThickness,
+        30,
+      );
+
+      set({
+        model,
+        isLoading: false,
+        error: null,
+        progress: null,
+        brackets: defaultBrackets,
+        defaultBracketCount: defaultBrackets.length,
+        selectedBracketId: null,
+      });
 
       if (response.status === 'warming') {
         console.log('[WoodCraft] Warmup in progress — polling for STL...');
@@ -418,7 +512,6 @@ export const useModelStore = create<ModelState>((set, get) => ({
 
   setDxfTabletop: (shape: DxfTabletopShape | null) => {
     set({ dxfTabletop: shape });
-    // When importing custom tabletop, set width/depth from DXF bounds
     if (shape) {
       set((s) => ({
         currentParams: {
@@ -429,6 +522,147 @@ export const useModelStore = create<ModelState>((set, get) => ({
       }));
     }
   },
+
+  // ---- Bracket editing ----
+  addBracket: (bracket: BracketInstance) =>
+    set((s) => ({ brackets: [...s.brackets, bracket], selectedBracketId: bracket.id })),
+
+  updateBracket: (id: string, patch: Partial<BracketInstance>) =>
+    set((s) => ({
+      brackets: s.brackets.map((b) => (b.id === id ? { ...b, ...patch } : b)),
+    })),
+
+  removeBracket: (id: string) =>
+    set((s) => ({
+      brackets: s.brackets.filter((b) => b.id !== id),
+      selectedBracketId: s.selectedBracketId === id ? null : s.selectedBracketId,
+    })),
+
+  selectBracket: (id: string | null) => set({ selectedBracketId: id }),
+
+  togglePlacementMode: () => set((s) => ({ placementMode: !s.placementMode })),
+
+  // ---- Mate workflow ----
+  mateState: 'idle',
+  mateBracketId: null,
+  mateSourceHit: null,
+  mateTargetHit: null,
+
+  startMate: (bracketId: string) =>
+    set({ mateState: 'selecting_source_face', mateBracketId: bracketId, mateSourceHit: null, mateTargetHit: null, placementMode: false }),
+
+  cancelMate: () =>
+    set({ mateState: 'idle', mateBracketId: null, mateSourceHit: null, mateTargetHit: null }),
+
+  setMateSourceHit: (hit: MateHit) => {
+    const { mateState } = get();
+    if (mateState === 'selecting_source_face') {
+      set({ mateSourceHit: hit, mateState: 'selecting_target_face' });
+    }
+  },
+
+  setMateTargetHit: (hit: MateHit) => {
+    const { mateState } = get();
+    if (mateState === 'selecting_target_face') {
+      set({ mateTargetHit: hit });
+      // Auto-apply the mate
+      get().applyMate();
+    }
+  },
+
+  applyMate: () => {
+    const { mateBracketId, mateSourceHit, mateTargetHit, brackets } = get();
+    if (!mateBracketId || !mateSourceHit || !mateTargetHit) return;
+
+    const bracket = brackets.find((b) => b.id === mateBracketId);
+    if (!bracket) return;
+
+    // --- Math ---
+    // All positions are in mm, normals are unit vectors.
+    const Ps = new Float64Array(mateSourceHit.point);   // source hit (on bracket, world meters)
+    const Ns = new Float64Array(mateSourceHit.normal);   // source normal
+    const Pt = new Float64Array(mateTargetHit.point);    // target hit (on part, world meters)
+    const Nt = new Float64Array(mateTargetHit.normal);   // target normal
+
+    // Source to world-mm
+    const Ps_x = Ps[0] * 1000, Ps_y = Ps[1] * 1000, Ps_z = Ps[2] * 1000;
+    const Pt_x = Pt[0] * 1000, Pt_y = Pt[1] * 1000, Pt_z = Pt[2] * 1000;
+
+    // Current bracket transform (mm, degrees → quaternion)
+    const br = THREE.MathUtils.degToRad(bracket.rotation.roll);
+    const bp = THREE.MathUtils.degToRad(bracket.rotation.pitch);
+    const by_ = THREE.MathUtils.degToRad(bracket.rotation.yaw);
+    const R_old = new THREE.Quaternion().setFromEuler(
+      new THREE.Euler(br, bp, by_, 'ZYX'),
+    );
+    const P_old = new THREE.Vector3(bracket.position.x, bracket.position.y, bracket.position.z);
+
+    // P_s in bracket local frame
+    const Ps_world = new THREE.Vector3(Ps_x, Ps_y, Ps_z);
+    const Ps_local = Ps_world.clone().sub(P_old).applyQuaternion(R_old.clone().invert());
+
+    // Rotation: align Ns → -Nt (faces mate)
+    const Ns_vec = new THREE.Vector3(Ns[0], Ns[1], Ns[2]);
+    const Nt_vec = new THREE.Vector3(Nt[0], Nt[1], Nt[2]);
+    const targetNormal = Nt_vec.clone().negate(); // mate faces opposite
+
+    const R_delta = new THREE.Quaternion().setFromUnitVectors(Ns_vec, targetNormal);
+    const R_new = R_delta.clone().multiply(R_old);
+
+    // Position: after rotation, Ps_local transforms to Ps_new_world = R_new * Ps_local + P_new
+    // We want Ps_new_world = Pt_world
+    const Pt_world = new THREE.Vector3(Pt_x, Pt_y, Pt_z);
+    const Ps_local_rotated = Ps_local.clone().applyQuaternion(R_new);
+    const P_new = Pt_world.clone().sub(Ps_local_rotated);
+
+    // Convert rotation back to Euler (degrees, ZYX)
+    const newEuler = new THREE.Euler().setFromQuaternion(R_new, 'ZYX');
+    const newRoll = Math.round(THREE.MathUtils.radToDeg(newEuler.x));
+    const newPitch = Math.round(THREE.MathUtils.radToDeg(newEuler.y));
+    const newYaw = Math.round(THREE.MathUtils.radToDeg(newEuler.z));
+
+    // Update bracket
+    const updated: BracketInstance = {
+      ...bracket,
+      position: { x: Math.round(P_new.x), y: Math.round(P_new.y), z: Math.round(P_new.z) },
+      rotation: { roll: newRoll, pitch: newPitch, yaw: newYaw },
+      connectedParts: [...new Set([...bracket.connectedParts, mateTargetHit.objectName])],
+    };
+
+    set((s) => ({
+      brackets: s.brackets.map((b) => (b.id === mateBracketId ? updated : b)),
+      selectedBracketId: mateBracketId,
+      mateState: 'idle',
+      mateBracketId: null,
+      mateSourceHit: null,
+      mateTargetHit: null,
+    }));
+
+    console.log('[Mate] Applied:', {
+      bracket: bracket.name,
+      oldPos: bracket.position,
+      newPos: updated.position,
+      oldRot: bracket.rotation,
+      newRot: updated.rotation,
+      target: mateTargetHit.objectName,
+    });
+  },
+
+  resetBracketsToDefault: () => {
+    const { currentParams, defaultBracketCount } = get();
+    const defaults = generateDefaultBrackets(
+      currentParams.templateId,
+      currentParams.width,
+      currentParams.depth,
+      currentParams.height,
+      currentParams.tabletopThickness,
+      30,
+    );
+    set({ brackets: defaults, defaultBracketCount: defaults.length, selectedBracketId: null });
+  },
+
+  setBrackets: (brackets: BracketInstance[]) =>
+    set({ brackets, defaultBracketCount: brackets.length }),
 }));
 
 // ============================================================

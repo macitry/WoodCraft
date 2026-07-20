@@ -23,6 +23,14 @@ const FurnitureViewer: React.FC<FurnitureViewerProps> = ({
 }) => {
   const model = useModelStore((s) => s.model);
   const isLoading = useModelStore((s) => s.isLoading);
+  const placementMode = useModelStore((s) => s.placementMode);
+  const mateState = useModelStore((s) => s.mateState);
+
+  const matePrompt = mateState === 'selecting_source_face'
+    ? '⚓ Mate Step 1/2: Click on the BRACKET surface (select face to mate)'
+    : mateState === 'selecting_target_face'
+    ? '⚓ Mate Step 2/2: Click on the TARGET part surface (where to attach)'
+    : null;
 
   return (
     <div className="w-full h-full relative bg-[#1a1a2e]">
@@ -31,6 +39,26 @@ const FurnitureViewer: React.FC<FurnitureViewerProps> = ({
 
       {/* Loading overlay */}
       {isLoading && <LoadingOverlay />}
+
+      {/* Snap mode indicator */}
+      {placementMode && (
+        <div className="absolute top-3 left-1/2 -translate-x-1/2 z-20 pointer-events-none">
+          <div className="px-4 py-1.5 rounded-full bg-green-800/80 border border-green-600 text-green-300 text-xs backdrop-blur-sm flex items-center gap-2">
+            <span className="w-2 h-2 rounded-full bg-green-400 animate-pulse" />
+            Snap Mode — click on a part surface to place bracket
+          </div>
+        </div>
+      )}
+
+      {/* Mate mode indicator */}
+      {matePrompt && (
+        <div className="absolute top-3 left-1/2 -translate-x-1/2 z-20 pointer-events-none">
+          <div className="px-4 py-1.5 rounded-full bg-yellow-800/80 border border-yellow-600 text-yellow-200 text-xs backdrop-blur-sm flex items-center gap-2">
+            <span className="w-2 h-2 rounded-full bg-yellow-400 animate-pulse" />
+            {matePrompt}
+          </div>
+        </div>
+      )}
 
       <Canvas
         shadows="soft"

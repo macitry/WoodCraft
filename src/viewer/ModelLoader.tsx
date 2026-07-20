@@ -2,7 +2,7 @@ import { useMemo, Suspense, useRef } from 'react';
 import * as THREE from 'three';
 import { useLoader } from '@react-three/fiber';
 import { STLLoader } from 'three-stdlib';
-import type { FurnitureModel, Component, TabletopHole } from '../types/furniture';
+import type { FurnitureModel, Component, TabletopHole, BracketInstance } from '../types/furniture';
 import type { DxfTabletopShape } from '../utils/dxfImport';
 import { TEMPLATE_LAYOUTS } from '../types/furniture';
 import { useModelStore } from '../store/modelStore';
@@ -699,9 +699,9 @@ const PartRenderer: React.FC<PartRendererProps> = ({
   }
 
   // When tabletop has user holes, use procedural ExtrudeGeometry with cutouts
-  // Bracket parts — render procedural gusset
+  // Bracket parts — skip old auto-computed ones; user brackets render separately
   if (part.partType === 'bracket') {
-    return <BracketPart part={part} model={model} isSelected={isSelected} onClick={onClick} materialProps={materialProps} layout={layoutCfg} />;
+    return null;
   }
 
   const hasTabletopHoles = part.partType === 'tabletop' && holes.length > 0;
@@ -757,12 +757,76 @@ const GroundPlane: React.FC = () => {
 };
 
 // ============================================================
+// UserBrackets — renders user-editable brackets from the store
+// ============================================================
+
+/** URL for the cast corner bracket STL model. */
+const BRACKET_STL_URL = '/Cast_Corner_Bracket.stl';
+
+interface UserBracketPartProps {
+  bracket: BracketInstance;
+  isSelected: boolean;
+  onClick: () => void;
+}
+
+/** Renders a single bracket using the real cast corner bracket STL model. */
+const UserBracketPart: React.FC<UserBracketPartProps> = ({
+  bracket,
+  isSelected,
+  onClick,
+}) => {
+  const geom = useLoader(STLLoader, BRACKET_STL_URL);
+
+  // Clone so each bracket instance has its own geometry reference
+  const cloned = useMemo(() => geom.clone(), [geom]);
+
+  // Position: world coords (mm → m)
+  const pos: [number, number, number] = [
+    mm(bracket.position.x),
+    mm(bracket.position.y),
+    mm(bracket.position.z),
+  ];
+
+  // Rotation: degrees → radians (intrinsic ZYX)
+  const rot: [number, number, number] = [
+    THREE.MathUtils.degToRad(bracket.rotation.roll),
+    THREE.MathUtils.degToRad(bracket.rotation.pitch),
+    THREE.MathUtils.degToRad(bracket.rotation.yaw),
+  ];
+
+  return (
+    <Suspense fallback={null}>
+      <mesh
+        geometry={cloned}
+        position={pos}
+        rotation={rot}
+        scale={[MM_TO_M, MM_TO_M, MM_TO_M]}
+        castShadow
+        receiveShadow
+        onClick={(e) => { e.stopPropagation(); onClick(); }}
+      >
+        <meshStandardMaterial
+          color="#707070"
+          metalness={0.9}
+          roughness={0.25}
+          emissive={isSelected ? '#ffffff' : '#000000'}
+          emissiveIntensity={isSelected ? 0.15 : 0}
+        />
+      </mesh>
+    </Suspense>
+  );
+};
+
+// ============================================================
 // ModelLoader — main export
 // ============================================================
 
 const ModelLoader: React.FC<ModelLoaderProps> = ({ model }) => {
   const selectedComponentId = useModelStore((s) => s.selectedComponentId);
   const selectComponent = useModelStore((s) => s.selectComponent);
+  const brackets = useModelStore((s) => s.brackets);
+  const selectedBracketId = useModelStore((s) => s.selectedBracketId);
+  const selectBracket = useModelStore((s) => s.selectBracket);
 
   // Debug logging
   const loggedRef = useRef(false);
@@ -821,6 +885,22 @@ const ModelLoader: React.FC<ModelLoaderProps> = ({ model }) => {
           }
         />
       ))}
+
+      {/* User-defined corner brackets — rendered with real cast bracket STL */}
+      {brackets
+        .filter((b) => b.enabled)
+        .map((bracket) => (
+          <UserBracketPart
+            key={bracket.id}
+            bracket={bracket}
+            isSelected={selectedBracketId === bracket.id}
+            onClick={() =>
+              selectBracket(
+                selectedBracketId === bracket.id ? null : bracket.id,
+              )
+            }
+          />
+        ))}
     </group>
   );
 };

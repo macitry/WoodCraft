@@ -226,6 +226,77 @@ export const TEMPLATE_LAYOUTS: Record<string, TemplateLayoutConfig> = {
   },
 };
 
+// ============================================================
+// DIY Mode — free-form aluminum profile frame builder
+// ============================================================
+
+export type ProfileSize = '2020' | '3030' | '4040';
+export type AxisDir = 'X' | 'Y' | 'Z';
+export type FaceDir = '+X' | '-X' | '+Y' | '-Y' | '+Z' | '-Z';
+
+/** A single aluminum profile in the DIY frame. */
+export interface DiyProfile {
+  id: string;
+  profileSize: ProfileSize;
+  /** Length in mm — fixed after initial placement + stretch. */
+  length: number;
+  /** Center position in mm (assembly frame). */
+  position: { x: number; y: number; z: number };
+  /** Axis direction of the profile. */
+  direction: AxisDir;
+  /** Parent profile ID (null = root, placed independently). */
+  parentId: string | null;
+  /** Which face of the parent this profile attaches to. */
+  parentFace: FaceDir | null;
+  /** Offset along parent axis from parent center (mm). */
+  parentOffset: number;
+}
+
+/** A corner bracket in the DIY frame. */
+export interface DiyBracket {
+  id: string;
+  position: { x: number; y: number; z: number };
+  rotation: { roll: number; pitch: number; yaw: number };
+  connectedProfiles: string[];
+  enabled: boolean;
+}
+
+/** DIY editor mode. */
+export type DiyMode =
+  | 'idle'
+  | 'stretching'
+  | 'selecting_direction'
+  | 'placing_bracket';
+
+/** Profile size → cross-section dimension (mm). */
+export const PROFILE_DIMS: Record<ProfileSize, number> = {
+  '2020': 20,
+  '3030': 30,
+  '4040': 40,
+};
+
+/** Allowed growth directions for each profile axis (face → available directions). */
+export const GROWTH_DIRS: Record<AxisDir, Record<string, AxisDir[]>> = {
+  X: {
+    '+Y': ['X', 'Y', 'Z'],
+    '-Y': ['X', 'Y', 'Z'],
+    '+Z': ['X', 'Y', 'Z'],
+    '-Z': ['X', 'Y', 'Z'],
+  },
+  Y: {
+    '+X': ['X', 'Y', 'Z'],
+    '-X': ['X', 'Y', 'Z'],
+    '+Z': ['X', 'Y', 'Z'],
+    '-Z': ['X', 'Y', 'Z'],
+  },
+  Z: {
+    '+X': ['X', 'Y', 'Z'],
+    '-X': ['X', 'Y', 'Z'],
+    '+Y': ['X', 'Y', 'Z'],
+    '-Y': ['X', 'Y', 'Z'],
+  },
+};
+
 /** Frontend template ID → backend template ID (some share the same YAML). */
 export const TEMPLATE_BACKEND_ID: Record<string, string> = {
   'basic-desk': 'basic-desk',
@@ -241,4 +312,33 @@ export interface TabletopHole {
   y: number;       // center Y (mm, from tabletop center, depth = +Y)
   radius: number;  // mm
   type: 'circle';
+}
+
+/** Mate state machine for SolidWorks-style assembly. */
+export type MateState = 'idle' | 'selecting_source_face' | 'selecting_target_face';
+
+/** Data captured during mate face selection. */
+export interface MateHit {
+  /** World-space hit point (meters, Three.js coords). */
+  point: [number, number, number];
+  /** World-space face normal (unit vector). */
+  normal: [number, number, number];
+  /** Name of the hit object. */
+  objectName: string;
+}
+
+/** A user-editable corner bracket / connector instance.
+ *  Position and rotation are in the same assembly frame as solver parts
+ *  (mm for position, degrees for rotation). */
+export interface BracketInstance {
+  id: string;
+  name: string;
+  /** World-space position in mm (assembly frame). */
+  position: { x: number; y: number; z: number };
+  /** Rotation in degrees (intrinsic ZYX Euler). */
+  rotation: { roll: number; pitch: number; yaw: number };
+  /** Which component IDs this bracket connects. */
+  connectedParts: string[];
+  /** Whether to render this bracket. */
+  enabled: boolean;
 }
