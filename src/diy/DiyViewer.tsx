@@ -40,11 +40,12 @@ const DiyViewer: React.FC = () => {
       raycaster.ray.intersectPlane(plane, hit);
 
       if (hit) {
-        // Place at hit position, default X axis, aligned to 10mm grid
+        // Place vertical (Y) by default, aligned to 10mm grid.
+        // Y position = half length so bottom rests on ground.
         const px = Math.round(hit.x * 1000 / 10) * 10;
         const pz = Math.round(hit.z * 1000 / 10) * 10;
-        const dim = { '2020': 20, '3030': 30, '4040': 40 }[size];
-        addRootProfile(size, { x: px, y: dim / 2, z: pz }, 'X' as AxisDir);
+        const dim = { '2020': 20, '3030': 30, '4040': 40 }[size] ?? 30;
+        addRootProfile(size, { x: px, y: 50, z: pz }, 'Y' as AxisDir);
       }
     },
     [addRootProfile],

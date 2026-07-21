@@ -1,10 +1,10 @@
-import { useRef } from 'react';
+import { useRef, useEffect } from 'react';
 import { useThree } from '@react-three/fiber';
 import { OrbitControls } from '@react-three/drei';
 import type { OrbitControls as OrbitControlsImpl } from 'three-stdlib';
+import { useDiyStore } from '../store/diyStore';
 import Lighting from '../viewer/Lighting';
 import DiyProfileRenderer from './DiyProfileRenderer';
-import DiyDirectionArrows from './DiyDirectionArrows';
 import DiyStretchGizmo from './DiyStretchGizmo';
 import DiyBracketRenderer from './DiyBracketRenderer';
 
@@ -15,8 +15,12 @@ interface DiySceneProps {
 const DiyScene: React.FC<DiySceneProps> = ({ onCameraReady }) => {
   const camera = useThree((s) => s.camera);
   const controlsRef = useRef<OrbitControlsImpl | null>(null);
+  const setControlsRef = useDiyStore((s) => s.setControlsRef);
 
-  // Notify parent of camera ref
+  useEffect(() => {
+    setControlsRef(controlsRef as React.MutableRefObject<OrbitControlsImpl | null>);
+  }, [setControlsRef, controlsRef]);
+
   useRef(() => {
     onCameraReady(camera as THREE.PerspectiveCamera);
   }).current?.();
@@ -46,7 +50,6 @@ const DiyScene: React.FC<DiySceneProps> = ({ onCameraReady }) => {
 
       <DiyProfileRenderer />
       <DiyBracketRenderer />
-      <DiyDirectionArrows />
       <DiyStretchGizmo />
     </>
   );

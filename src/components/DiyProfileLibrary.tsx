@@ -9,10 +9,6 @@ const SIZES: { id: ProfileSize; label: string; color: string; desc: string }[] =
 ];
 
 const DiyProfileLibrary: React.FC = () => {
-  const mode = useDiyStore((s) => s.mode);
-  const addRootProfile = useDiyStore((s) => s.addRootProfile);
-  const addChildProfile = useDiyStore((s) => s.addChildProfile);
-  const attachParentId = useDiyStore((s) => s.attachParentId);
 
   const handleDragStart = (e: React.DragEvent, size: ProfileSize) => {
     e.dataTransfer.setData('application/diy-profile', size);
@@ -61,13 +57,14 @@ const DiyProfileLibrary: React.FC = () => {
           </div>
         ))}
 
-        {/* Attach prompt */}
-        {attachParentId && mode === 'selecting_direction' && (
-          <div className="mt-3 p-3 rounded-lg bg-yellow-900/30 border border-yellow-800 text-yellow-300 text-xs">
-            <p className="font-medium mb-1">Attach Mode</p>
-            <p>Click a direction arrow in the scene, or press Esc to cancel.</p>
-          </div>
-        )}
+        {/* Help */}
+        <div className="mt-4 p-3 rounded-lg bg-neutral-900/50 border border-neutral-800 text-neutral-500 text-[10px] space-y-1">
+          <p><span className="text-neutral-400">Click</span> profile → select</p>
+          <p><span className="text-neutral-400">Shift+Click</span> face → grow new</p>
+          <p><span className="text-neutral-400">Ctrl+Click</span> face → bracket (2x)</p>
+          <p><span className="text-neutral-400">Drag</span> arrow → stretch</p>
+          <p><span className="text-neutral-400">Drag</span> from library → place root</p>
+        </div>
       </div>
     </div>
   );

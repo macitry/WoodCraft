@@ -259,6 +259,8 @@ export interface DiyBracket {
   rotation: { roll: number; pitch: number; yaw: number };
   connectedProfiles: string[];
   enabled: boolean;
+  /** Cube edge length (mm), matches profile cross-section. */
+  size: number;
 }
 
 /** DIY editor mode. */

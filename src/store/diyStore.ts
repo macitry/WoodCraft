@@ -1,4 +1,7 @@
 import { create } from 'zustand';
+import * as THREE from 'three';
+import type { MutableRefObject } from 'react';
+import type { OrbitControls as OrbitControlsImpl } from 'three-stdlib';
 import type {
   DiyProfile,
   DiyBracket,
@@ -11,6 +14,29 @@ import type {
 let _nextId = 1;
 function uid(): string {
   return `diy_${_nextId++}_${Date.now().toString(36)}`;
+}
+
+/** Compute quaternion that maps two source vectors to two target vectors (orthonormal). */
+function quatFromTwoVectors(
+  s1: THREE.Vector3, s2: THREE.Vector3,
+  t1: THREE.Vector3, t2: THREE.Vector3,
+): THREE.Quaternion {
+  // Build orthonormal frames
+  const s3 = new THREE.Vector3().crossVectors(s1, s2).normalize();
+  const t3 = new THREE.Vector3().crossVectors(t1, t2).normalize();
+  const mS = new THREE.Matrix3().set(
+    s1.x, s2.x, s3.x,
+    s1.y, s2.y, s3.y,
+    s1.z, s2.z, s3.z,
+  );
+  const mT = new THREE.Matrix3().set(
+    t1.x, t2.x, t3.x,
+    t1.y, t2.y, t3.y,
+    t1.z, t2.z, t3.z,
+  );
+  return new THREE.Quaternion().setFromRotationMatrix(
+    new THREE.Matrix3().multiplyMatrices(mT, mS.transpose()),
+  );
 }
 
 interface DiyState {
@@ -33,11 +59,23 @@ interface DiyState {
   // Actions
   addRootProfile: (size: ProfileSize, pos: { x: number; y: number; z: number }, dir: AxisDir) => DiyProfile;
   addChildProfile: (size: ProfileSize) => DiyProfile | null;
+  /** Grow a new profile from a face of an existing profile. */
+  growFromFace: (parentId: string, face: FaceDir, hitPos: { x: number; y: number; z: number }) => void;
   removeProfile: (id: string) => void;
   selectProfile: (id: string | null) => void;
   setStretchProfile: (id: string | null, end: 'start' | 'end' | null) => void;
   updateProfileLength: (id: string, length: number) => void;
+  /** Update length and reposition so the fixed end stays in place. */
+  updateProfilePosition: (id: string, newLen: number, axIdx: number, fixedEnd: { x: number; y: number; z: number }) => void;
   setMode: (mode: DiyMode) => void;
+  controlsRef: MutableRefObject<OrbitControlsImpl | null> | null;
+  setControlsRef: (ref: MutableRefObject<OrbitControlsImpl | null>) => void;
+
+  // Two-face bracket placement
+  bracketFace1: { profileId: string; face: FaceDir; hitPos: { x: number; y: number; z: number } } | null;
+  bracketFace2: { profileId: string; face: FaceDir; hitPos: { x: number; y: number; z: number } } | null;
+  selectBracketFace: (profileId: string, face: FaceDir, hitPos: { x: number; y: number; z: number }) => void;
+  clearBracketFaces: () => void;
   setAttachTarget: (parentId: string, face: FaceDir, hitPos: { x: number; y: number; z: number }) => void;
   clearAttach: () => void;
 
@@ -68,7 +106,7 @@ export const useDiyStore = create<DiyState>((set, get) => ({
     const p: DiyProfile = {
       id: uid(),
       profileSize: size,
-      length: Math.max(20, 500),
+      length: 100,
       position: pos,
       direction: dir,
       parentId: null,
@@ -113,7 +151,7 @@ export const useDiyStore = create<DiyState>((set, get) => ({
     const child: DiyProfile = {
       id: uid(),
       profileSize: size,
-      length: 300, // default child length
+      length: 100, // default child length
       position: pPos,
       direction: childDir,
       parentId: attachParentId,
@@ -154,12 +192,170 @@ export const useDiyStore = create<DiyState>((set, get) => ({
 
   updateProfileLength: (id, length) =>
     set((s) => ({
-      profiles: s.profiles.map((p) =>
-        p.id === id ? { ...p, length: Math.max(20, Math.round(length || 20)) } : p,
-      ),
+      profiles: s.profiles.map((p) => {
+        if (p.id !== id) return p;
+        const newLen = Math.max(20, Math.round(length || 20));
+        const oldHalfM = (p.length * 0.001) / 2;
+        const newHalfM = (newLen * 0.001) / 2;
+        const axIdx = p.direction === 'X' ? 0 : p.direction === 'Y' ? 1 : 2;
+        const axisKey = (['x', 'y', 'z'] as const)[axIdx];
+        // Fixed end = bottom = center - old halfLen
+        const fixedEnd = p.position[axisKey] - Math.round(oldHalfM * 1000);
+        // New center = fixed end + new halfLen
+        const newPos = { ...p.position };
+        newPos[axisKey] = fixedEnd + Math.round(newHalfM * 1000);
+        return { ...p, length: newLen, position: newPos };
+      }),
     })),
 
+  updateProfilePosition: (id, newLen, axIdx, fixedEnd) =>
+    set((s) => ({
+      profiles: s.profiles.map((p) => {
+        if (p.id !== id) return p;
+        const newHalfLenM = (Math.max(20, Math.round(newLen)) * 0.001) / 2;
+        // Center = fixedEnd ± newHalfLen along axis
+        const newPos = { ...p.position };
+        const axisKey = (['x', 'y', 'z'] as const)[axIdx];
+        const sign = p.position[axisKey] > (fixedEnd as Record<string, number>)[axisKey] ? 1 : -1;
+        newPos[axisKey] = Math.round(((fixedEnd as Record<string, number>)[axisKey] + sign * newHalfLenM) * 1000);
+        return { ...p, length: Math.max(20, Math.round(newLen)), position: newPos };
+      }),
+    })),
+
+  growFromFace: (parentId, face, hitPos) => {
+    const { profiles } = get();
+    const parent = profiles.find((p) => p.id === parentId);
+    if (!parent) return;
+
+    const dim = { '2020': 20, '3030': 30, '4040': 40 }[parent.profileSize] ?? 30;
+    const axis = face[1].toLowerCase() as 'x' | 'y' | 'z';
+    const sign = face.startsWith('+') ? 1 : -1;
+
+    // Child direction = face normal direction
+    const faceToDir: Record<string, AxisDir> = {
+      '+X': 'X', '-X': 'X', '+Y': 'Y', '-Y': 'Y', '+Z': 'Z', '-Z': 'Z',
+    };
+    const childDir = faceToDir[face] ?? 'Y';
+
+    // Child position: centered on the parent face, bottom flush to face
+    const childLen = 100;
+    const childPos = { ...parent.position };
+    // Align to parent face center along non-axis directions
+    childPos[axis] = hitPos[axis] + sign * Math.round(childLen / 2);
+
+    // Parent offset: project hit point onto parent axis
+    const parentAxis = parent.direction.toLowerCase() as 'x' | 'y' | 'z';
+    const offset = Math.round(hitPos[parentAxis] - parent.position[parentAxis]);
+
+    const child: DiyProfile = {
+      id: uid(),
+      profileSize: parent.profileSize,
+      length: 100,
+      position: childPos,
+      direction: childDir,
+      parentId: parent.id,
+      parentFace: face,
+      parentOffset: offset,
+    };
+
+    set((s) => ({
+      profiles: [...s.profiles, child],
+      selectedProfileId: child.id,
+    }));
+  },
+
   setMode: (mode) => set({ mode }),
+  controlsRef: null,
+  setControlsRef: (ref) => set({ controlsRef: ref }),
+
+  bracketFace1: null,
+  bracketFace2: null,
+
+  selectBracketFace: (profileId, face, hitPos) => {
+    const s = get();
+    console.log('[Bracket] Face selected:', { profileId: profileId.slice(-6), face, hitPos });
+    if (!s.bracketFace1) {
+      set({ bracketFace1: { profileId, face, hitPos }, bracketFace2: null });
+      console.log('[Bracket] First face stored. Ctrl+Click another face to place bracket.');
+    } else if (s.bracketFace1.profileId !== profileId || s.bracketFace1.face !== face) {
+      const f1 = s.bracketFace1;
+      const f1Axis = f1.face[1].toLowerCase() as 'x' | 'y' | 'z';
+      const f2Axis = face[1].toLowerCase() as 'x' | 'y' | 'z';
+
+      // Must be perpendicular faces (different axes)
+      if (f1Axis === f2Axis) {
+        console.warn('[Bracket] Cannot place on parallel faces. Pick faces with different normals.');
+        set({ bracketFace1: { profileId, face, hitPos }, bracketFace2: null }); // reset to this as first
+        return;
+      }
+
+      set({ bracketFace2: { profileId, face, hitPos } });
+
+      // Get profile dimension for cube size
+      const p1 = s.profiles.find((p) => p.id === f1.profileId);
+      const p2 = s.profiles.find((p) => p.id === profileId);
+      const dim = p1?.profileSize ? ({ '2020': 20, '3030': 30, '4040': 40 }[p1.profileSize] ?? 30) : 30;
+      const half = Math.round(dim / 2);
+      const f1Sign = f1.face.startsWith('+') ? 1 : -1;
+      const f2Sign = face.startsWith('+') ? 1 : -1;
+
+      // Bracket at intersection of two faces:
+      // - Face axes: position = face hit + push out by half cube size
+      // - Shared axis: use profile center (not click position) for alignment
+      const bp = { x: 0, y: 0, z: 0 };
+      const sharedAxis = (['x','y','z'] as const).find((a) => a !== f1Axis && a !== f2Axis)!;
+      for (const ax of ['x', 'y', 'z'] as const) {
+        if (ax === f1Axis) bp[ax] = f1.hitPos[ax] + f1Sign * half;
+        else if (ax === f2Axis) bp[ax] = hitPos[ax] + f2Sign * half;
+        else bp[ax] = (p2 ?? p1)!.position[sharedAxis]; // shared axis: align to profile
+      }
+
+      // Hardcoded rotations based on which two faces meet.
+      // Key: sorted face pair → {roll, pitch, yaw} in degrees
+      const ROT_MAP: Record<string, { roll: number; pitch: number; yaw: number }> = {
+        '+X+Y': { roll: 0, pitch: 0, yaw: 0 },
+        '+X-Y': { roll: 0, pitch: 0, yaw: 0 },
+        '-X+Y': { roll: 0, pitch: 0, yaw: 0 },
+        '-X-Y': { roll: 0, pitch: 0, yaw: 0 },
+        '+X+Z': { roll: 0, pitch: 0, yaw: 0 },
+        '+X-Z': { roll: 0, pitch: 0, yaw: 0 },
+        '-X+Z': { roll: 0, pitch: 0, yaw: 0 },
+        '-X-Z': { roll: 0, pitch: 0, yaw: 0 },
+        '+Y+Z': { roll: 0, pitch: 0, yaw: 0 },
+        '+Y-Z': { roll: 0, pitch: 0, yaw: 0 },
+        '-Y+Z': { roll: 0, pitch: 0, yaw: 0 },
+        '-Y-Z': { roll: 0, pitch: 0, yaw: 0 },
+      };
+      const pair = [f1.face, face].sort().join('');
+      const rot = ROT_MAP[pair] || { roll: 0, pitch: 0, yaw: 0 };
+
+      console.log('[Bracket] Placed at:', bp, 'dim:', dim, 'faces:', f1.face, face, 'rot:', rot);
+
+      try {
+        const bracket: DiyBracket = {
+          id: uid(),
+          position: bp,
+          rotation: rot,
+          connectedProfiles: [f1.profileId, profileId],
+          enabled: true,
+          size: dim,
+        };
+        set((st) => ({
+          brackets: [...st.brackets, bracket],
+          selectedBracketId: bracket.id,
+          bracketFace1: null,
+          bracketFace2: null,
+        }));
+        console.log('[Bracket] Created:', bracket.id.slice(-6), 'total brackets:', get().brackets.length);
+      } catch (err) {
+        console.error('[Bracket] Error creating bracket:', err);
+      }
+    } else {
+      set({ bracketFace1: null, bracketFace2: null });
+    }
+  },
+
+  clearBracketFaces: () => set({ bracketFace1: null, bracketFace2: null }),
 
   setAttachTarget: (parentId, face, hitPos) =>
     set({
