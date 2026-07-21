@@ -310,24 +310,17 @@ export const useDiyStore = create<DiyState>((set, get) => ({
         else bp[ax] = (p2 ?? p1)!.position[sharedAxis]; // shared axis: align to profile
       }
 
-      // Hardcoded rotations based on which two faces meet.
-      // Key: sorted face pair → {roll, pitch, yaw} in degrees
+      // Hardcoded verified rotations per face pair.
+      // Key: sorted face pair → {roll, pitch, yaw} in degrees.
       const ROT_MAP: Record<string, { roll: number; pitch: number; yaw: number }> = {
-        '+X+Y': { roll: 0, pitch: 0, yaw: 0 },
-        '+X-Y': { roll: 0, pitch: 0, yaw: 0 },
-        '-X+Y': { roll: 0, pitch: 0, yaw: 0 },
-        '-X-Y': { roll: 0, pitch: 0, yaw: 0 },
-        '+X+Z': { roll: 0, pitch: 0, yaw: 0 },
-        '+X-Z': { roll: 0, pitch: 0, yaw: 0 },
-        '-X+Z': { roll: 0, pitch: 0, yaw: 0 },
-        '-X-Z': { roll: 0, pitch: 0, yaw: 0 },
-        '+Y+Z': { roll: 0, pitch: 0, yaw: 0 },
-        '+Y-Z': { roll: 0, pitch: 0, yaw: 0 },
-        '-Y+Z': { roll: 0, pitch: 0, yaw: 0 },
-        '-Y-Z': { roll: 0, pitch: 0, yaw: 0 },
+        '+Z-Y': { roll: 90, pitch: 90, yaw: 90 },
+        '+Y+Z': { roll: 0, pitch: 270, yaw: 0 },
       };
       const pair = [f1.face, face].sort().join('');
       const rot = ROT_MAP[pair] || { roll: 0, pitch: 0, yaw: 0 };
+
+      console.log('[Bracket] Placed at:', bp, 'dim:', dim, 'faces:', f1.face, '+', face, 'pair:', pair, 'rot:', rot,
+        '(if wrong, tell me the correct roll/pitch/yaw for this face pair)');
 
       console.log('[Bracket] Placed at:', bp, 'dim:', dim, 'faces:', f1.face, face, 'rot:', rot);
 

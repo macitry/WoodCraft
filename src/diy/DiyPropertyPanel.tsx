@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import { useDiyStore } from '../store/diyStore';
 import { PROFILE_DIMS } from '../types/furniture';
 import type { DiyBracket, DiyProfile } from '../types/furniture';
@@ -108,54 +109,45 @@ const ProfileProps: React.FC<{ profile: DiyProfile }> = ({ profile }) => {
   );
 };
 
-/** Bracket property editor. */
+/** Bracket property editor. Uses local state, commits on blur/Enter. */
 const BracketProps: React.FC<{ bracket: DiyBracket }> = ({ bracket }) => {
   const updateBracket = useDiyStore((s) => s.updateBracket);
   const removeBracket = useDiyStore((s) => s.removeBracket);
 
+  const [localPos, setLocalPos] = useState({ ...bracket.position });
+  const [localRot, setLocalRot] = useState({ ...bracket.rotation });
+  const [localId, setLocalId] = useState(bracket.id);
+  if (bracket.id !== localId) {
+    setLocalId(bracket.id);
+    setLocalPos({ ...bracket.position });
+    setLocalRot({ ...bracket.rotation });
+  }
+
+  const commit = () => {
+    updateBracket(bracket.id, { position: localPos, rotation: localRot });
+    console.log('[Bracket DIY] Updated:', bracket.id.slice(-6), 'pos:', localPos, 'rot:', localRot);
+  };
+
+  const inputClass = "w-20 px-1.5 py-0.5 text-xs bg-neutral-900 border border-neutral-700 rounded text-neutral-200 text-right tabular-nums focus:border-wood-600 focus:outline-none";
+
   return (
     <div className="space-y-3">
       <h4 className="text-sm text-white font-medium">Bracket</h4>
-
       <div className="space-y-2 text-xs">
-        {(['x', 'y', 'z'] as const).map((axis) => (
-          <div key={axis} className="flex justify-between items-center">
-            <span className="text-neutral-400">Position {axis.toUpperCase()}</span>
-            <input
-              type="number"
-              value={Math.round(bracket.position[axis])}
-              onChange={(e) =>
-                updateBracket(bracket.id, {
-                  position: { ...bracket.position, [axis]: Number(e.target.value) },
-                })
-              }
-              className="w-20 px-1.5 py-0.5 text-xs bg-neutral-900 border border-neutral-700 rounded text-neutral-200 text-right tabular-nums focus:border-wood-600 focus:outline-none"
-              step={1}
-            />
+        {(['x','y','z'] as const).map((ax) => (
+          <div key={ax} className="flex justify-between items-center">
+            <span className="text-neutral-400">Position {ax.toUpperCase()}</span>
+            <input type="number" value={Math.round(localPos[ax])} onChange={(e) => setLocalPos({ ...localPos, [ax]: Number(e.target.value) || 0 })} onBlur={commit} onKeyDown={(e) => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur(); }} className={inputClass} step={1} />
           </div>
         ))}
-        {(['roll', 'pitch', 'yaw'] as const).map((r) => (
+        {(['roll','pitch','yaw'] as const).map((r) => (
           <div key={r} className="flex justify-between items-center">
             <span className="text-neutral-400">Rotation {r}</span>
-            <input
-              type="number"
-              value={Math.round(bracket.rotation[r])}
-              onChange={(e) =>
-                updateBracket(bracket.id, {
-                  rotation: { ...bracket.rotation, [r]: Number(e.target.value) },
-                })
-              }
-              className="w-20 px-1.5 py-0.5 text-xs bg-neutral-900 border border-neutral-700 rounded text-neutral-200 text-right tabular-nums focus:border-wood-600 focus:outline-none"
-              step={1}
-            />
+            <input type="number" value={Math.round(localRot[r])} onChange={(e) => setLocalRot({ ...localRot, [r]: Number(e.target.value) || 0 })} onBlur={commit} onKeyDown={(e) => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur(); }} className={inputClass} step={1} />
           </div>
         ))}
       </div>
-
-      <button
-        onClick={() => removeBracket(bracket.id)}
-        className="w-full px-3 py-1.5 text-xs rounded bg-red-900/30 hover:bg-red-900/60 text-red-400 transition-colors cursor-pointer"
-      >
+      <button onClick={() => removeBracket(bracket.id)} className="w-full px-3 py-1.5 text-xs rounded bg-red-900/30 hover:bg-red-900/60 text-red-400 transition-colors cursor-pointer">
         Delete Bracket
       </button>
     </div>
