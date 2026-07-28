@@ -109,49 +109,89 @@ const ProfileProps: React.FC<{ profile: DiyProfile }> = ({ profile }) => {
   );
 };
 
-/** Bracket property editor. Uses local state, commits on blur/Enter. */
+/** Bracket property editor with anchor offset. */
 const BracketProps: React.FC<{ bracket: DiyBracket }> = ({ bracket }) => {
   const updateBracket = useDiyStore((s) => s.updateBracket);
   const removeBracket = useDiyStore((s) => s.removeBracket);
+  const openBracketEditor = useDiyStore((s) => s.openBracketEditor);
 
-  const [localPos, setLocalPos] = useState({ ...bracket.position });
-  const [localRot, setLocalRot] = useState({ ...bracket.rotation });
+  const [local, setLocal] = useState({
+    pos: { ...bracket.position },
+    rot: { ...bracket.rotation },
+    aPos: { ...bracket.anchorPosition },
+    aRot: { ...bracket.anchorRotation },
+  });
   const [localId, setLocalId] = useState(bracket.id);
   if (bracket.id !== localId) {
     setLocalId(bracket.id);
-    setLocalPos({ ...bracket.position });
-    setLocalRot({ ...bracket.rotation });
+    setLocal({ pos: { ...bracket.position }, rot: { ...bracket.rotation }, aPos: { ...bracket.anchorPosition }, aRot: { ...bracket.anchorRotation } });
   }
 
   const commit = () => {
-    updateBracket(bracket.id, { position: localPos, rotation: localRot });
-    console.log('[Bracket DIY] Updated:', bracket.id.slice(-6), 'pos:', localPos, 'rot:', localRot);
+    updateBracket(bracket.id, { position: local.pos, rotation: local.rot, anchorPosition: local.aPos, anchorRotation: local.aRot });
+    console.log('[Bracket DIY]', bracket.id.slice(-6), 'pos:', local.pos, 'rot:', local.rot, 'anchor:', local.aPos, local.aRot);
   };
 
-  const inputClass = "w-20 px-1.5 py-0.5 text-xs bg-neutral-900 border border-neutral-700 rounded text-neutral-200 text-right tabular-nums focus:border-wood-600 focus:outline-none";
+  const cls = "w-20 px-1.5 py-0.5 text-xs bg-neutral-900 border border-neutral-700 rounded text-neutral-200 text-right tabular-nums focus:border-wood-600 focus:outline-none";
 
   return (
     <div className="space-y-3">
-      <h4 className="text-sm text-white font-medium">Bracket</h4>
-      <div className="space-y-2 text-xs">
+      <h4 className="text-sm text-white font-medium cursor-pointer" onDoubleClick={() => openBracketEditor(bracket.id)} title="Double-click to edit in isolation">Bracket</h4>
+
+      <Section label="World Position">
         {(['x','y','z'] as const).map((ax) => (
-          <div key={ax} className="flex justify-between items-center">
-            <span className="text-neutral-400">Position {ax.toUpperCase()}</span>
-            <input type="number" value={Math.round(localPos[ax])} onChange={(e) => setLocalPos({ ...localPos, [ax]: Number(e.target.value) || 0 })} onBlur={commit} onKeyDown={(e) => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur(); }} className={inputClass} step={1} />
-          </div>
+          <Row key={ax} label={ax.toUpperCase()}>
+            <input type="number" value={Math.round(local.pos[ax])} onChange={(e) => setLocal({ ...local, pos: { ...local.pos, [ax]: Number(e.target.value) || 0 } })} onBlur={commit} onKeyDown={(e) => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur(); }} className={cls} step={1} />
+          </Row>
         ))}
+      </Section>
+
+      <Section label="World Rotation (°)">
         {(['roll','pitch','yaw'] as const).map((r) => (
-          <div key={r} className="flex justify-between items-center">
-            <span className="text-neutral-400">Rotation {r}</span>
-            <input type="number" value={Math.round(localRot[r])} onChange={(e) => setLocalRot({ ...localRot, [r]: Number(e.target.value) || 0 })} onBlur={commit} onKeyDown={(e) => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur(); }} className={inputClass} step={1} />
-          </div>
+          <Row key={r} label={r}>
+            <input type="number" value={Math.round(local.rot[r])} onChange={(e) => setLocal({ ...local, rot: { ...local.rot, [r]: Number(e.target.value) || 0 } })} onBlur={commit} onKeyDown={(e) => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur(); }} className={cls} step={1} />
+          </Row>
         ))}
-      </div>
+      </Section>
+
+      <Section label="Anchor Offset (mm)">
+        {(['x','y','z'] as const).map((ax) => (
+          <Row key={ax} label={ax.toUpperCase()}>
+            <input type="number" value={Math.round(local.aPos[ax])} onChange={(e) => setLocal({ ...local, aPos: { ...local.aPos, [ax]: Number(e.target.value) || 0 } })} onBlur={commit} onKeyDown={(e) => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur(); }} className={cls} step={1} />
+          </Row>
+        ))}
+      </Section>
+
+      <Section label="Anchor Rotation (°)">
+        {(['roll','pitch','yaw'] as const).map((r) => (
+          <Row key={r} label={r}>
+            <input type="number" value={Math.round(local.aRot[r])} onChange={(e) => setLocal({ ...local, aRot: { ...local.aRot, [r]: Number(e.target.value) || 0 } })} onBlur={commit} onKeyDown={(e) => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur(); }} className={cls} step={1} />
+          </Row>
+        ))}
+      </Section>
+
+      <button onClick={() => useDiyStore.getState().openBracketEditor(bracket.id)} className="w-full px-3 py-1.5 text-xs rounded bg-blue-900/40 hover:bg-blue-900/70 text-blue-400 transition-colors cursor-pointer">
+        Edit in Isolation
+      </button>
       <button onClick={() => removeBracket(bracket.id)} className="w-full px-3 py-1.5 text-xs rounded bg-red-900/30 hover:bg-red-900/60 text-red-400 transition-colors cursor-pointer">
         Delete Bracket
       </button>
     </div>
   );
 };
+
+const Section: React.FC<{ label: string; children: React.ReactNode }> = ({ label, children }) => (
+  <div className="space-y-1.5">
+    <p className="text-[10px] text-neutral-500 uppercase">{label}</p>
+    <div className="space-y-1">{children}</div>
+  </div>
+);
+
+const Row: React.FC<{ label: string; children: React.ReactNode }> = ({ label, children }) => (
+  <div className="flex justify-between items-center">
+    <span className="text-neutral-400 text-xs">{label}</span>
+    {children}
+  </div>
+);
 
 export default DiyPropertyPanel;

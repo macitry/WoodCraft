@@ -71,11 +71,19 @@ interface DiyState {
   controlsRef: MutableRefObject<OrbitControlsImpl | null> | null;
   setControlsRef: (ref: MutableRefObject<OrbitControlsImpl | null>) => void;
 
-  // Two-face bracket placement
+  // Two-face bracket placement (legacy Ctrl+click)
   bracketFace1: { profileId: string; face: FaceDir; hitPos: { x: number; y: number; z: number } } | null;
   bracketFace2: { profileId: string; face: FaceDir; hitPos: { x: number; y: number; z: number } } | null;
   selectBracketFace: (profileId: string, face: FaceDir, hitPos: { x: number; y: number; z: number }) => void;
   clearBracketFaces: () => void;
+
+  // Attach target: double-click face → purple highlight → place connector from sidebar
+  attachTarget: { profileId: string; face: FaceDir; hitPos: { x: number; y: number; z: number } } | null;
+  setAttachTargetFromFace: (profileId: string, face: FaceDir, hitPos: { x: number; y: number; z: number }) => void;
+  clearAttachTarget: () => void;
+
+  // Place bracket on current attach target
+  placeBracketOnTarget: () => void;
   setAttachTarget: (parentId: string, face: FaceDir, hitPos: { x: number; y: number; z: number }) => void;
   clearAttach: () => void;
 
@@ -84,6 +92,8 @@ interface DiyState {
   updateBracket: (id: string, patch: Partial<DiyBracket>) => void;
   removeBracket: (id: string) => void;
   selectBracket: (id: string | null) => void;
+  editingBracketId: string | null;
+  openBracketEditor: (id: string) => void;
 
   // Bulk
   getProfilesByParent: (parentId: string) => DiyProfile[];
@@ -310,17 +320,60 @@ export const useDiyStore = create<DiyState>((set, get) => ({
         else bp[ax] = (p2 ?? p1)!.position[sharedAxis]; // shared axis: align to profile
       }
 
-      // Hardcoded verified rotations per face pair.
-      // Key: sorted face pair → {roll, pitch, yaw} in degrees.
-      const ROT_MAP: Record<string, { roll: number; pitch: number; yaw: number }> = {
-        '+Z-Y': { roll: 90, pitch: 90, yaw: 90 },
-        '+Y+Z': { roll: 0, pitch: 270, yaw: 0 },
-      };
-      const pair = [f1.face, face].sort().join('');
-      const rot = ROT_MAP[pair] || { roll: 0, pitch: 0, yaw: 0 };
+      // Bracket default: two flat contact faces have normals (-1,0,0) and (0,-1,0).
+      // To mate with profile faces n1, n2: align bracket -X to -n1, bracket -Y to -n2.
+      const d1 = new THREE.Vector3(-1, 0, 0);
+      const d2 = new THREE.Vector3(0, -1, 0);
+      const t1 = new THREE.Vector3(
+        -(f1Axis === 'x' ? f1Sign : 0),
+        -(f1Axis === 'y' ? f1Sign : 0),
+        -(f1Axis === 'z' ? f1Sign : 0),
+      );
+      const t2 = new THREE.Vector3(
+        -(f2Axis === 'x' ? f2Sign : 0),
+        -(f2Axis === 'y' ? f2Sign : 0),
+        -(f2Axis === 'z' ? f2Sign : 0),
+      );
 
-      console.log('[Bracket] Placed at:', bp, 'dim:', dim, 'faces:', f1.face, '+', face, 'pair:', pair, 'rot:', rot,
-        '(if wrong, tell me the correct roll/pitch/yaw for this face pair)');
+      // Build orthonormal frames: d3 = d1 × d2, t3 = t1 × t2
+      const d3 = new THREE.Vector3().crossVectors(d1, d2).normalize();
+      const t3 = new THREE.Vector3().crossVectors(t1, t2).normalize();
+
+      // Rotation matrix R: R * [d1 d2 d3] = [t1 t2 t3]
+      const S = new THREE.Matrix3().set(
+        d1.x, d2.x, d3.x, d1.y, d2.y, d3.y, d1.z, d2.z, d3.z,
+      );
+      const T = new THREE.Matrix3().set(
+        t1.x, t2.x, t3.x, t1.y, t2.y, t3.y, t1.z, t2.z, t3.z,
+      );
+      // R = T × S^T computed manually
+      const St = S.clone().transpose();
+      const se = S.elements, te = T.elements, ste = St.elements;
+      // Use T × S^T
+      const re = new Float64Array(9);
+      for (let r = 0; r < 3; r++) {
+        for (let c = 0; c < 3; c++) {
+          re[r * 3 + c] = te[r * 3] * ste[c] + te[r * 3 + 1] * ste[3 + c] + te[r * 3 + 2] * ste[6 + c];
+        }
+      }
+      const R = new THREE.Matrix3().fromArray(Array.from(re));
+      const det = R.determinant();
+      console.log('[Bracket Rot] R=', Array.from(re).map(v=>v.toFixed(3)), 'det=', det.toFixed(3));
+
+      const rotQ = new THREE.Quaternion().setFromRotationMatrix(R);
+      const rot = { roll: 0, pitch: 0, yaw: 0 };
+      if (!isNaN(rotQ.x) && !isNaN(rotQ.y) && !isNaN(rotQ.z) && !isNaN(rotQ.w)) {
+        const rotE = new THREE.Euler().setFromQuaternion(rotQ, 'ZYX');
+        rot.roll = Math.round(THREE.MathUtils.radToDeg(rotE.x));
+        rot.pitch = Math.round(THREE.MathUtils.radToDeg(rotE.y));
+        rot.yaw = Math.round(THREE.MathUtils.radToDeg(rotE.z));
+      } else {
+        console.warn('[Bracket Rot] Quaternion NaN:', rotQ);
+      }
+
+      console.log('[Bracket] Placed at:', bp, 'dim:', dim,
+        'faces:', f1.face, '+', face,
+        'rot:', rot);
 
       console.log('[Bracket] Placed at:', bp, 'dim:', dim, 'faces:', f1.face, face, 'rot:', rot);
 
@@ -329,6 +382,8 @@ export const useDiyStore = create<DiyState>((set, get) => ({
           id: uid(),
           position: bp,
           rotation: rot,
+          anchorPosition: { x: 0, y: 0, z: 0 },
+          anchorRotation: { roll: 0, pitch: 0, yaw: 0 },
           connectedProfiles: [f1.profileId, profileId],
           enabled: true,
           size: dim,
@@ -349,6 +404,41 @@ export const useDiyStore = create<DiyState>((set, get) => ({
   },
 
   clearBracketFaces: () => set({ bracketFace1: null, bracketFace2: null }),
+
+  attachTarget: null,
+  setAttachTargetFromFace: (profileId, face, hitPos) =>
+    set({ attachTarget: { profileId, face, hitPos } }),
+  clearAttachTarget: () => set({ attachTarget: null }),
+
+  placeBracketOnTarget: () => {
+    const { attachTarget, profiles } = get();
+    if (!attachTarget) return;
+    const parent = profiles.find((p) => p.id === attachTarget.profileId);
+    if (!parent) return;
+    const dim = { '2020': 20, '3030': 30, '4040': 40 }[parent.profileSize] ?? 30;
+    const half = Math.round(dim / 2);
+    const axis = attachTarget.face[1].toLowerCase() as 'x' | 'y' | 'z';
+    const sign = attachTarget.face.startsWith('+') ? 1 : -1;
+    const bp = { ...attachTarget.hitPos };
+    bp[axis] += sign * half;
+
+    const bracket: DiyBracket = {
+      id: uid(),
+      position: bp,
+      rotation: { roll: 0, pitch: 0, yaw: 0 },
+      anchorPosition: { x: 0, y: 0, z: 0 },
+      anchorRotation: { roll: 0, pitch: 0, yaw: 0 },
+      connectedProfiles: [attachTarget.profileId],
+      enabled: true,
+      size: dim,
+    };
+    set((s) => ({
+      brackets: [...s.brackets, bracket],
+      selectedBracketId: bracket.id,
+      attachTarget: null,
+    }));
+    console.log('[Bracket] Placed on face:', attachTarget.face, 'at', bp);
+  },
 
   setAttachTarget: (parentId, face, hitPos) =>
     set({
@@ -382,6 +472,9 @@ export const useDiyStore = create<DiyState>((set, get) => ({
     })),
 
   selectBracket: (id) => set({ selectedBracketId: id, selectedProfileId: null }),
+
+  editingBracketId: null,
+  openBracketEditor: (id) => set({ editingBracketId: id }),
 
   getProfilesByParent: (parentId) =>
     get().profiles.filter((p) => p.parentId === parentId),

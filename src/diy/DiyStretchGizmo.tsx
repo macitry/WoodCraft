@@ -80,10 +80,9 @@ const DiyStretchGizmo: React.FC = () => {
         raycaster.ray.intersectPlane(plane, hit);
         if (hit) {
           const curDist = fixedEnd.distanceTo(hit) / M;
-          const delta = (curDist - startDist) * 0.3; // dampen sensitivity
-          // Snap to 10mm grid, minimum 10mm
+          const delta = curDist - startDist; // 1:1 mouse tracking
           const rawLen = Math.max(10, Math.round(startLen + delta));
-          const newLen = Math.round(rawLen / 10) * 10;
+          const newLen = Math.round(rawLen / 10) * 10; // snap to 10mm
           updateProfileLength(profile.id, newLen);
         }
       };

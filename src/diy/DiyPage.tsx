@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import DiyViewer from './DiyViewer';
 import DiyProfileLibrary from '../components/DiyProfileLibrary';
 import DiyPropertyPanel from './DiyPropertyPanel';
+import BracketEditModal from './BracketEditModal';
 import { useDiyStore } from '../store/diyStore';
 import { useModelStore } from '../store/modelStore';
 
@@ -59,6 +60,7 @@ const DiyPage: React.FC = () => {
           <DiyPropertyPanel />
         </aside>
       </div>
+      <BracketEditModal />
     </div>
   );
 };

@@ -1,4 +1,4 @@
-import { useMemo, Suspense } from 'react';
+import { useMemo, Suspense, useState } from 'react';
 import * as THREE from 'three';
 import { useLoader } from '@react-three/fiber';
 import { STLLoader } from 'three-stdlib';
@@ -20,24 +20,50 @@ const STL_URLS: Record<string, string> = {
 };
 
 /**
- * Wireframe box showing the exact bounding dimensions.
- * Light blue, semi-transparent, always on top.
+ * Box overlay with per-face hover highlight.
+ * Hovered face = brighter blue, attached face = purple.
  */
-const WireframeBox: React.FC<{
+const FaceBox: React.FC<{
   size: [number, number, number];
   isSelected: boolean;
-}> = ({ size, isSelected }) => (
-  <mesh renderOrder={1}>
-    <boxGeometry args={size} />
-    <meshBasicMaterial
-      color={isSelected ? '#88ccff' : '#4488aa'}
-      wireframe
-      transparent
-      opacity={isSelected ? 0.6 : 0.3}
-      depthTest
-    />
-  </mesh>
-);
+  hoveredFace: number;
+  bracketFaceIdx: number; // orange = first selected face, purple = second (done)
+  onHoverFace: (faceIdx: number) => void;
+}> = ({ size, isSelected, hoveredFace, bracketFaceIdx, onHoverFace }) => {
+  const purpleColor = '#aa44cc';
+  const baseColor = isSelected ? '#5599cc' : '#335577';
+  const hoverColor = isSelected ? '#aaddff' : '#6699bb';
+
+  const materials = useMemo(() =>
+    Array.from({ length: 6 }, (_, i) => {
+      const isBrk = i === bracketFaceIdx;
+      const isHov = i === hoveredFace && !isBrk;
+      return new THREE.MeshBasicMaterial({
+        color: isBrk ? purpleColor : isHov ? hoverColor : baseColor,
+        transparent: true,
+        opacity: isBrk ? 0.65 : isHov ? 0.55 : 0.18,
+        depthTest: true,
+      });
+    }), [hoveredFace, bracketFaceIdx, baseColor, hoverColor]);
+
+  return (
+    <mesh
+      renderOrder={1}
+      onPointerMove={(e) => {
+        e.stopPropagation();
+        // BoxGeometry: each face has 2 triangles, faceIndex maps to face 0-5
+        const fi = e.faceIndex != null ? Math.floor(e.faceIndex / 2) : -1;
+        onHoverFace(fi);
+      }}
+      onPointerOut={() => onHoverFace(-1)}
+    >
+      <boxGeometry args={size} />
+      {materials.map((mat, i) => (
+        <primitive key={i} object={mat} attach={`material-${i}`} />
+      ))}
+    </mesh>
+  );
+};
 
 /**
  * STL model of the actual aluminum extrusion profile.
@@ -94,12 +120,13 @@ const ProfileStl: React.FC<{
   );
 };
 
-/** Combined: wireframe box + STL model inside. */
+/** Combined: face-highlight box + STL model inside. */
 const ProfileMesh: React.FC<{
   profile: { id: string; profileSize: string; length: number; position: { x: number; y: number; z: number }; direction: string };
   isSelected: boolean;
   onClick: (e: any) => void;
-}> = ({ profile: p, isSelected, onClick }) => {
+  bracketFaceIdx: number;
+}> = ({ profile: p, isSelected, onClick, bracketFaceIdx }) => {
   const dim = PROFILE_DIMS[p.profileSize] ?? 30;
   const lenM = M * Math.max(10, p.length);
   const dimM = M * dim;
@@ -109,13 +136,17 @@ const ProfileMesh: React.FC<{
     p.direction === 'Y' ? [dimM, lenM, dimM] :
     [dimM, dimM, lenM];
 
+  // Slightly larger highlight box to prevent overlap with STL
+  const pad = M * 0.5; // 0.5mm per side
+  const hlSize: [number, number, number] = [size[0] + pad, size[1] + pad, size[2] + pad];
+
   const pos: [number, number, number] = [M * p.position.x, M * p.position.y, M * p.position.z];
+
+  const [hoveredFace, setHoveredFace] = useState(-1);
 
   return (
     <group position={pos} onClick={onClick} name={p.id}>
-      {/* Wireframe box — shows exact boundary */}
-      <WireframeBox size={size} isSelected={isSelected} />
-      {/* Actual STL model inside */}
+      <FaceBox size={hlSize} isSelected={isSelected} hoveredFace={hoveredFace} bracketFaceIdx={bracketFaceIdx} onHoverFace={setHoveredFace} />
       <Suspense fallback={null}>
         <ProfileStl profileSize={p.profileSize} length={p.length} direction={p.direction} />
       </Suspense>
@@ -128,7 +159,10 @@ const DiyProfileRenderer: React.FC = () => {
   const selId = useDiyStore((s) => s.selectedProfileId);
   const select = useDiyStore((s) => s.selectProfile);
   const growFromFace = useDiyStore((s) => s.growFromFace);
+  const attachTarget = useDiyStore((s) => s.attachTarget);
+  const setAttachTargetFromFace = useDiyStore((s) => s.setAttachTargetFromFace);
   const selectBracketFace = useDiyStore((s) => s.selectBracketFace);
+  const bracketFace1 = useDiyStore((s) => s.bracketFace1);
 
   if (profiles.length === 0) return null;
 
@@ -149,24 +183,24 @@ const DiyProfileRenderer: React.FC = () => {
     <group>
       {profiles.map((p) => {
         const isSel = selId === p.id;
+        const bf1 = bracketFace1;
+        const bfIdx = (bf1 && bf1.profileId === p.id)
+          ? { '+X':0,'-X':1,'+Y':2,'-Y':3,'+Z':4,'-Z':5 }[bf1.face] ?? -1
+          : -1;
+
         const handleClick = (e: any) => {
           e.stopPropagation();
-          const shift = !!(e.nativeEvent?.shiftKey);
-          const ctrl = !!(e.nativeEvent?.ctrlKey || e.nativeEvent?.metaKey);
-          console.log('[DIY Click]', p.id.slice(-6), 'sel=', isSel, 'shift=', shift, 'ctrl=', ctrl, 'nativeEvent=', !!e.nativeEvent);
-
-          if (isSel) {
-            const info = getFaceInfo(e);
-            console.log('[DIY Click] faceInfo=', info);
-            if (info) {
-              if (shift) { console.log('[DIY Click] -> growFromFace'); growFromFace(p.id, info.face as any, info.hitPos); return; }
-              if (ctrl) { console.log('[DIY Click] -> selectBracketFace'); selectBracketFace(p.id, info.face as any, info.hitPos); return; }
-            }
+          if (!isSel) { select(p.id); return; }
+          const info = getFaceInfo(e);
+          if (!info) return;
+          // Double-click → select face for bracket placement (pick 2 faces)
+          if ((e.nativeEvent?.detail ?? e.detail ?? 0) >= 2) {
+            selectBracketFace(p.id, info.face as any, info.hitPos);
+            return;
           }
-          console.log('[DIY Click] -> select profile');
-          select(isSel ? null : p.id);
+          if (e.nativeEvent?.shiftKey) { growFromFace(p.id, info.face as any, info.hitPos); return; }
         };
-        return <ProfileMesh key={p.id} profile={p} isSelected={isSel} onClick={handleClick} />;
+        return <ProfileMesh key={p.id} profile={p} isSelected={isSel} onClick={handleClick} bracketFaceIdx={bfIdx} />;
       })}
     </group>
   );

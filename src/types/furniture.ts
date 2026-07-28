@@ -255,8 +255,14 @@ export interface DiyProfile {
 /** A corner bracket in the DIY frame. */
 export interface DiyBracket {
   id: string;
+  /** World position (mm). */
   position: { x: number; y: number; z: number };
+  /** World rotation (degrees, ZYX Euler). */
   rotation: { roll: number; pitch: number; yaw: number };
+  /** Local anchor offset from bracket origin (mm). */
+  anchorPosition: { x: number; y: number; z: number };
+  /** Local anchor rotation (degrees, ZYX Euler). */
+  anchorRotation: { roll: number; pitch: number; yaw: number };
   connectedProfiles: string[];
   enabled: boolean;
   /** Cube edge length (mm), matches profile cross-section. */

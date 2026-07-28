@@ -57,14 +57,39 @@ const DiyProfileLibrary: React.FC = () => {
           </div>
         ))}
 
+        {/* Connectors */}
+        <div className="pt-3 border-t border-neutral-800">
+          <p className="px-3 text-xs uppercase tracking-wider text-neutral-500 font-medium mb-2">
+            Connectors
+          </p>
+          <ConnectorItem
+            label="Corner Bracket"
+            desc="Cast L-bracket"
+            icon="└┘"
+          />
+        </div>
+
         {/* Help */}
         <div className="mt-4 p-3 rounded-lg bg-neutral-900/50 border border-neutral-800 text-neutral-500 text-[10px] space-y-1">
-          <p><span className="text-neutral-400">Click</span> profile → select</p>
+          <p><span className="text-neutral-400">Drag</span> profile → place root</p>
           <p><span className="text-neutral-400">Shift+Click</span> face → grow new</p>
-          <p><span className="text-neutral-400">Ctrl+Click</span> face → bracket (2x)</p>
           <p><span className="text-neutral-400">Drag</span> arrow → stretch</p>
-          <p><span className="text-neutral-400">Drag</span> from library → place root</p>
+          <p><span className="text-neutral-400">Double-click</span> face → purple target</p>
+          <p><span className="text-neutral-400">Shift+Click</span> face → grow new</p>
+          <p><span className="text-neutral-400">Drag</span> arrow → stretch</p>
         </div>
+      </div>
+    </div>
+  );
+};
+
+const ConnectorItem: React.FC<{ label: string; desc: string; icon: string }> = ({ label, desc, icon }) => {
+  return (
+    <div className="w-full flex items-center gap-3 p-3 rounded-lg border border-neutral-700 bg-neutral-900/50 text-neutral-300 text-left">
+      <span className="text-lg flex-shrink-0">{icon}</span>
+      <div className="flex-1 min-w-0">
+        <div className="text-sm font-medium">{label}</div>
+        <div className="text-[10px] text-neutral-500">{desc}</div>
       </div>
     </div>
   );

@@ -61,6 +61,7 @@ const DiyBracketRenderer: React.FC = () => {
   const brackets = useDiyStore((s) => s.brackets);
   const selectedBracketId = useDiyStore((s) => s.selectedBracketId);
   const selectBracket = useDiyStore((s) => s.selectBracket);
+  const openBracketEditor = useDiyStore((s) => s.openBracketEditor);
   const bracketFace1 = useDiyStore((s) => s.bracketFace1);
 
   if (brackets.length > 0) {
@@ -83,22 +84,26 @@ const DiyBracketRenderer: React.FC = () => {
                 THREE.MathUtils.degToRad(b.rotation.yaw),
               ]}
               onClick={(e) => { e.stopPropagation(); selectBracket(isSel ? null : b.id); }}
+              onDoubleClick={(e) => { e.stopPropagation(); openBracketEditor(b.id); }}
             >
-              <BracketWireframe size={b.size} isSelected={isSel} />
-              <Suspense fallback={null}>
-                <BracketStl size={b.size} />
-              </Suspense>
+              {/* Anchor offset: local transform inside world transform */}
+              <group
+                position={[M * b.anchorPosition.x, M * b.anchorPosition.y, M * b.anchorPosition.z]}
+                rotation={[
+                  THREE.MathUtils.degToRad(b.anchorRotation.roll),
+                  THREE.MathUtils.degToRad(b.anchorRotation.pitch),
+                  THREE.MathUtils.degToRad(b.anchorRotation.yaw),
+                ]}
+              >
+                <BracketWireframe size={b.size} isSelected={isSel} />
+                <Suspense fallback={null}>
+                  <BracketStl size={b.size} />
+                </Suspense>
+              </group>
             </group>
           );
         })}
 
-      {/* First face highlight marker */}
-      {bracketFace1 && (
-        <mesh position={[M * bracketFace1.hitPos.x, M * bracketFace1.hitPos.y, M * bracketFace1.hitPos.z]}>
-          <sphereGeometry args={[0.015, 8, 8]} />
-          <meshBasicMaterial color="#ffaa00" />
-        </mesh>
-      )}
     </group>
   );
 };
