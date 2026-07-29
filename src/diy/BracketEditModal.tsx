@@ -62,12 +62,21 @@ const BracketEditModal: React.FC = () => {
   );
 };
 
-/** STL model + wireframe in isolation. */
+/** STL model + wireframe in isolation, with anchor transforms applied. */
 const BracketModel: React.FC<{ bracket: DiyBracket }> = ({ bracket }) => {
   const s = M * bracket.size;
+  const ap = bracket.anchorPosition ?? { x: 0, y: 0, z: 0 };
+  const ar = bracket.anchorRotation ?? { roll: 0, pitch: 0, yaw: 0 };
 
   return (
-    <group>
+    <group
+      position={[M * ap.x, M * ap.y, M * ap.z]}
+      rotation={[
+        THREE.MathUtils.degToRad(ar.roll),
+        THREE.MathUtils.degToRad(ar.pitch),
+        THREE.MathUtils.degToRad(ar.yaw),
+      ]}
+    >
       {/* Wireframe */}
       <mesh renderOrder={1}>
         <boxGeometry args={[s, s, s]} />

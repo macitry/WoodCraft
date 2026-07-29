@@ -1,4 +1,4 @@
-import { useMemo, Suspense } from 'react';
+import { useMemo, Suspense, useEffect } from 'react';
 import { useLoader } from '@react-three/fiber';
 import { STLLoader } from 'three-stdlib';
 import * as THREE from 'three';
@@ -61,12 +61,19 @@ const DiyBracketRenderer: React.FC = () => {
   const brackets = useDiyStore((s) => s.brackets);
   const selectedBracketId = useDiyStore((s) => s.selectedBracketId);
   const selectBracket = useDiyStore((s) => s.selectBracket);
-  const openBracketEditor = useDiyStore((s) => s.openBracketEditor);
   const bracketFace1 = useDiyStore((s) => s.bracketFace1);
 
-  if (brackets.length > 0) {
-    console.log('[BracketRenderer] Rendering', brackets.length, 'brackets:', brackets.map(b => `id=${b.id.slice(-6)} pos=(${b.position.x},${b.position.y},${b.position.z}) size=${b.size}`));
-  }
+  // Log when selected bracket changes
+  useEffect(() => {
+    if (!selectedBracketId) return;
+    const b = brackets.find((x) => x.id === selectedBracketId);
+    if (b) {
+      console.log('[Bracket Selected]', b.id.slice(-6),
+        'pos:', b.position, 'rot:', b.rotation,
+        'anchor:', b.anchorPosition, b.anchorRotation,
+        'faces:', b.connectedProfiles.map((p) => p.slice(-6)));
+    }
+  }, [selectedBracketId, brackets]);
 
   return (
     <group>
@@ -84,7 +91,6 @@ const DiyBracketRenderer: React.FC = () => {
                 THREE.MathUtils.degToRad(b.rotation.yaw),
               ]}
               onClick={(e) => { e.stopPropagation(); selectBracket(isSel ? null : b.id); }}
-              onDoubleClick={(e) => { e.stopPropagation(); openBracketEditor(b.id); }}
             >
               {/* Anchor offset: local transform inside world transform */}
               <group

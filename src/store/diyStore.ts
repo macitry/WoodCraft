@@ -1,5 +1,6 @@
 import { create } from 'zustand';
 import * as THREE from 'three';
+import { fetchBracketRotation } from '../api/modelApi';
 import type { MutableRefObject } from 'react';
 import type { OrbitControls as OrbitControlsImpl } from 'three-stdlib';
 import type {
@@ -72,9 +73,9 @@ interface DiyState {
   setControlsRef: (ref: MutableRefObject<OrbitControlsImpl | null>) => void;
 
   // Two-face bracket placement (legacy Ctrl+click)
-  bracketFace1: { profileId: string; face: FaceDir; hitPos: { x: number; y: number; z: number } } | null;
-  bracketFace2: { profileId: string; face: FaceDir; hitPos: { x: number; y: number; z: number } } | null;
-  selectBracketFace: (profileId: string, face: FaceDir, hitPos: { x: number; y: number; z: number }) => void;
+  bracketFace1: { profileId: string; face: FaceDir; hitPos: { x: number; y: number; z: number }; worldNormal: [number, number, number] } | null;
+  bracketFace2: { profileId: string; face: FaceDir; hitPos: { x: number; y: number; z: number }; worldNormal: [number, number, number] } | null;
+  selectBracketFace: (profileId: string, face: FaceDir, hitPos: { x: number; y: number; z: number }, worldNormal: [number, number, number]) => void;
   clearBracketFaces: () => void;
 
   // Attach target: double-click face → purple highlight → place connector from sidebar
@@ -281,12 +282,12 @@ export const useDiyStore = create<DiyState>((set, get) => ({
   bracketFace1: null,
   bracketFace2: null,
 
-  selectBracketFace: (profileId, face, hitPos) => {
+  selectBracketFace: (profileId, face, hitPos, worldNormal) => {
     const s = get();
-    console.log('[Bracket] Face selected:', { profileId: profileId.slice(-6), face, hitPos });
+    console.log('[Bracket] Face selected:', { profileId: profileId.slice(-6), face, worldNormal });
     if (!s.bracketFace1) {
-      set({ bracketFace1: { profileId, face, hitPos }, bracketFace2: null });
-      console.log('[Bracket] First face stored. Ctrl+Click another face to place bracket.');
+      set({ bracketFace1: { profileId, face, hitPos, worldNormal }, bracketFace2: null });
+      console.log('[Bracket] First face stored.');
     } else if (s.bracketFace1.profileId !== profileId || s.bracketFace1.face !== face) {
       const f1 = s.bracketFace1;
       const f1Axis = f1.face[1].toLowerCase() as 'x' | 'y' | 'z';
@@ -320,66 +321,18 @@ export const useDiyStore = create<DiyState>((set, get) => ({
         else bp[ax] = (p2 ?? p1)!.position[sharedAxis]; // shared axis: align to profile
       }
 
-      // Bracket default: two flat contact faces have normals (-1,0,0) and (0,-1,0).
-      // To mate with profile faces n1, n2: align bracket -X to -n1, bracket -Y to -n2.
-      const d1 = new THREE.Vector3(-1, 0, 0);
-      const d2 = new THREE.Vector3(0, -1, 0);
-      const t1 = new THREE.Vector3(
-        -(f1Axis === 'x' ? f1Sign : 0),
-        -(f1Axis === 'y' ? f1Sign : 0),
-        -(f1Axis === 'z' ? f1Sign : 0),
-      );
-      const t2 = new THREE.Vector3(
-        -(f2Axis === 'x' ? f2Sign : 0),
-        -(f2Axis === 'y' ? f2Sign : 0),
-        -(f2Axis === 'z' ? f2Sign : 0),
-      );
+      // Send actual world-space normals to backend
+      const n1 = f1.worldNormal;
+      const n2 = worldNormal;
+      console.log('[Bracket] World normals:', 'f1=', n1, 'f2=', n2);
 
-      // Build orthonormal frames: d3 = d1 × d2, t3 = t1 × t2
-      const d3 = new THREE.Vector3().crossVectors(d1, d2).normalize();
-      const t3 = new THREE.Vector3().crossVectors(t1, t2).normalize();
-
-      // Rotation matrix R: R * [d1 d2 d3] = [t1 t2 t3]
-      const S = new THREE.Matrix3().set(
-        d1.x, d2.x, d3.x, d1.y, d2.y, d3.y, d1.z, d2.z, d3.z,
-      );
-      const T = new THREE.Matrix3().set(
-        t1.x, t2.x, t3.x, t1.y, t2.y, t3.y, t1.z, t2.z, t3.z,
-      );
-      // R = T × S^T computed manually
-      const St = S.clone().transpose();
-      const se = S.elements, te = T.elements, ste = St.elements;
-      // Use T × S^T
-      const re = new Float64Array(9);
-      for (let r = 0; r < 3; r++) {
-        for (let c = 0; c < 3; c++) {
-          re[r * 3 + c] = te[r * 3] * ste[c] + te[r * 3 + 1] * ste[3 + c] + te[r * 3 + 2] * ste[6 + c];
-        }
-      }
-      const R = new THREE.Matrix3().fromArray(Array.from(re));
-      const det = R.determinant();
-      console.log('[Bracket Rot] R=', Array.from(re).map(v=>v.toFixed(3)), 'det=', det.toFixed(3));
-
-      const rotQ = new THREE.Quaternion().setFromRotationMatrix(R);
+      // Create bracket with placeholder rotation, then fetch real rotation from backend
+      const bracketId = uid();
       const rot = { roll: 0, pitch: 0, yaw: 0 };
-      if (!isNaN(rotQ.x) && !isNaN(rotQ.y) && !isNaN(rotQ.z) && !isNaN(rotQ.w)) {
-        const rotE = new THREE.Euler().setFromQuaternion(rotQ, 'ZYX');
-        rot.roll = Math.round(THREE.MathUtils.radToDeg(rotE.x));
-        rot.pitch = Math.round(THREE.MathUtils.radToDeg(rotE.y));
-        rot.yaw = Math.round(THREE.MathUtils.radToDeg(rotE.z));
-      } else {
-        console.warn('[Bracket Rot] Quaternion NaN:', rotQ);
-      }
-
-      console.log('[Bracket] Placed at:', bp, 'dim:', dim,
-        'faces:', f1.face, '+', face,
-        'rot:', rot);
-
-      console.log('[Bracket] Placed at:', bp, 'dim:', dim, 'faces:', f1.face, face, 'rot:', rot);
 
       try {
         const bracket: DiyBracket = {
-          id: uid(),
+          id: bracketId,
           position: bp,
           rotation: rot,
           anchorPosition: { x: 0, y: 0, z: 0 },
@@ -394,7 +347,16 @@ export const useDiyStore = create<DiyState>((set, get) => ({
           bracketFace1: null,
           bracketFace2: null,
         }));
-        console.log('[Bracket] Created:', bracket.id.slice(-6), 'total brackets:', get().brackets.length);
+        console.log('[Bracket] Created:', bracketId.slice(-6), 'faces:', f1.face, face);
+
+        // Fetch real rotation from backend
+        fetchBracketRotation(n1, n2).then((result) => {
+          const realRot = { roll: result.roll, pitch: result.pitch, yaw: result.yaw };
+          console.log('[Bracket Rot] Backend:', realRot, 'R=', result.rotation_matrix);
+          get().updateBracket(bracketId, { rotation: realRot });
+        }).catch((err) => {
+          console.error('[Bracket Rot] Failed:', err);
+        });
       } catch (err) {
         console.error('[Bracket] Error creating bracket:', err);
       }

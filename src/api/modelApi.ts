@@ -47,3 +47,23 @@ export function getModelAssetUrl(path: string): string {
   const base = import.meta.env.VITE_BACKEND_API_URL || 'http://localhost:8000';
   return `${base}${path}`;
 }
+
+/** Computed bracket rotation from backend solver. */
+export interface BracketRotationResult {
+  roll: number;
+  pitch: number;
+  yaw: number;
+  rotation_matrix: number[][];
+}
+
+/** Call backend to compute bracket rotation from two face normals. */
+export async function fetchBracketRotation(
+  face1: [number, number, number],
+  face2: [number, number, number],
+): Promise<BracketRotationResult> {
+  const { data } = await client.post<BracketRotationResult>(
+    '/api/bracket/rotation',
+    { face1, face2 },
+  );
+  return data;
+}

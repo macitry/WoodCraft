@@ -176,6 +176,7 @@ const DiyProfileRenderer: React.FC = () => {
     return {
       face: `${sgn}${['X','Y','Z'][mi]}`,
       hitPos: { x: Math.round((e.point as THREE.Vector3).x * 1000), y: Math.round((e.point as THREE.Vector3).y * 1000), z: Math.round((e.point as THREE.Vector3).z * 1000) },
+      worldNormal: [wn.x, wn.y, wn.z] as [number, number, number],
     };
   };
 
@@ -195,7 +196,7 @@ const DiyProfileRenderer: React.FC = () => {
           if (!info) return;
           // Double-click → select face for bracket placement (pick 2 faces)
           if ((e.nativeEvent?.detail ?? e.detail ?? 0) >= 2) {
-            selectBracketFace(p.id, info.face as any, info.hitPos);
+            selectBracketFace(p.id, info.face as any, info.hitPos, info.worldNormal);
             return;
           }
           if (e.nativeEvent?.shiftKey) { growFromFace(p.id, info.face as any, info.hitPos); return; }
