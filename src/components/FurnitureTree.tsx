@@ -1,21 +1,19 @@
 import {
   useState,
+  useCallback,
+  useRef,
   type FC,
 } from 'react';
 import { useModelStore } from '../store/modelStore';
 import type { Component } from '../types/furniture';
+import MiniPartPreview from './MiniPartPreview';
 
 /**
  * Left-side panel showing the furniture component tree.
  *
- * Displays a hierarchical view of all parts:
- *   ├── 桌面 (Tabletop)
- *   ├── 左前腿 (Front Left Leg)
- *   ├── 右前腿 (Front Right Leg)
- *   └── ...
- *
- * Parts can be clicked to select them (highlights in 3D viewer)
- * and toggled for visibility.
+ * Hovering over a part row shows a mini preview:
+ *   - Tabletop → small rotating 3D model
+ *   - Leg/Beam → 2D aluminum extrusion cross-section
  */
 const FurnitureTree: FC = () => {
   const model = useModelStore((s) => s.model);
@@ -25,6 +23,26 @@ const FurnitureTree: FC = () => {
   const soloComponent = useModelStore((s) => s.soloComponent);
   const isSolo = useModelStore((s) => s._preSoloVisibility !== null);
   const [collapsedGroups, setCollapsedGroups] = useState<Record<string, boolean>>({});
+
+  // ---- Hover preview state ----
+  const [hoveredPart, setHoveredPart] = useState<Component | null>(null);
+  const [previewPos, setPreviewPos] = useState({ left: 0, top: 0 });
+  const treeRef = useRef<HTMLDivElement>(null);
+
+  const handlePartEnter = useCallback((part: Component, e: React.MouseEvent) => {
+    setHoveredPart(part);
+    const rect = e.currentTarget.getBoundingClientRect();
+    setPreviewPos({ left: rect.right + 8, top: rect.top - 20 });
+  }, []);
+
+  const handlePartMove = useCallback((e: React.MouseEvent) => {
+    const rect = e.currentTarget.getBoundingClientRect();
+    setPreviewPos({ left: rect.right + 8, top: rect.top - 20 });
+  }, []);
+
+  const handlePartLeave = useCallback(() => {
+    setHoveredPart(null);
+  }, []);
 
   if (!model) {
     return (
@@ -67,7 +85,7 @@ const FurnitureTree: FC = () => {
   };
 
   return (
-    <div className="flex flex-col h-full">
+    <div className="flex flex-col h-full relative" ref={treeRef}>
       {/* Header */}
       <div className="px-4 py-3 border-b border-neutral-800">
         <p className="text-xs uppercase tracking-wider text-neutral-500 font-medium">
@@ -113,7 +131,7 @@ const FurnitureTree: FC = () => {
                     <button
                       key={part.id}
                       className={`w-full flex items-center gap-3 pl-10 pr-4 py-1.5 text-sm
-                        transition-colors cursor-pointer
+                        transition-colors cursor-pointer relative
                         ${isSelected
                           ? 'bg-wood-500/10 text-wood-300 border-r-2 border-wood-500'
                           : 'text-neutral-400 hover:text-white hover:bg-neutral-800/30'
@@ -123,6 +141,9 @@ const FurnitureTree: FC = () => {
                           isSelected ? null : part.id,
                         )
                       }
+                      onMouseEnter={(e) => handlePartEnter(part, e)}
+                      onMouseMove={handlePartMove}
+                      onMouseLeave={handlePartLeave}
                     >
                       {/* Visibility toggle */}
                       <span
@@ -162,6 +183,16 @@ const FurnitureTree: FC = () => {
           );
         })}
       </div>
+
+      {/* Hover preview portal */}
+      {hoveredPart && (
+        <div className="fixed z-50" style={{ left: previewPos.left, top: previewPos.top }}>
+          <MiniPartPreview
+            part={hoveredPart}
+            model={model}
+          />
+        </div>
+      )}
     </div>
   );
 };
