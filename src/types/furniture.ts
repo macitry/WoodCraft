@@ -274,7 +274,8 @@ export type DiyMode =
   | 'idle'
   | 'stretching'
   | 'selecting_direction'
-  | 'placing_bracket';
+  | 'placing_bracket'
+  | 'placing_child';
 
 /** Profile size → cross-section dimension (mm). */
 export const PROFILE_DIMS: Record<ProfileSize, number> = {

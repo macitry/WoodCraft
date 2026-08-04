@@ -99,8 +99,13 @@ const DiyProfileLibrary: React.FC = () => {
   const [hoveredId, setHoveredId] = useState<string | null>(null);
   const [previewStyle, setPreviewStyle] = useState<React.CSSProperties>({});
 
-  const handleDragStart = (e: React.DragEvent, size: ProfileSize) => {
+  const handleProfileDragStart = (e: React.DragEvent, size: ProfileSize) => {
     e.dataTransfer.setData('application/diy-profile', size);
+    e.dataTransfer.effectAllowed = 'copy';
+  };
+
+  const handleBracketDragStart = (e: React.DragEvent) => {
+    e.dataTransfer.setData('application/diy-bracket', 'corner_bracket');
     e.dataTransfer.effectAllowed = 'copy';
   };
 
@@ -157,7 +162,7 @@ const DiyProfileLibrary: React.FC = () => {
               <div
                 key={s.id}
                 draggable
-                onDragStart={(e) => handleDragStart(e, s.id)}
+                onDragStart={(e) => handleProfileDragStart(e, s.id)}
                 onMouseEnter={(e) => handleMouseEnter(s.id, e)}
                 onMouseMove={handleMouseMove}
                 onMouseLeave={handleMouseLeave}
@@ -200,10 +205,12 @@ const DiyProfileLibrary: React.FC = () => {
             {CONNECTORS.map((c) => (
               <div
                 key={c.id}
+                draggable
+                onDragStart={handleBracketDragStart}
                 onMouseEnter={(e) => handleMouseEnter(c.id, e)}
                 onMouseMove={handleMouseMove}
                 onMouseLeave={handleMouseLeave}
-                className="flex items-center gap-3 p-3 rounded-lg border border-neutral-700 bg-neutral-900/50 text-neutral-300 hover:border-neutral-600 transition-colors group"
+                className="flex items-center gap-3 p-3 rounded-lg border border-neutral-700 bg-neutral-900/50 text-neutral-300 hover:border-neutral-600 transition-colors group cursor-grab active:cursor-grabbing"
               >
                 <span className="text-lg flex-shrink-0">{c.icon}</span>
                 <div className="flex-1 min-w-0">
@@ -216,20 +223,21 @@ const DiyProfileLibrary: React.FC = () => {
         )}
       </div>
 
-      {/* Hover preview portal */}
-      {hoveredId && (
-        <div
-          className="fixed z-50 pointer-events-none shadow-xl rounded-md border border-neutral-700 bg-neutral-900/95 backdrop-blur-sm p-1"
-          style={previewStyle}
-        >
-          {activeTab === 'profiles' && (
-            <ProfileStlPreview profileSize={parseInt(hoveredId.substring(0, 2)) || 30} />
-          )}
-          {activeTab === 'connectors' && (
-            <Bracket3DPreview />
-          )}
-        </div>
-      )}
+      {/* Hover preview portal — always mounted to avoid WebGL context loss */}
+      <div
+        className="fixed z-50 pointer-events-none shadow-xl rounded-md border border-neutral-700 bg-neutral-900/95 backdrop-blur-sm p-1"
+        style={{
+          ...previewStyle,
+          visibility: hoveredId ? 'visible' : 'hidden',
+        }}
+      >
+        {activeTab === 'profiles' && (
+          <ProfileStlPreview profileSize={parseInt(hoveredId?.substring(0, 2) || '30') || 30} />
+        )}
+        {activeTab === 'connectors' && (
+          <Bracket3DPreview />
+        )}
+      </div>
     </div>
   );
 };

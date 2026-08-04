@@ -61,7 +61,6 @@ const DiyBracketRenderer: React.FC = () => {
   const brackets = useDiyStore((s) => s.brackets);
   const selectedBracketId = useDiyStore((s) => s.selectedBracketId);
   const selectBracket = useDiyStore((s) => s.selectBracket);
-  const bracketFace1 = useDiyStore((s) => s.bracketFace1);
 
   // Log when selected bracket changes
   useEffect(() => {

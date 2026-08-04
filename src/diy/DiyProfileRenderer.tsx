@@ -21,30 +21,27 @@ const STL_URLS: Record<string, string> = {
 
 /**
  * Box overlay with per-face hover highlight.
- * Hovered face = brighter blue, attached face = purple.
+ * Hovered face = brighter blue.
  */
 const FaceBox: React.FC<{
   size: [number, number, number];
   isSelected: boolean;
   hoveredFace: number;
-  bracketFaceIdx: number; // orange = first selected face, purple = second (done)
   onHoverFace: (faceIdx: number) => void;
-}> = ({ size, isSelected, hoveredFace, bracketFaceIdx, onHoverFace }) => {
-  const purpleColor = '#aa44cc';
+}> = ({ size, isSelected, hoveredFace, onHoverFace }) => {
   const baseColor = isSelected ? '#5599cc' : '#335577';
   const hoverColor = isSelected ? '#aaddff' : '#6699bb';
 
   const materials = useMemo(() =>
     Array.from({ length: 6 }, (_, i) => {
-      const isBrk = i === bracketFaceIdx;
-      const isHov = i === hoveredFace && !isBrk;
+      const isHov = i === hoveredFace;
       return new THREE.MeshBasicMaterial({
-        color: isBrk ? purpleColor : isHov ? hoverColor : baseColor,
+        color: isHov ? hoverColor : baseColor,
         transparent: true,
-        opacity: isBrk ? 0.65 : isHov ? 0.55 : 0.18,
+        opacity: isHov ? 0.55 : 0.18,
         depthTest: true,
       });
-    }), [hoveredFace, bracketFaceIdx, baseColor, hoverColor]);
+    }), [hoveredFace, baseColor, hoverColor]);
 
   return (
     <mesh
@@ -125,8 +122,7 @@ const ProfileMesh: React.FC<{
   profile: { id: string; profileSize: string; length: number; position: { x: number; y: number; z: number }; direction: string };
   isSelected: boolean;
   onClick: (e: any) => void;
-  bracketFaceIdx: number;
-}> = ({ profile: p, isSelected, onClick, bracketFaceIdx }) => {
+}> = ({ profile: p, isSelected, onClick }) => {
   const dim = PROFILE_DIMS[p.profileSize] ?? 30;
   const lenM = M * Math.max(10, p.length);
   const dimM = M * dim;
@@ -146,7 +142,7 @@ const ProfileMesh: React.FC<{
 
   return (
     <group position={pos} onClick={onClick} name={p.id}>
-      <FaceBox size={hlSize} isSelected={isSelected} hoveredFace={hoveredFace} bracketFaceIdx={bracketFaceIdx} onHoverFace={setHoveredFace} />
+      <FaceBox size={hlSize} isSelected={isSelected} hoveredFace={hoveredFace} onHoverFace={setHoveredFace} />
       <Suspense fallback={null}>
         <ProfileStl profileSize={p.profileSize} length={p.length} direction={p.direction} />
       </Suspense>
@@ -158,11 +154,8 @@ const DiyProfileRenderer: React.FC = () => {
   const profiles = useDiyStore((s) => s.profiles);
   const selId = useDiyStore((s) => s.selectedProfileId);
   const select = useDiyStore((s) => s.selectProfile);
-  const growFromFace = useDiyStore((s) => s.growFromFace);
-  const attachTarget = useDiyStore((s) => s.attachTarget);
-  const setAttachTargetFromFace = useDiyStore((s) => s.setAttachTargetFromFace);
-  const selectBracketFace = useDiyStore((s) => s.selectBracketFace);
-  const bracketFace1 = useDiyStore((s) => s.bracketFace1);
+  const startPlacingProfile = useDiyStore((s) => s.startPlacingProfile);
+  const placingProfile = useDiyStore((s) => s.placingProfile);
 
   if (profiles.length === 0) return null;
 
@@ -176,7 +169,6 @@ const DiyProfileRenderer: React.FC = () => {
     return {
       face: `${sgn}${['X','Y','Z'][mi]}`,
       hitPos: { x: Math.round((e.point as THREE.Vector3).x * 1000), y: Math.round((e.point as THREE.Vector3).y * 1000), z: Math.round((e.point as THREE.Vector3).z * 1000) },
-      worldNormal: [wn.x, wn.y, wn.z] as [number, number, number],
     };
   };
 
@@ -184,24 +176,19 @@ const DiyProfileRenderer: React.FC = () => {
     <group>
       {profiles.map((p) => {
         const isSel = selId === p.id;
-        const bf1 = bracketFace1;
-        const bfIdx = (bf1 && bf1.profileId === p.id)
-          ? { '+X':0,'-X':1,'+Y':2,'-Y':3,'+Z':4,'-Z':5 }[bf1.face] ?? -1
-          : -1;
+        const isPlacing = placingProfile?.parentId === p.id;
 
         const handleClick = (e: any) => {
           e.stopPropagation();
           if (!isSel) { select(p.id); return; }
+          // If already placing, let DiyPlacingGhost handle confirm/cancel
+          if (placingProfile) return;
           const info = getFaceInfo(e);
           if (!info) return;
-          // Double-click → select face for bracket placement (pick 2 faces)
-          if ((e.nativeEvent?.detail ?? e.detail ?? 0) >= 2) {
-            selectBracketFace(p.id, info.face as any, info.hitPos, info.worldNormal);
-            return;
-          }
-          if (e.nativeEvent?.shiftKey) { growFromFace(p.id, info.face as any, info.hitPos); return; }
+          // Click face of selected profile → enter placing mode
+          startPlacingProfile(p.id, info.face as any, info.hitPos, p.profileSize);
         };
-        return <ProfileMesh key={p.id} profile={p} isSelected={isSel} onClick={handleClick} bracketFaceIdx={bfIdx} />;
+        return <ProfileMesh key={p.id} profile={p} isSelected={isSel || isPlacing} onClick={handleClick} />;
       })}
     </group>
   );

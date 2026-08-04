@@ -14,20 +14,24 @@ export interface SnapResult {
 
 /**
  * Find the nearest snap target for a 3D point among all profiles (excluding `excludeId`).
+ * Optionally filter by snap types (e.g. only ['endpoint'] for corner snapping).
  * Returns null if no snap target within threshold.
  */
 export function findNearestSnap(
   point: THREE.Vector3,
   profiles: DiyProfile[],
   excludeId: string | null,
+  types?: SnapResult['type'][],
 ): SnapResult | null {
   let best: SnapResult | null = null;
   let bestDist = SNAP_THRESHOLD;
+  const typeSet = types ? new Set(types) : null;
 
   for (const p of profiles) {
     if (p.id === excludeId) continue;
     const snaps = getSnapPoints(p);
     for (const s of snaps) {
+      if (typeSet && !typeSet.has(s.type)) continue;
       const dist = point.distanceTo(s.point);
       if (dist < bestDist) {
         bestDist = dist;

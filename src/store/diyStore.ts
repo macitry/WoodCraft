@@ -1,6 +1,4 @@
 import { create } from 'zustand';
-import * as THREE from 'three';
-import { fetchBracketRotation } from '../api/modelApi';
 import type { MutableRefObject } from 'react';
 import type { OrbitControls as OrbitControlsImpl } from 'three-stdlib';
 import type {
@@ -15,29 +13,6 @@ import type {
 let _nextId = 1;
 function uid(): string {
   return `diy_${_nextId++}_${Date.now().toString(36)}`;
-}
-
-/** Compute quaternion that maps two source vectors to two target vectors (orthonormal). */
-function quatFromTwoVectors(
-  s1: THREE.Vector3, s2: THREE.Vector3,
-  t1: THREE.Vector3, t2: THREE.Vector3,
-): THREE.Quaternion {
-  // Build orthonormal frames
-  const s3 = new THREE.Vector3().crossVectors(s1, s2).normalize();
-  const t3 = new THREE.Vector3().crossVectors(t1, t2).normalize();
-  const mS = new THREE.Matrix3().set(
-    s1.x, s2.x, s3.x,
-    s1.y, s2.y, s3.y,
-    s1.z, s2.z, s3.z,
-  );
-  const mT = new THREE.Matrix3().set(
-    t1.x, t2.x, t3.x,
-    t1.y, t2.y, t3.y,
-    t1.z, t2.z, t3.z,
-  );
-  return new THREE.Quaternion().setFromRotationMatrix(
-    new THREE.Matrix3().multiplyMatrices(mT, mS.transpose()),
-  );
 }
 
 interface DiyState {
@@ -72,21 +47,36 @@ interface DiyState {
   controlsRef: MutableRefObject<OrbitControlsImpl | null> | null;
   setControlsRef: (ref: MutableRefObject<OrbitControlsImpl | null>) => void;
 
-  // Two-face bracket placement (legacy Ctrl+click)
-  bracketFace1: { profileId: string; face: FaceDir; hitPos: { x: number; y: number; z: number }; worldNormal: [number, number, number] } | null;
-  bracketFace2: { profileId: string; face: FaceDir; hitPos: { x: number; y: number; z: number }; worldNormal: [number, number, number] } | null;
-  selectBracketFace: (profileId: string, face: FaceDir, hitPos: { x: number; y: number; z: number }, worldNormal: [number, number, number]) => void;
-  clearBracketFaces: () => void;
+  // ---- Bracket drag-and-drop placement ----
+  /** True while a bracket is being dragged from the sidebar over the 3D view. */
+  isDraggingBracket: boolean;
+  /** Ghost bracket shown at the nearest corner snap point during drag (mm). */
+  ghostBracket: { position: { x: number; y: number; z: number }; size: number; profileId: string } | null;
+  /** Called when the user starts dragging a bracket over the 3D viewport. */
+  startDraggingBracket: () => void;
+  /** Update ghost position (mouse move during drag). Null = no valid snap target. */
+  updateGhostBracket: (data: { position: { x: number; y: number; z: number }; size: number; profileId: string } | null) => void;
+  /** Drop: place the bracket at the ghost position. */
+  placeBracket: () => void;
+  /** Cancel the drag (left viewport / Escape). */
+  cancelDraggingBracket: () => void;
 
-  // Attach target: double-click face → purple highlight → place connector from sidebar
-  attachTarget: { profileId: string; face: FaceDir; hitPos: { x: number; y: number; z: number } } | null;
-  setAttachTargetFromFace: (profileId: string, face: FaceDir, hitPos: { x: number; y: number; z: number }) => void;
-  clearAttachTarget: () => void;
-
-  // Place bracket on current attach target
-  placeBracketOnTarget: () => void;
-  setAttachTarget: (parentId: string, face: FaceDir, hitPos: { x: number; y: number; z: number }) => void;
-  clearAttach: () => void;
+  // ---- Click-to-place child profile (方案 B) ----
+  /** Ghost shown while placing a child profile on a face (mm). */
+  placingProfile: {
+    parentId: string;
+    face: FaceDir;
+    position: { x: number; y: number; z: number };
+    size: ProfileSize;
+  } | null;
+  /** Enter placing mode: click a face of a selected profile. */
+  startPlacingProfile: (parentId: string, face: FaceDir, pos: { x: number; y: number; z: number }, size: ProfileSize) => void;
+  /** Mouse move during placing — update ghost position. */
+  updatePlacingPosition: (pos: { x: number; y: number; z: number }) => void;
+  /** Click again — confirm and create the child profile. */
+  confirmPlacingProfile: () => DiyProfile | null;
+  /** Escape — cancel placing. */
+  cancelPlacing: () => void;
 
   // Bracket actions
   addBracket: (b: DiyBracket) => void;
@@ -279,144 +269,95 @@ export const useDiyStore = create<DiyState>((set, get) => ({
   controlsRef: null,
   setControlsRef: (ref) => set({ controlsRef: ref }),
 
-  bracketFace1: null,
-  bracketFace2: null,
+  // ---- Bracket drag-and-drop ----
+  isDraggingBracket: false,
+  ghostBracket: null,
+  placingProfile: null,
 
-  selectBracketFace: (profileId, face, hitPos, worldNormal) => {
-    const s = get();
-    console.log('[Bracket] Face selected:', { profileId: profileId.slice(-6), face, worldNormal });
-    if (!s.bracketFace1) {
-      set({ bracketFace1: { profileId, face, hitPos, worldNormal }, bracketFace2: null });
-      console.log('[Bracket] First face stored.');
-    } else if (s.bracketFace1.profileId !== profileId || s.bracketFace1.face !== face) {
-      const f1 = s.bracketFace1;
-      const f1Axis = f1.face[1].toLowerCase() as 'x' | 'y' | 'z';
-      const f2Axis = face[1].toLowerCase() as 'x' | 'y' | 'z';
+  startDraggingBracket: () => set({ isDraggingBracket: true, ghostBracket: null }),
 
-      // Must be perpendicular faces (different axes)
-      if (f1Axis === f2Axis) {
-        console.warn('[Bracket] Cannot place on parallel faces. Pick faces with different normals.');
-        set({ bracketFace1: { profileId, face, hitPos }, bracketFace2: null }); // reset to this as first
-        return;
-      }
+  updateGhostBracket: (data) => set({ ghostBracket: data }),
 
-      set({ bracketFace2: { profileId, face, hitPos } });
-
-      // Get profile dimension for cube size
-      const p1 = s.profiles.find((p) => p.id === f1.profileId);
-      const p2 = s.profiles.find((p) => p.id === profileId);
-      const dim = p1?.profileSize ? ({ '2020': 20, '3030': 30, '4040': 40 }[p1.profileSize] ?? 30) : 30;
-      const half = Math.round(dim / 2);
-      const f1Sign = f1.face.startsWith('+') ? 1 : -1;
-      const f2Sign = face.startsWith('+') ? 1 : -1;
-
-      // Bracket at intersection of two faces:
-      // - Face axes: position = face hit + push out by half cube size
-      // - Shared axis: use profile center (not click position) for alignment
-      const bp = { x: 0, y: 0, z: 0 };
-      const sharedAxis = (['x','y','z'] as const).find((a) => a !== f1Axis && a !== f2Axis)!;
-      for (const ax of ['x', 'y', 'z'] as const) {
-        if (ax === f1Axis) bp[ax] = f1.hitPos[ax] + f1Sign * half;
-        else if (ax === f2Axis) bp[ax] = hitPos[ax] + f2Sign * half;
-        else bp[ax] = (p2 ?? p1)!.position[sharedAxis]; // shared axis: align to profile
-      }
-
-      // Send actual world-space normals to backend
-      const n1 = f1.worldNormal;
-      const n2 = worldNormal;
-      console.log('[Bracket] World normals:', 'f1=', n1, 'f2=', n2);
-
-      // Create bracket with placeholder rotation, then fetch real rotation from backend
-      const bracketId = uid();
-      const rot = { roll: 0, pitch: 0, yaw: 0 };
-
-      try {
-        const bracket: DiyBracket = {
-          id: bracketId,
-          position: bp,
-          rotation: rot,
-          anchorPosition: { x: 0, y: 0, z: 0 },
-          anchorRotation: { roll: 0, pitch: 0, yaw: 0 },
-          connectedProfiles: [f1.profileId, profileId],
-          enabled: true,
-          size: dim,
-        };
-        set((st) => ({
-          brackets: [...st.brackets, bracket],
-          selectedBracketId: bracket.id,
-          bracketFace1: null,
-          bracketFace2: null,
-        }));
-        console.log('[Bracket] Created:', bracketId.slice(-6), 'faces:', f1.face, face);
-
-        // Fetch real rotation from backend
-        fetchBracketRotation(n1, n2).then((result) => {
-          const realRot = { roll: result.roll, pitch: result.pitch, yaw: result.yaw };
-          console.log('[Bracket Rot] Backend:', realRot, 'R=', result.rotation_matrix);
-          get().updateBracket(bracketId, { rotation: realRot });
-        }).catch((err) => {
-          console.error('[Bracket Rot] Failed:', err);
-        });
-      } catch (err) {
-        console.error('[Bracket] Error creating bracket:', err);
-      }
-    } else {
-      set({ bracketFace1: null, bracketFace2: null });
-    }
-  },
-
-  clearBracketFaces: () => set({ bracketFace1: null, bracketFace2: null }),
-
-  attachTarget: null,
-  setAttachTargetFromFace: (profileId, face, hitPos) =>
-    set({ attachTarget: { profileId, face, hitPos } }),
-  clearAttachTarget: () => set({ attachTarget: null }),
-
-  placeBracketOnTarget: () => {
-    const { attachTarget, profiles } = get();
-    if (!attachTarget) return;
-    const parent = profiles.find((p) => p.id === attachTarget.profileId);
-    if (!parent) return;
-    const dim = { '2020': 20, '3030': 30, '4040': 40 }[parent.profileSize] ?? 30;
-    const half = Math.round(dim / 2);
-    const axis = attachTarget.face[1].toLowerCase() as 'x' | 'y' | 'z';
-    const sign = attachTarget.face.startsWith('+') ? 1 : -1;
-    const bp = { ...attachTarget.hitPos };
-    bp[axis] += sign * half;
-
+  placeBracket: () => {
+    const { ghostBracket, profiles } = get();
+    if (!ghostBracket) return;
+    const parent = profiles.find((p) => p.id === ghostBracket.profileId);
+    const size = ghostBracket.size;
     const bracket: DiyBracket = {
       id: uid(),
-      position: bp,
+      position: ghostBracket.position,
       rotation: { roll: 0, pitch: 0, yaw: 0 },
       anchorPosition: { x: 0, y: 0, z: 0 },
       anchorRotation: { roll: 0, pitch: 0, yaw: 0 },
-      connectedProfiles: [attachTarget.profileId],
+      connectedProfiles: parent ? [parent.id] : [],
       enabled: true,
-      size: dim,
+      size,
     };
     set((s) => ({
       brackets: [...s.brackets, bracket],
       selectedBracketId: bracket.id,
-      attachTarget: null,
+      isDraggingBracket: false,
+      ghostBracket: null,
     }));
-    console.log('[Bracket] Placed on face:', attachTarget.face, 'at', bp);
   },
 
-  setAttachTarget: (parentId, face, hitPos) =>
-    set({
-      attachParentId: parentId,
-      attachFace: face,
-      attachHitPos: hitPos,
-      mode: 'selecting_direction',
-    }),
+  cancelDraggingBracket: () => set({ isDraggingBracket: false, ghostBracket: null }),
 
-  clearAttach: () =>
-    set({
-      attachParentId: null,
-      attachFace: null,
-      attachHitPos: null,
-      mode: 'idle',
-    }),
+  // ---- Click-to-place child profile ----
+  startPlacingProfile: (parentId, face, pos, size) =>
+    set({ placingProfile: { parentId, face, position: pos, size }, mode: 'placing_child' }),
+
+  updatePlacingPosition: (pos) =>
+    set((s) => ({
+      placingProfile: s.placingProfile ? { ...s.placingProfile, position: pos } : null,
+    })),
+
+  confirmPlacingProfile: () => {
+    const { placingProfile, profiles } = get();
+    if (!placingProfile) return null;
+    const parent = profiles.find((p) => p.id === placingProfile.parentId);
+    if (!parent) return null;
+
+    const faceToDir: Record<string, AxisDir> = {
+      '+X': 'X', '-X': 'X', '+Y': 'Y', '-Y': 'Y', '+Z': 'Z', '-Z': 'Z',
+    };
+    const childDir = faceToDir[placingProfile.face] ?? 'Y';
+    const dim = ({ '2020': 20, '3030': 30, '4040': 40 } as Record<string, number>)[placingProfile.size] ?? 30;
+    const halfDim = dim / 2;
+
+    // Child centre = ghost position + half profile pushed out from the face
+    const sign = placingProfile.face.startsWith('+') ? 1 : -1;
+    const axis = placingProfile.face[1].toLowerCase() as 'x' | 'y' | 'z';
+    const childPos = { ...placingProfile.position };
+    childPos[axis] += sign * halfDim;
+
+    // Parent offset along parent's axis
+    const parentAxis = parent.direction.toLowerCase() as 'x' | 'y' | 'z';
+    const offset = Math.round(placingProfile.position[parentAxis] - parent.position[parentAxis]);
+
+    const child: DiyProfile = {
+      id: uid(),
+      profileSize: placingProfile.size,
+      length: 100,
+      position: childPos,
+      direction: childDir,
+      parentId: placingProfile.parentId,
+      parentFace: placingProfile.face,
+      parentOffset: offset,
+    };
+
+    set((s) => ({
+      profiles: [...s.profiles, child],
+      selectedProfileId: child.id,
+      placingProfile: null,
+      mode: 'stretching',
+      stretchProfileId: child.id,
+      stretchEnd: 'end',
+    }));
+    return child;
+  },
+
+  cancelPlacing: () => set({ placingProfile: null, mode: 'idle' }),
 
   // Brackets
   addBracket: (b) =>

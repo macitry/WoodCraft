@@ -7,6 +7,8 @@ import Lighting from '../viewer/Lighting';
 import DiyProfileRenderer from './DiyProfileRenderer';
 import DiyStretchGizmo from './DiyStretchGizmo';
 import DiyBracketRenderer from './DiyBracketRenderer';
+import DiyBracketPlacementGhost from './DiyBracketPlacementGhost';
+import DiyPlacingGhost from './DiyPlacingGhost';
 
 interface DiySceneProps {
   onCameraReady: (cam: THREE.PerspectiveCamera) => void;
@@ -16,6 +18,9 @@ const DiyScene: React.FC<DiySceneProps> = ({ onCameraReady }) => {
   const camera = useThree((s) => s.camera);
   const controlsRef = useRef<OrbitControlsImpl | null>(null);
   const setControlsRef = useDiyStore((s) => s.setControlsRef);
+  const isDraggingBracket = useDiyStore((s) => s.isDraggingBracket);
+  const placingProfile = useDiyStore((s) => s.placingProfile);
+  const orbitDisabled = isDraggingBracket || !!placingProfile;
 
   useEffect(() => {
     setControlsRef(controlsRef as React.MutableRefObject<OrbitControlsImpl | null>);
@@ -32,6 +37,7 @@ const DiyScene: React.FC<DiySceneProps> = ({ onCameraReady }) => {
 
       <OrbitControls
         ref={controlsRef}
+        enabled={!orbitDisabled}
         enableDamping
         dampingFactor={0.08}
         minDistance={0.2}
@@ -51,6 +57,8 @@ const DiyScene: React.FC<DiySceneProps> = ({ onCameraReady }) => {
       <DiyProfileRenderer />
       <DiyBracketRenderer />
       <DiyStretchGizmo />
+      <DiyBracketPlacementGhost />
+      <DiyPlacingGhost />
     </>
   );
 };
