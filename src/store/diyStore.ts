@@ -89,6 +89,14 @@ interface DiyState {
   // Bulk
   getProfilesByParent: (parentId: string) => DiyProfile[];
   getDescendantIds: (profileId: string) => string[];
+
+  /** Set after adding a root profile — DiyScene animates the camera toward it (metres). */
+  cameraFocus: { x: number; y: number; z: number } | null;
+  clearCameraFocus: () => void;
+
+  /** Whether to show corner-hint wireframes (toggled by sidebar Connectors tab). */
+  showCornerHints: boolean;
+  setShowCornerHints: (v: boolean) => void;
 }
 
 export const useDiyStore = create<DiyState>((set, get) => ({
@@ -114,7 +122,11 @@ export const useDiyStore = create<DiyState>((set, get) => ({
       parentFace: null,
       parentOffset: 0,
     };
-    set((s) => ({ profiles: [...s.profiles, p], selectedProfileId: p.id }));
+    set((s) => ({
+      profiles: [...s.profiles, p],
+      selectedProfileId: p.id,
+      cameraFocus: { x: pos.x * 0.001, y: pos.y * 0.001, z: pos.z * 0.001 },
+    }));
     return p;
   },
 
@@ -273,6 +285,12 @@ export const useDiyStore = create<DiyState>((set, get) => ({
   isDraggingBracket: false,
   ghostBracket: null,
   placingProfile: null,
+  cameraFocus: null,
+
+  clearCameraFocus: () => set({ cameraFocus: null }),
+
+  showCornerHints: false,
+  setShowCornerHints: (v) => set({ showCornerHints: v }),
 
   startDraggingBracket: () => set({ isDraggingBracket: true, ghostBracket: null }),
 
@@ -322,14 +340,14 @@ export const useDiyStore = create<DiyState>((set, get) => ({
       '+X': 'X', '-X': 'X', '+Y': 'Y', '-Y': 'Y', '+Z': 'Z', '-Z': 'Z',
     };
     const childDir = faceToDir[placingProfile.face] ?? 'Y';
-    const dim = ({ '2020': 20, '3030': 30, '4040': 40 } as Record<string, number>)[placingProfile.size] ?? 30;
-    const halfDim = dim / 2;
+    const childLen = 100; // default child length (same as ghost)
+    const halfLen = childLen / 2;
 
-    // Child centre = ghost position + half profile pushed out from the face
+    // Child centre = ghost position + half length pushed out along face normal
     const sign = placingProfile.face.startsWith('+') ? 1 : -1;
     const axis = placingProfile.face[1].toLowerCase() as 'x' | 'y' | 'z';
     const childPos = { ...placingProfile.position };
-    childPos[axis] += sign * halfDim;
+    childPos[axis] += sign * halfLen;
 
     // Parent offset along parent's axis
     const parentAxis = parent.direction.toLowerCase() as 'x' | 'y' | 'z';
@@ -338,7 +356,7 @@ export const useDiyStore = create<DiyState>((set, get) => ({
     const child: DiyProfile = {
       id: uid(),
       profileSize: placingProfile.size,
-      length: 100,
+      length: childLen,
       position: childPos,
       direction: childDir,
       parentId: placingProfile.parentId,
@@ -350,9 +368,8 @@ export const useDiyStore = create<DiyState>((set, get) => ({
       profiles: [...s.profiles, child],
       selectedProfileId: child.id,
       placingProfile: null,
-      mode: 'stretching',
-      stretchProfileId: child.id,
-      stretchEnd: 'end',
+      mode: 'idle',
+      cameraFocus: { x: childPos.x * 0.001, y: childPos.y * 0.001, z: childPos.z * 0.001 },
     }));
     return child;
   },

@@ -75,19 +75,42 @@ function getFacePlane(profile: DiyProfile, face: FaceDir, dim: number): FacePlan
   return { centre, normal, u, v, halfU, halfV, quaternion };
 }
 
-/** Clamp + snap a world-space point to the face plane grid (10 mm). */
-function snapToFace(pWorld: THREE.Vector3, fp: FacePlane): THREE.Vector3 {
+type FreeAxis = 'u' | 'v' | 'both';
+
+/** Clamp + snap a world-space point to the face plane (10 mm grid).
+ *  `freeAxis` controls which tangent(s) are free to move; the other is locked to 0. */
+function snapToFace(pWorld: THREE.Vector3, fp: FacePlane, freeAxis: FreeAxis): THREE.Vector3 {
   const rel = pWorld.clone().sub(fp.centre);
   let u = rel.dot(fp.u);
   let v = rel.dot(fp.v);
-  // Clamp to face bounds (with 5mm margin from edge)
   const margin = 0.005;
-  u = THREE.MathUtils.clamp(u, -fp.halfU + margin, fp.halfU - margin);
-  v = THREE.MathUtils.clamp(v, -fp.halfV + margin, fp.halfV - margin);
-  // Snap to 10 mm grid
-  u = Math.round(u / 0.01) * 0.01;
-  v = Math.round(v / 0.01) * 0.01;
+
+  if (freeAxis === 'u') {
+    u = THREE.MathUtils.clamp(u, -fp.halfU + margin, fp.halfU - margin);
+    u = Math.round(u / 0.01) * 0.01;
+    v = 0;
+  } else if (freeAxis === 'v') {
+    u = 0;
+    v = THREE.MathUtils.clamp(v, -fp.halfV + margin, fp.halfV - margin);
+    v = Math.round(v / 0.01) * 0.01;
+  } else {
+    u = THREE.MathUtils.clamp(u, -fp.halfU + margin, fp.halfU - margin);
+    v = THREE.MathUtils.clamp(v, -fp.halfV + margin, fp.halfV - margin);
+    u = Math.round(u / 0.01) * 0.01;
+    v = Math.round(v / 0.01) * 0.01;
+  }
   return fp.centre.clone().addScaledVector(fp.u, u).addScaledVector(fp.v, v);
+}
+
+/** Determine which tangent axis on the face is parallel to the parent profile direction. */
+function getFreeAxis(fp: FacePlane, parentDir: 'X' | 'Y' | 'Z'): FreeAxis {
+  const pv = AXES[parentDir].vec;
+  const uDot = Math.abs(fp.u.dot(pv));
+  const vDot = Math.abs(fp.v.dot(pv));
+  const THRESH = 0.99;
+  if (uDot > THRESH) return 'u';
+  if (vDot > THRESH) return 'v';
+  return 'both'; // end face — neither tangent aligns with parent direction
 }
 
 // ---------------------------------------------------------------------------
@@ -110,6 +133,10 @@ const DiyPlacingGhost: React.FC = () => {
     () => (parent && placingProfile ? getFacePlane(parent, placingProfile.face, dim) : null),
     [parent, placingProfile, dim],
   );
+  const freeAxis: FreeAxis = useMemo(
+    () => (fp && parent ? getFreeAxis(fp, parent.direction) : 'both'),
+    [fp, parent],
+  );
 
   // ---- hooks (always called in the same order) ----
 
@@ -123,18 +150,37 @@ const DiyPlacingGhost: React.FC = () => {
     return () => window.removeEventListener('keydown', onKey);
   }, [placingProfile, cancelPlacing]);
 
+  // Constrain initial ghost position to the free axis on mount
+  useEffect(() => {
+    if (!placingProfile || !fp) return;
+    const pWorld = new THREE.Vector3(
+      placingProfile.position.x * M,
+      placingProfile.position.y * M,
+      placingProfile.position.z * M,
+    );
+    const snapped = snapToFace(pWorld, fp, freeAxis);
+    if (snapped.distanceToSquared(pWorld) > 1e-8) {
+      updatePlacingPosition({
+        x: Math.round(snapped.x * 1000),
+        y: Math.round(snapped.y * 1000),
+        z: Math.round(snapped.z * 1000),
+      });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []); // run once on mount
+
   const handlePointerMove = useCallback(
     (e: any) => {
       if (!fp) return;
       const pWorld = e.point as THREE.Vector3;
-      const snapped = snapToFace(pWorld, fp);
+      const snapped = snapToFace(pWorld, fp, freeAxis);
       updatePlacingPosition({
         x: Math.round(snapped.x * 1000),
         y: Math.round(snapped.y * 1000),
         z: Math.round(snapped.z * 1000),
       });
     },
-    [fp, updatePlacingPosition],
+    [fp, freeAxis, updatePlacingPosition],
   );
 
   const handleClick = useCallback(
@@ -160,10 +206,13 @@ const DiyPlacingGhost: React.FC = () => {
     childDir === 'Y' ? [ghostDim, ghostLen, ghostDim] :
     [ghostDim, ghostDim, ghostLen];
 
+  // Offset ghost outward by half the ghost length along the face normal,
+  // so its inner end sits flush against the parent face.
+  const halfLenM = ghostLen / 2;
   const ghostPos: [number, number, number] = [
-    placingProfile.position.x * M,
-    placingProfile.position.y * M,
-    placingProfile.position.z * M,
+    placingProfile.position.x * M + fp.normal.x * halfLenM,
+    placingProfile.position.y * M + fp.normal.y * halfLenM,
+    placingProfile.position.z * M + fp.normal.z * halfLenM,
   ];
 
   const planeW = fp.halfU * 2;

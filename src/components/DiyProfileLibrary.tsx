@@ -2,6 +2,7 @@ import { useState, useRef, useMemo, Suspense } from 'react';
 import { Canvas, useFrame, useLoader } from '@react-three/fiber';
 import { STLLoader } from 'three-stdlib';
 import * as THREE from 'three';
+import { useDiyStore } from '../store/diyStore';
 import ProfileStlPreview from './ProfileStlPreview';
 import type { ProfileSize } from '../types/furniture';
 import { PROFILE_DIMS } from '../types/furniture';
@@ -98,6 +99,7 @@ const DiyProfileLibrary: React.FC = () => {
   const [activeTab, setActiveTab] = useState<TabId>('profiles');
   const [hoveredId, setHoveredId] = useState<string | null>(null);
   const [previewStyle, setPreviewStyle] = useState<React.CSSProperties>({});
+  const setShowCornerHints = useDiyStore((s) => s.setShowCornerHints);
 
   const handleProfileDragStart = (e: React.DragEvent, size: ProfileSize) => {
     e.dataTransfer.setData('application/diy-profile', size);
@@ -145,7 +147,7 @@ const DiyProfileLibrary: React.FC = () => {
                   ? 'text-wood-300 border-b-2 border-wood-500 -mb-px'
                   : 'text-neutral-500 hover:text-neutral-300 border-b-2 border-transparent'
                 }`}
-              onClick={() => { setActiveTab(t.id); setHoveredId(null); }}
+              onClick={() => { setActiveTab(t.id); setHoveredId(null); setShowCornerHints(t.id === 'connectors'); }}
             >
               {t.label}
             </button>
@@ -231,12 +233,13 @@ const DiyProfileLibrary: React.FC = () => {
           visibility: hoveredId ? 'visible' : 'hidden',
         }}
       >
-        {activeTab === 'profiles' && (
+        {/* Always mounted — visibility toggled to avoid WebGL context loss on tab switch */}
+        <div style={{ display: activeTab === 'profiles' ? 'block' : 'none' }}>
           <ProfileStlPreview profileSize={parseInt(hoveredId?.substring(0, 2) || '30') || 30} />
-        )}
-        {activeTab === 'connectors' && (
+        </div>
+        <div style={{ display: activeTab === 'connectors' ? 'block' : 'none' }}>
           <Bracket3DPreview />
-        )}
+        </div>
       </div>
     </div>
   );

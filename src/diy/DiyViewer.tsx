@@ -1,4 +1,4 @@
-import { useRef, useCallback, type DragEvent } from 'react';
+import { useRef, useCallback, useEffect, type DragEvent } from 'react';
 import { Canvas } from '@react-three/fiber';
 import { useDiyStore } from '../store/diyStore';
 import type { ProfileSize, AxisDir } from '../types/furniture';
@@ -25,7 +25,6 @@ const DiyViewer: React.FC = () => {
 
   const containerRef = useRef<HTMLDivElement>(null);
   const cameraRef = useRef<THREE.PerspectiveCamera | null>(null);
-  const dragDepth = useRef(0);
 
   // Keep a ref to profiles so dragover callback always reads the latest array
   const profilesRef = useRef(profiles);
@@ -80,37 +79,28 @@ const DiyViewer: React.FC = () => {
     }
   }, [updateGhostBracket]);
 
-  // ---- event handlers ----
+  // Clean up bracket drag state when the drag ends anywhere on the page
+  useEffect(() => {
+    const onDragEnd = () => cancelDraggingBracket();
+    document.addEventListener('dragend', onDragEnd);
+    return () => document.removeEventListener('dragend', onDragEnd);
+  }, [cancelDraggingBracket]);
 
-  const handleDragEnter = useCallback((e: DragEvent) => {
-    e.preventDefault();
-    dragDepth.current++;
-    if (e.dataTransfer.types.includes('application/diy-bracket')) {
-      startDraggingBracket();
-    }
-  }, [startDraggingBracket]);
+  // ---- event handlers ----
 
   const handleDragOver = useCallback((e: DragEvent) => {
     e.preventDefault();
     e.dataTransfer.dropEffect = 'copy';
 
     if (e.dataTransfer.types.includes('application/diy-bracket')) {
+      startDraggingBracket(); // idempotent — safe to call every frame
       const ray = getMouseRay(e);
       if (ray) updateBracketGhost(ray);
     }
-  }, [getMouseRay, updateBracketGhost]);
-
-  const handleDragLeave = useCallback((_e: DragEvent) => {
-    dragDepth.current--;
-    if (dragDepth.current <= 0) {
-      dragDepth.current = 0;
-      cancelDraggingBracket();
-    }
-  }, [cancelDraggingBracket]);
+  }, [getMouseRay, updateBracketGhost, startDraggingBracket]);
 
   const handleDrop = useCallback((e: DragEvent) => {
     e.preventDefault();
-    dragDepth.current = 0;
 
     // ---- bracket drop ----
     if (e.dataTransfer.types.includes('application/diy-bracket')) {
@@ -143,9 +133,7 @@ const DiyViewer: React.FC = () => {
     <div
       ref={containerRef}
       className="w-full h-full relative bg-[#1a1a2e]"
-      onDragEnter={handleDragEnter}
       onDragOver={handleDragOver}
-      onDragLeave={handleDragLeave}
       onDrop={handleDrop}
     >
       <Canvas

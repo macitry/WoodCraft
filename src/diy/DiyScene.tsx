@@ -1,6 +1,7 @@
 import { useRef, useEffect } from 'react';
-import { useThree } from '@react-three/fiber';
+import { useThree, useFrame } from '@react-three/fiber';
 import { OrbitControls } from '@react-three/drei';
+import * as THREE from 'three';
 import type { OrbitControls as OrbitControlsImpl } from 'three-stdlib';
 import { useDiyStore } from '../store/diyStore';
 import Lighting from '../viewer/Lighting';
@@ -9,6 +10,10 @@ import DiyStretchGizmo from './DiyStretchGizmo';
 import DiyBracketRenderer from './DiyBracketRenderer';
 import DiyBracketPlacementGhost from './DiyBracketPlacementGhost';
 import DiyPlacingGhost from './DiyPlacingGhost';
+import DiyCornerHints from './DiyCornerHints';
+
+const TARGET_DIST = 1.8; // camera distance after zoom-in (metres)
+const LERP = 0.10;       // per-frame lerp factor
 
 interface DiySceneProps {
   onCameraReady: (cam: THREE.PerspectiveCamera) => void;
@@ -21,6 +26,14 @@ const DiyScene: React.FC<DiySceneProps> = ({ onCameraReady }) => {
   const isDraggingBracket = useDiyStore((s) => s.isDraggingBracket);
   const placingProfile = useDiyStore((s) => s.placingProfile);
   const orbitDisabled = isDraggingBracket || !!placingProfile;
+  const cameraFocus = useDiyStore((s) => s.cameraFocus);
+  const clearCameraFocus = useDiyStore((s) => s.clearCameraFocus);
+  const focusRef = useRef<THREE.Vector3 | null>(null);
+
+  // Keep focusRef in sync with store
+  if (cameraFocus) {
+    focusRef.current = new THREE.Vector3(cameraFocus.x, cameraFocus.y, cameraFocus.z);
+  }
 
   useEffect(() => {
     setControlsRef(controlsRef as React.MutableRefObject<OrbitControlsImpl | null>);
@@ -29,6 +42,30 @@ const DiyScene: React.FC<DiySceneProps> = ({ onCameraReady }) => {
   useRef(() => {
     onCameraReady(camera as THREE.PerspectiveCamera);
   }).current?.();
+
+  // Animate camera toward focus after placing a root profile
+  useFrame(() => {
+    const ctrl = controlsRef.current;
+    const focus = focusRef.current;
+    if (!ctrl || !focus) return;
+
+    // Smooth lerp the orbit target
+    ctrl.target.lerp(focus, LERP);
+
+    // Smooth lerp the camera distance
+    const dir = new THREE.Vector3().subVectors(camera.position, ctrl.target).normalize();
+    const curDist = camera.position.distanceTo(ctrl.target);
+    const newDist = curDist + (TARGET_DIST - curDist) * LERP;
+    camera.position.copy(ctrl.target).addScaledVector(dir, newDist);
+
+    ctrl.update();
+
+    // Stop when close enough
+    if (ctrl.target.distanceTo(focus) < 0.01 && Math.abs(curDist - TARGET_DIST) < 0.05) {
+      focusRef.current = null;
+      clearCameraFocus();
+    }
+  });
 
   return (
     <>
@@ -56,6 +93,7 @@ const DiyScene: React.FC<DiySceneProps> = ({ onCameraReady }) => {
 
       <DiyProfileRenderer />
       <DiyBracketRenderer />
+      <DiyCornerHints />
       <DiyStretchGizmo />
       <DiyBracketPlacementGhost />
       <DiyPlacingGhost />

@@ -183,9 +183,10 @@ const DiyProfileRenderer: React.FC = () => {
           if (!isSel) { select(p.id); return; }
           // If already placing, let DiyPlacingGhost handle confirm/cancel
           if (placingProfile) return;
+          // Shift+Click face → enter placing mode
+          if (!e.nativeEvent?.shiftKey) return;
           const info = getFaceInfo(e);
           if (!info) return;
-          // Click face of selected profile → enter placing mode
           startPlacingProfile(p.id, info.face as any, info.hitPos, p.profileSize);
         };
         return <ProfileMesh key={p.id} profile={p} isSelected={isSel || isPlacing} onClick={handleClick} />;
