@@ -1,6 +1,7 @@
 import { create } from 'zustand';
 import type { MutableRefObject } from 'react';
 import type { OrbitControls as OrbitControlsImpl } from 'three-stdlib';
+import * as THREE from 'three';
 import type {
   DiyProfile,
   DiyBracket,
@@ -8,7 +9,10 @@ import type {
   ProfileSize,
   AxisDir,
   FaceDir,
+  BracketFacePick,
 } from '../types/furniture';
+import { PROFILE_DIMS } from '../types/furniture';
+import { centeredJointPosition } from '../diy/diyJointGeometry';
 
 let _nextId = 1;
 function uid(): string {
@@ -56,10 +60,36 @@ interface DiyState {
   startDraggingBracket: () => void;
   /** Update ghost position (mouse move during drag). Null = no valid snap target. */
   updateGhostBracket: (data: { position: { x: number; y: number; z: number }; size: number; profileId: string } | null) => void;
-  /** Drop: place the bracket at the ghost position. */
-  placeBracket: () => void;
+  /** Drop: place the bracket at the ghost position, optionally with computed rotation/connections/position. */
+  placeBracket: (patch?: {
+    rotation?: DiyBracket['rotation'];
+    connectedProfiles?: string[];
+    /** Override the placement position (mm) — used to land exactly on a joint corner. */
+    position?: { x: number; y: number; z: number };
+  }) => void;
   /** Cancel the drag (left viewport / Escape). */
   cancelDraggingBracket: () => void;
+
+  // ---- Bracket two-face placement (manual: pick two perpendicular faces) ----
+  /** First picked face while placing a bracket by clicking two faces. */
+  bracketFaceA: BracketFacePick | null;
+  /** Enter two-face bracket placement mode (clear any first pick). */
+  startBracketFacePicking: () => void;
+  /**
+   * Register a picked face. With no first pick yet, stores it (returns 'first').
+   * Otherwise validates perpendicularity and places the bracket at the line
+   * where the two face planes meet. Returns the outcome for the caller to
+   * surface errors.
+   */
+  pickBracketFace: (info: BracketFacePick) => 'first' | 'placed' | 'rejected' | 'no_overlap';
+  /** Cancel two-face bracket placement. */
+  cancelBracketFacePicking: () => void;
+  /**
+   * Auto-algorithm reference bracket rendered translucent blue next to a
+   * manually placed bracket, so the two can be compared side by side.
+   */
+  autoRefBracket: DiyBracket | null;
+  setAutoRefBracket: (b: DiyBracket | null) => void;
 
   // ---- Click-to-place child profile (方案 B) ----
   /** Ghost shown while placing a child profile on a face (mm). */
@@ -284,6 +314,8 @@ export const useDiyStore = create<DiyState>((set, get) => ({
   // ---- Bracket drag-and-drop ----
   isDraggingBracket: false,
   ghostBracket: null,
+  bracketFaceA: null,
+  autoRefBracket: null,
   placingProfile: null,
   cameraFocus: null,
 
@@ -296,18 +328,22 @@ export const useDiyStore = create<DiyState>((set, get) => ({
 
   updateGhostBracket: (data) => set({ ghostBracket: data }),
 
-  placeBracket: () => {
+  placeBracket: (patch?: {
+    rotation?: DiyBracket['rotation'];
+    connectedProfiles?: string[];
+    position?: { x: number; y: number; z: number };
+  }) => {
     const { ghostBracket, profiles } = get();
     if (!ghostBracket) return;
     const parent = profiles.find((p) => p.id === ghostBracket.profileId);
     const size = ghostBracket.size;
     const bracket: DiyBracket = {
       id: uid(),
-      position: ghostBracket.position,
-      rotation: { roll: 0, pitch: 0, yaw: 0 },
+      position: patch?.position ?? ghostBracket.position,
+      rotation: patch?.rotation ?? { roll: 0, pitch: 0, yaw: 0 },
       anchorPosition: { x: 0, y: 0, z: 0 },
       anchorRotation: { roll: 0, pitch: 0, yaw: 0 },
-      connectedProfiles: parent ? [parent.id] : [],
+      connectedProfiles: patch?.connectedProfiles ?? (parent ? [parent.id] : []),
       enabled: true,
       size,
     };
@@ -316,10 +352,84 @@ export const useDiyStore = create<DiyState>((set, get) => ({
       selectedBracketId: bracket.id,
       isDraggingBracket: false,
       ghostBracket: null,
+      autoRefBracket: null,
     }));
   },
 
   cancelDraggingBracket: () => set({ isDraggingBracket: false, ghostBracket: null }),
+
+  // ---- Bracket two-face placement ----
+  startBracketFacePicking: () =>
+    set({ mode: 'placing_bracket_faces', bracketFaceA: null, autoRefBracket: null }),
+  cancelBracketFacePicking: () =>
+    set({ mode: 'idle', bracketFaceA: null, autoRefBracket: null }),
+  setAutoRefBracket: (b) => set({ autoRefBracket: b }),
+
+  pickBracketFace: (info) => {
+    const s = get();
+    if (!s.bracketFaceA) {
+      set({ bracketFaceA: info });
+      return 'first';
+    }
+    const a = s.bracketFaceA;
+
+    // The two mounting faces of a corner bracket are perpendicular.
+    const dotN =
+      a.normal.x * info.normal.x +
+      a.normal.y * info.normal.y +
+      a.normal.z * info.normal.z;
+    if (Math.abs(dotN) > 0.05) return 'rejected';
+
+    // Position = CENTER of the joint, independent of where the mouse clicked.
+    // Shared with the auto preview (computeCornerHints), so a manual two-face
+    // placement always lands exactly on a preview bracket.
+    const pa = s.profiles.find((p) => p.id === a.profileId);
+    const pb = s.profiles.find((p) => p.id === info.profileId);
+    if (!pa || !pb) return 'rejected';
+    const pos = centeredJointPosition(pa, a.normal, pb, info.normal);
+    if (!pos) return 'no_overlap';
+
+    // Rotation: R·(1,0,0)=n1, R·(0,1,0)=n2 — the same convention the backend
+    // uses for a placed bracket, so the flush corner bracket matches.
+    const nx = new THREE.Vector3(a.normal.x, a.normal.y, a.normal.z);
+    const ny = new THREE.Vector3(info.normal.x, info.normal.y, info.normal.z);
+    const nz = new THREE.Vector3().crossVectors(nx, ny);
+    const rotM = new THREE.Matrix4().makeBasis(nx, ny, nz);
+    const eul = new THREE.Euler().setFromRotationMatrix(rotM, 'XYZ');
+
+    const dimOf = (id: string) => {
+      const p = s.profiles.find((q) => q.id === id);
+      return p ? (PROFILE_DIMS[p.profileSize] ?? 30) : 30;
+    };
+
+    const bracket: DiyBracket = {
+      id: uid(),
+      // 0.01 mm precision keeps the mounting faces flush without float noise.
+      position: {
+        x: Math.round(pos.x * 100) / 100,
+        y: Math.round(pos.y * 100) / 100,
+        z: Math.round(pos.z * 100) / 100,
+      },
+      rotation: {
+        roll: THREE.MathUtils.radToDeg(eul.x),
+        pitch: THREE.MathUtils.radToDeg(eul.y),
+        yaw: THREE.MathUtils.radToDeg(eul.z),
+      },
+      anchorPosition: { x: 0, y: 0, z: 0 },
+      anchorRotation: { roll: 0, pitch: 0, yaw: 0 },
+      connectedProfiles: [a.profileId, info.profileId],
+      enabled: true,
+      size: Math.max(dimOf(a.profileId), dimOf(info.profileId)),
+    };
+
+    set((st) => ({
+      brackets: [...st.brackets, bracket],
+      selectedBracketId: bracket.id,
+      bracketFaceA: null,
+      mode: 'idle',
+    }));
+    return 'placed';
+  },
 
   // ---- Click-to-place child profile ----
   startPlacingProfile: (parentId, face, pos, size) =>

@@ -1,17 +1,23 @@
-import { useMemo, Suspense, useEffect } from 'react';
-import { useLoader } from '@react-three/fiber';
-import { STLLoader } from 'three-stdlib';
+import { Suspense, useEffect } from 'react';
 import * as THREE from 'three';
 import { useDiyStore } from '../store/diyStore';
+import { CornerBracketStl } from './DiyBracketStl';
 
 const M = 0.001;
-const BRACKET_STL = '/Cast_Corner_Bracket.stl';
 
-/** Wireframe cube showing exact bracket boundary */
+/**
+ * Bracket plate extends from its spine (local origin) along +x/+y by
+ * 9.5·scale from the raw STL — so the bounding wireframe is centered there,
+ * not on the spine.
+ */
+const bodyOffset = (size: number) => (9.5 * size) / 21;
+
+/** Wireframe cube showing bracket boundary */
 const BracketWireframe: React.FC<{ size: number; isSelected: boolean }> = ({ size, isSelected }) => {
   const s = M * size;
+  const off = M * bodyOffset(size);
   return (
-    <mesh renderOrder={1}>
+    <mesh position={[off, off, 0]} renderOrder={1}>
       <boxGeometry args={[s, s, s]} />
       <meshBasicMaterial
         color={isSelected ? '#88ccff' : '#4488aa'}
@@ -24,43 +30,11 @@ const BracketWireframe: React.FC<{ size: number; isSelected: boolean }> = ({ siz
   );
 };
 
-/** Real cast corner bracket STL, scaled to match size. */
-const BracketStl: React.FC<{ size: number }> = ({ size }) => {
-  const geom = useLoader(STLLoader, BRACKET_STL);
-  const s = M * size;
-
-  const cloned = useMemo(() => {
-    const g = geom.clone();
-    // Center the mesh
-    const pos = g.getAttribute('position');
-    let minX = Infinity, minY = Infinity, minZ = Infinity;
-    let maxX = -Infinity, maxY = -Infinity, maxZ = -Infinity;
-    for (let i = 0; i < pos.count; i++) {
-      const x = pos.getX(i), y = pos.getY(i), z = pos.getZ(i);
-      if (x < minX) minX = x; if (y < minY) minY = y; if (z < minZ) minZ = z;
-      if (x > maxX) maxX = x; if (y > maxY) maxY = y; if (z > maxZ) maxZ = z;
-    }
-    const cx = (minX + maxX) / 2, cy = (minY + maxY) / 2, cz = (minZ + maxZ) / 2;
-    const ext = Math.max(maxX - minX, maxY - minY, maxZ - minZ);
-    const refScale = ext > 0 ? s / ext : 1;
-    for (let i = 0; i < pos.count; i++) {
-      pos.setXYZ(i, (pos.getX(i) - cx) * refScale, (pos.getY(i) - cy) * refScale, (pos.getZ(i) - cz) * refScale);
-    }
-    pos.needsUpdate = true;
-    return g;
-  }, [geom, s]);
-
-  return (
-    <mesh geometry={cloned}>
-      <meshStandardMaterial color="#707070" metalness={0.9} roughness={0.25} />
-    </mesh>
-  );
-};
-
 const DiyBracketRenderer: React.FC = () => {
   const brackets = useDiyStore((s) => s.brackets);
   const selectedBracketId = useDiyStore((s) => s.selectedBracketId);
   const selectBracket = useDiyStore((s) => s.selectBracket);
+  const autoRefBracket = useDiyStore((s) => s.autoRefBracket);
 
   // Log when selected bracket changes
   useEffect(() => {
@@ -102,13 +76,38 @@ const DiyBracketRenderer: React.FC = () => {
               >
                 <BracketWireframe size={b.size} isSelected={isSel} />
                 <Suspense fallback={null}>
-                  <BracketStl size={b.size} />
+                  <CornerBracketStl size={b.size} />
                 </Suspense>
               </group>
             </group>
           );
         })}
 
+      {/* Auto-algorithm reference bracket (translucent blue) for comparing
+          against a manually placed bracket during debugging. */}
+      {autoRefBracket && (
+        <group
+          position={[
+            M * autoRefBracket.position.x,
+            M * autoRefBracket.position.y,
+            M * autoRefBracket.position.z,
+          ]}
+          rotation={[
+            THREE.MathUtils.degToRad(autoRefBracket.rotation.roll),
+            THREE.MathUtils.degToRad(autoRefBracket.rotation.pitch),
+            THREE.MathUtils.degToRad(autoRefBracket.rotation.yaw),
+          ]}
+          renderOrder={6}
+        >
+          <mesh position={[M * bodyOffset(autoRefBracket.size), M * bodyOffset(autoRefBracket.size), 0]} renderOrder={6}>
+            <boxGeometry args={[M * autoRefBracket.size, M * autoRefBracket.size, M * autoRefBracket.size]} />
+            <meshBasicMaterial color="#44aaff" wireframe transparent opacity={0.5} />
+          </mesh>
+          <Suspense fallback={null}>
+            <CornerBracketStl size={autoRefBracket.size} color="#44aaff" opacity={0.4} metalness={0.2} />
+          </Suspense>
+        </group>
+      )}
     </group>
   );
 };

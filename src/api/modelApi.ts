@@ -67,3 +67,14 @@ export async function fetchBracketRotation(
   );
   return data;
 }
+
+/**
+ * Persist one DIY-builder bracket event to the backend JSONL log
+ * (logs/diy_brackets.jsonl). Fire-and-forget — never blocks the UI.
+ */
+export async function logBracketEvent(
+  event: string,
+  payload: Record<string, unknown>,
+): Promise<void> {
+  await client.post('/api/log/bracket', { event, payload });
+}

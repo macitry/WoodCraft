@@ -275,7 +275,21 @@ export type DiyMode =
   | 'stretching'
   | 'selecting_direction'
   | 'placing_bracket'
-  | 'placing_child';
+  | 'placing_child'
+  | 'placing_bracket_faces';
+
+/**
+ * A face picked on a profile while placing a bracket by clicking two faces.
+ * `normal` is the outward unit normal (world, mm frame), `hit` the clicked
+ * point on that face in mm.
+ */
+export interface BracketFacePick {
+  profileId: string;
+  /** Dominant-axis face name, e.g. "+Z" — which face was double-clicked. */
+  face: string;
+  normal: { x: number; y: number; z: number };
+  hit: { x: number; y: number; z: number };
+}
 
 /** Profile size → cross-section dimension (mm). */
 export const PROFILE_DIMS: Record<ProfileSize, number> = {

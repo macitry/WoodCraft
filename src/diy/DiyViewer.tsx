@@ -3,6 +3,8 @@ import { Canvas } from '@react-three/fiber';
 import { useDiyStore } from '../store/diyStore';
 import type { ProfileSize, AxisDir } from '../types/furniture';
 import { findNearestSnap } from './DiySnap';
+import { findCornerAt } from './DiyCornerHints';
+import { fetchBracketRotation } from '../api/modelApi';
 import DiyScene from './DiyScene';
 import * as THREE from 'three';
 
@@ -63,17 +65,33 @@ const DiyViewer: React.FC = () => {
 
     const snap = findNearestSnap(hit, profs, null, ['endpoint']);
     if (snap) {
-      const prof = profs.find((p) => p.id === snap.profileId);
-      const size = prof ? (sizeMap[prof.profileSize] ?? 30) : 30;
-      updateGhostBracket({
-        position: {
-          x: Math.round(snap.point.x * 1000),
-          y: Math.round(snap.point.y * 1000),
-          z: Math.round(snap.point.z * 1000),
-        },
-        size,
-        profileId: snap.profileId,
-      });
+      const endpointPos = {
+        x: Math.round(snap.point.x * 1000),
+        y: Math.round(snap.point.y * 1000),
+        z: Math.round(snap.point.z * 1000),
+      };
+      // Snap the ghost to the nearest *valid* joint hint, not just any
+      // profile endpoint. An endpoint away from the joint's centered hint
+      // position is up to ~30 mm from it; placing there while orienting for
+      // the hint would leave the bracket floating off the faces.
+      const corner = findCornerAt(profs, endpointPos);
+      if (corner) {
+        const prof = profs.find((p) => p.id === corner.profileIdA);
+        const size = prof ? (sizeMap[prof.profileSize] ?? 30) : 30;
+        updateGhostBracket({
+          position: corner.position,
+          size: Math.max(size, corner.size),
+          profileId: corner.profileIdA,
+        });
+      } else {
+        const prof = profs.find((p) => p.id === snap.profileId);
+        const size = prof ? (sizeMap[prof.profileSize] ?? 30) : 30;
+        updateGhostBracket({
+          position: endpointPos,
+          size,
+          profileId: snap.profileId,
+        });
+      }
     } else {
       updateGhostBracket(null);
     }
@@ -99,12 +117,63 @@ const DiyViewer: React.FC = () => {
     }
   }, [getMouseRay, updateBracketGhost, startDraggingBracket]);
 
+  /**
+   * Place a bracket at the ghost position, auto-oriented at a profile corner.
+   *
+   * Finds the nearest corner hint; if one exists, asks the backend for the
+   * rotation that maps the two mounting faces onto the bracket plate normals,
+   * converts the returned matrix to Euler angles using THREE's own 'XYZ'
+   * convention (the same one the renderer applies), and stores the result.
+   * Falls back to an unrotated bracket when there is no corner or the call
+   * fails.
+   */
+  const placeBracketAtGhost = useCallback(async () => {
+    const ghost = useDiyStore.getState().ghostBracket;
+    if (!ghost) {
+      placeBracket();
+      return;
+    }
+    const corner = findCornerAt(profilesRef.current, ghost.position);
+    if (!corner) {
+      placeBracket();
+      return;
+    }
+    try {
+      const res = await fetchBracketRotation(
+        [corner.faceA.x, corner.faceA.y, corner.faceA.z],
+        [corner.faceB.x, corner.faceB.y, corner.faceB.z],
+      );
+      // Backend returns the rotation as row-major; THREE's Matrix4.set is
+      // column-major, so transpose on the way in.
+      const m = new THREE.Matrix4().set(
+        res.rotation_matrix[0][0], res.rotation_matrix[1][0], res.rotation_matrix[2][0], 0,
+        res.rotation_matrix[0][1], res.rotation_matrix[1][1], res.rotation_matrix[2][1], 0,
+        res.rotation_matrix[0][2], res.rotation_matrix[1][2], res.rotation_matrix[2][2], 0,
+        0, 0, 0, 1,
+      );
+      const euler = new THREE.Euler().setFromRotationMatrix(m, 'XYZ');
+      placeBracket({
+        // Land exactly on the joint corner the rotation was computed for, so
+        // position and orientation always come from the same corner.
+        position: corner.position,
+        rotation: {
+          roll: THREE.MathUtils.radToDeg(euler.x),
+          pitch: THREE.MathUtils.radToDeg(euler.y),
+          yaw: THREE.MathUtils.radToDeg(euler.z),
+        },
+        connectedProfiles: [corner.profileIdA, corner.profileIdB],
+      });
+    } catch {
+      placeBracket();
+    }
+  }, [placeBracket]);
+
   const handleDrop = useCallback((e: DragEvent) => {
     e.preventDefault();
 
     // ---- bracket drop ----
     if (e.dataTransfer.types.includes('application/diy-bracket')) {
-      placeBracket();
+      void placeBracketAtGhost();
       return;
     }
 
@@ -127,7 +196,7 @@ const DiyViewer: React.FC = () => {
       const dim = ({ '2020': 20, '3030': 30, '4040': 40 } as Record<string, number>)[size] ?? 30;
       addRootProfile(size, { x: px, y: 50, z: pz }, 'Y' as AxisDir);
     }
-  }, [addRootProfile, placeBracket, getMouseRay]);
+  }, [addRootProfile, placeBracketAtGhost, getMouseRay]);
 
   return (
     <div

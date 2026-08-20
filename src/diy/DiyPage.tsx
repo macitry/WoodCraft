@@ -12,6 +12,11 @@ const DiyPage: React.FC = () => {
   const profiles = useDiyStore((s) => s.profiles);
   const brackets = useDiyStore((s) => s.brackets);
   const totalLength = profiles.reduce((sum, p) => sum + p.length, 0);
+  const mode = useDiyStore((s) => s.mode);
+  const bracketFaceA = useDiyStore((s) => s.bracketFaceA);
+  const startBracketFacePicking = useDiyStore((s) => s.startBracketFacePicking);
+  const cancelBracketFacePicking = useDiyStore((s) => s.cancelBracketFacePicking);
+  const isPickingFaces = mode === 'placing_bracket_faces';
   const [projectName, setProjectName] = useState('未命名');
 
   return (
@@ -37,6 +42,17 @@ const DiyPage: React.FC = () => {
         <span className="text-xs text-neutral-500">
           型材: {profiles.length} | 角码: {brackets.length} | 总长: {(totalLength / 1000).toFixed(1)}m
         </span>
+        <button
+          onClick={() => (isPickingFaces ? cancelBracketFacePicking() : startBracketFacePicking())}
+          className={`px-3 py-1 text-xs rounded transition-colors cursor-pointer ${
+            isPickingFaces
+              ? 'bg-amber-500 text-black'
+              : 'bg-neutral-800 text-neutral-400 hover:text-white'
+          }`}
+          title="依次点选两个相互垂直的型材面来放置角码(或双击任意型材面直接开始)"
+        >
+          角码 · 两面对齐
+        </button>
         <button className="px-3 py-1 text-xs rounded bg-neutral-800 text-neutral-400 hover:text-white transition-colors cursor-pointer">
           Save
         </button>
@@ -53,6 +69,15 @@ const DiyPage: React.FC = () => {
         <main className="flex-1 relative">
           <DiyViewer />
           <DiyErrorOverlay />
+          {isPickingFaces && (
+            <div className="absolute top-3 left-1/2 -translate-x-1/2 z-30 pointer-events-none">
+              <div className="px-4 py-2 rounded-lg bg-amber-500/90 text-black text-sm font-medium shadow-lg">
+                {bracketFaceA
+                  ? '已选第 1 面(绿色标记) — 再点选第 2 个垂直的型材面 · Esc 取消'
+                  : '点选第 1 个角码安装面(或双击任意型材面直接开始) · Esc 取消'}
+              </div>
+            </div>
+          )}
         </main>
 
         {/* Right — Property Panel */}

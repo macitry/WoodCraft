@@ -1,14 +1,23 @@
-import { useMemo } from 'react';
+import { useMemo, Suspense, useEffect } from 'react';
+import * as THREE from 'three';
 import { useDiyStore } from '../store/diyStore';
 import { PROFILE_DIMS } from '../types/furniture';
 import type { DiyProfile } from '../types/furniture';
+import { CornerBracketStl } from './DiyBracketStl';
+import { logDiyBracket } from './diyLog';
+import { centeredJointPosition } from './diyJointGeometry';
 
 const M = 0.001;
 const COPLANAR_MARGIN = 2; // mm — faces within this distance are on the same plane
 
-interface Hint {
+export interface CornerHint {
   position: { x: number; y: number; z: number }; // mm
   size: number;
+  profileIdA: string;
+  profileIdB: string;
+  /** Outward normals (unit) of the two extrusion faces the bracket mounts on. */
+  faceA: { x: number; y: number; z: number };
+  faceB: { x: number; y: number; z: number };
 }
 
 /** A rectangular face of a profile in world coordinates (mm). */
@@ -35,8 +44,29 @@ function dot(a: { x: number; y: number; z: number }, b: { x: number; y: number; 
   return a.x * b.x + a.y * b.y + a.z * b.z;
 }
 
+function cross(a: { x: number; y: number; z: number }, b: { x: number; y: number; z: number }) {
+  return {
+    x: a.y * b.z - a.z * b.y,
+    y: a.z * b.x - a.x * b.z,
+    z: a.x * b.y - a.y * b.x,
+  };
+}
+
+function len(v: { x: number; y: number; z: number }) {
+  return Math.hypot(v.x, v.y, v.z);
+}
+
+function norm(v: { x: number; y: number; z: number }) {
+  const l = len(v) || 1;
+  return { x: v.x / l, y: v.y / l, z: v.z / l };
+}
+
 function sub(a: { x: number; y: number; z: number }, b: { x: number; y: number; z: number }) {
   return { x: a.x - b.x, y: a.y - b.y, z: a.z - b.z };
+}
+
+function axisVec(dir: DiyProfile['direction']) {
+  return dir === 'X' ? X_DIR : dir === 'Y' ? Y_DIR : Z_DIR;
 }
 
 /** Get all 6 faces of a profile in world coordinates (mm). */
@@ -49,7 +79,7 @@ function getProfileFaces(p: DiyProfile): ProfileFace[] {
   const faces: ProfileFace[] = [];
 
   // Direction unit vectors based on profile direction
-  const dirVec = p.direction === 'X' ? X_DIR : p.direction === 'Y' ? Y_DIR : Z_DIR;
+  const dirVec = axisVec(p.direction);
   const otherAxes = (['x', 'y', 'z'] as const).filter((a) =>
     a !== p.direction.toLowerCase()) as ('x' | 'y' | 'z')[];
   const uAxis = otherAxes[0];
@@ -115,14 +145,16 @@ function faceToWorld(uv: { u: number; v: number }, face: ProfileFace) {
 }
 
 /**
- * Find corners where two profiles share a face region.
- * Checks all 6×6 face pairs — when two opposite faces are coplanar
- * and their rectangles overlap, the overlap's 4 corners are bracket positions.
+ * Find corners where two profiles share a face region, together with the two
+ * extrusion-face normals a corner bracket would mount on there.
+ *
+ * Checks all 6×6 face pairs — when two opposite faces are coplanar and their
+ * rectangles overlap, the overlap's 4 corners are bracket positions.
  */
-function findMeaningfulCorners(profiles: DiyProfile[]): Hint[] {
+export function computeCornerHints(profiles: DiyProfile[]): CornerHint[] {
   if (profiles.length < 2) return [];
 
-  const hints: Hint[] = [];
+  const hints: CornerHint[] = [];
   const allFaces = profiles.map((p) => getProfileFaces(p));
 
   for (let ai = 0; ai < profiles.length; ai++) {
@@ -132,6 +164,8 @@ function findMeaningfulCorners(profiles: DiyProfile[]): Hint[] {
 
       const facesA = allFaces[ai];
       const facesB = allFaces[bi];
+      const dA = axisVec(profiles[ai].direction);
+      const dB = axisVec(profiles[bi].direction);
 
       for (const fa of facesA) {
         for (const fb of facesB) {
@@ -166,20 +200,59 @@ function findMeaningfulCorners(profiles: DiyProfile[]): Hint[] {
 
           if (u0 >= u1 || v0 >= v1) continue; // no overlap
 
-          // The 4 corners of the overlap rectangle
-          const corners = [
-            faceToWorld({ u: u0, v: v0 }, fa),
-            faceToWorld({ u: u1, v: v0 }, fa),
-            faceToWorld({ u: u1, v: v1 }, fa),
-            faceToWorld({ u: u0, v: v1 }, fa),
-          ];
-
+          // CENTERED placements — the same rule as the manual two-face
+          // double-click: a bracket mounting on two perpendicular faces sits
+          // at the midpoint of their overlap along the corner line, NOT at the
+          // rectangle corners. This keeps the preview exactly on top of what
+          // the user places by hand.
           const size = Math.max(fa.size, fb.size);
-          for (const corner of corners) {
-            hints.push({
-              position: { x: Math.round(corner.x), y: Math.round(corner.y), z: Math.round(corner.z) },
-              size,
-            });
+          const contactNormal = fa.normal;
+          const sideProfile = Math.abs(dot(dA, contactNormal)) < 0.01
+            ? 0
+            : Math.abs(dot(dB, contactNormal)) < 0.01
+              ? 1
+              : -1;
+
+          if (sideProfile >= 0) {
+            // Butt/corner joint: one contact face is a SIDE face (the one the
+            // other profile's end butts against). Mount on that side face ×
+            // the other profile's two perpendicular side faces (± its axis).
+            const Ps = sideProfile === 0 ? profiles[ai] : profiles[bi];
+            const Pe = sideProfile === 0 ? profiles[bi] : profiles[ai];
+            const n0 = sideProfile === 0 ? fa.normal : fb.normal;
+            const u = axisVec(Ps.direction);
+            for (const sgn of [-1, 1]) {
+              const nB = { x: sgn * u.x, y: sgn * u.y, z: sgn * u.z };
+              const pos = centeredJointPosition(Ps, n0, Pe, nB);
+              if (!pos) continue;
+              hints.push({
+                position: { x: Math.round(pos.x), y: Math.round(pos.y), z: Math.round(pos.z) },
+                size,
+                profileIdA: profiles[ai].id,
+                profileIdB: profiles[bi].id,
+                faceA: n0,
+                faceB: nB,
+              });
+            }
+          } else {
+            // Crossing joint (both contact faces are side faces): the two
+            // diagonal side-face pairs, each centered on its corner line.
+            const nP = norm(cross(contactNormal, dA));
+            const nQ = norm(cross(contactNormal, dB));
+            for (const sgn of [-1, 1]) {
+              const nA = { x: sgn * nP.x, y: sgn * nP.y, z: sgn * nP.z };
+              const nB = { x: sgn * nQ.x, y: sgn * nQ.y, z: sgn * nQ.z };
+              const pos = centeredJointPosition(profiles[ai], nA, profiles[bi], nB);
+              if (!pos) continue;
+              hints.push({
+                position: { x: Math.round(pos.x), y: Math.round(pos.y), z: Math.round(pos.z) },
+                size,
+                profileIdA: profiles[ai].id,
+                profileIdB: profiles[bi].id,
+                faceA: nA,
+                faceB: nB,
+              });
+            }
           }
         }
       }
@@ -189,40 +262,109 @@ function findMeaningfulCorners(profiles: DiyProfile[]): Hint[] {
   return hints;
 }
 
+/**
+ * Nearest corner hint to a position (mm), within `maxDist`, else null.
+ *
+ * Threshold must cover the whole joint footprint: hints sit at the centered
+ * overlap positions (top/bottom of the contact region), while a click/drop can
+ * be up to the square edge (30 mm) away.
+ */
+export function findCornerAt(
+  profiles: DiyProfile[],
+  position: { x: number; y: number; z: number },
+  maxDist = 40,
+): CornerHint | null {
+  let best: CornerHint | null = null;
+  let bestDist = maxDist;
+  for (const h of computeCornerHints(profiles)) {
+    const d = Math.hypot(
+      h.position.x - position.x,
+      h.position.y - position.y,
+      h.position.z - position.z,
+    );
+    if (d < bestDist) {
+      bestDist = d;
+      best = h;
+    }
+  }
+  return best;
+}
+
 // ---------------------------------------------------------------------------
 // Component
 // ---------------------------------------------------------------------------
 
+/**
+ * Euler (radians, XYZ) that maps the bracket's plate axes onto the two
+ * mounting normals: R·(1,0,0)=faceA, R·(0,1,0)=faceB — the same rotation the
+ * backend computes for a placed bracket, so the preview matches the drop.
+ */
+export function eulerFromNormals(
+  faceA: { x: number; y: number; z: number },
+  faceB: { x: number; y: number; z: number },
+) {
+  const x = new THREE.Vector3(faceA.x, faceA.y, faceA.z);
+  const y = new THREE.Vector3(faceB.x, faceB.y, faceB.z);
+  const z = new THREE.Vector3().crossVectors(x, y);
+  const m = new THREE.Matrix4().makeBasis(x, y, z);
+  return new THREE.Euler().setFromRotationMatrix(m, 'XYZ');
+}
+
 const DiyCornerHints: React.FC = () => {
   const showCornerHints = useDiyStore((s) => s.showCornerHints);
   const profiles = useDiyStore((s) => s.profiles);
+  // During a two-face comparison the blue auto-reference bracket already shows
+  // the auto result — hide the orange previews to avoid overlap.
+  const autoRefBracket = useDiyStore((s) => s.autoRefBracket);
 
   const hints = useMemo(
-    () => (showCornerHints ? findMeaningfulCorners(profiles) : []),
-    [showCornerHints, profiles],
+    () => (showCornerHints && !autoRefBracket ? computeCornerHints(profiles) : []),
+    [showCornerHints, profiles, autoRefBracket],
   );
+
+  // Persist every preview-mode hint set (position + pose) when the corner
+  // preview turns on, or when the joint configuration changes.
+  useEffect(() => {
+    if (hints.length === 0) return;
+    logDiyBracket('corner_hints', {
+      source: 'preview',
+      count: hints.length,
+      hints: hints.map((h) => {
+        const e = eulerFromNormals(h.faceA, h.faceB);
+        return {
+          position: [h.position.x, h.position.y, h.position.z],
+          size: h.size,
+          euler_deg: [
+            +THREE.MathUtils.radToDeg(e.x).toFixed(2),
+            +THREE.MathUtils.radToDeg(e.y).toFixed(2),
+            +THREE.MathUtils.radToDeg(e.z).toFixed(2),
+          ],
+          faceA: [h.faceA.x, h.faceA.y, h.faceA.z],
+          faceB: [h.faceB.x, h.faceB.y, h.faceB.z],
+          profiles: [h.profileIdA, h.profileIdB],
+        };
+      }),
+    });
+  }, [hints]);
 
   if (hints.length === 0) return null;
 
   return (
     <group>
       {hints.map((h, i) => {
-        const s = h.size * M;
+        const e = eulerFromNormals(h.faceA, h.faceB);
         return (
-          <mesh
+          <group
             key={i}
             position={[h.position.x * M, h.position.y * M, h.position.z * M]}
+            rotation={[e.x, e.y, e.z]}
             renderOrder={5}
           >
-            <boxGeometry args={[s, s, s]} />
-            <meshBasicMaterial
-              color="#ff8844"
-              wireframe
-              transparent
-              opacity={0.6}
-              depthTest={false}
-            />
-          </mesh>
+            {/* Real corner bracket, flush on the two mounting faces */}
+            <Suspense fallback={null}>
+              <CornerBracketStl size={h.size} color="#ff8844" opacity={0.55} metalness={0.2} />
+            </Suspense>
+          </group>
         );
       })}
     </group>

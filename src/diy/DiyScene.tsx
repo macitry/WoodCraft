@@ -11,6 +11,7 @@ import DiyBracketRenderer from './DiyBracketRenderer';
 import DiyBracketPlacementGhost from './DiyBracketPlacementGhost';
 import DiyPlacingGhost from './DiyPlacingGhost';
 import DiyCornerHints from './DiyCornerHints';
+import DiyBracketFaceMarker from './DiyBracketFaceMarker';
 
 const TARGET_DIST = 1.8; // camera distance after zoom-in (metres)
 const LERP = 0.10;       // per-frame lerp factor
@@ -97,6 +98,7 @@ const DiyScene: React.FC<DiySceneProps> = ({ onCameraReady }) => {
       <DiyStretchGizmo />
       <DiyBracketPlacementGhost />
       <DiyPlacingGhost />
+      <DiyBracketFaceMarker />
     </>
   );
 };
