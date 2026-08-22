@@ -237,6 +237,8 @@ export type FaceDir = '+X' | '-X' | '+Y' | '-Y' | '+Z' | '-Z';
 /** A single aluminum profile in the DIY frame. */
 export interface DiyProfile {
   id: string;
+  /** Stable creation sequence — used for structure-tree numbering (never changes on delete). */
+  seq: number;
   profileSize: ProfileSize;
   /** Length in mm — fixed after initial placement + stretch. */
   length: number;

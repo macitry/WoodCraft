@@ -66,11 +66,16 @@ function getFacePlane(profile: DiyProfile, face: FaceDir, dim: number): FacePlan
   const halfU = uIsDir ? L / 2 : D / 2;
   const halfV = vIsDir ? L / 2 : D / 2;
 
-  // Quaternion to rotate default XY plane (normal +Z) to the face
-  const quaternion = new THREE.Quaternion().setFromUnitVectors(
-    new THREE.Vector3(0, 0, 1),
-    normal,
-  );
+  // Orient the raycast plane so its width (local X) runs along fp.u and its
+  // height (local Y) along fp.v. setFromUnitVectors only fixes the normal — on
+  // a side face the plane's long axis would then land on a short axis of the
+  // profile, covering just a narrow strip of the face, so the ghost gets stuck
+  // as soon as the pointer leaves that strip.
+  const basis = new THREE.Matrix4().makeBasis(u, v, normal);
+  // (u, v, normal) can be left-handed on a minus face — flip v so the basis is
+  // a proper rotation and the extracted quaternion is valid.
+  if (basis.determinant() < 0) basis.makeBasis(u, v.clone().negate(), normal);
+  const quaternion = new THREE.Quaternion().setFromRotationMatrix(basis);
 
   return { centre, normal, u, v, halfU, halfV, quaternion };
 }

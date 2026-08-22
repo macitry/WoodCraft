@@ -333,6 +333,12 @@ const DiyProfileRenderer: React.FC = () => {
         );
         return;
       }
+      if (status === 'no_fit') {
+        useModelStore.getState().setError(
+          '这个位置的面不够放角码:角码会伸出型材。请换一个离型材端部更远的位置。',
+        );
+        return;
+      }
       if (status === 'placed' && first) {
         useModelStore.getState().setError(null); // clear stale error banners
         await runFaceComparison(first, second);

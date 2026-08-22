@@ -12,12 +12,14 @@ import type {
   BracketFacePick,
 } from '../types/furniture';
 import { PROFILE_DIMS } from '../types/furniture';
-import { centeredJointPosition } from '../diy/diyJointGeometry';
+import { jointFitInfo, cornerBracketFits } from '../diy/diyJointGeometry';
 
 let _nextId = 1;
 function uid(): string {
   return `diy_${_nextId++}_${Date.now().toString(36)}`;
 }
+/** Stable per-profile creation sequence (structure-tree numbering). */
+let _seq = 0;
 
 interface DiyState {
   profiles: DiyProfile[];
@@ -81,7 +83,7 @@ interface DiyState {
    * where the two face planes meet. Returns the outcome for the caller to
    * surface errors.
    */
-  pickBracketFace: (info: BracketFacePick) => 'first' | 'placed' | 'rejected' | 'no_overlap';
+  pickBracketFace: (info: BracketFacePick) => 'first' | 'placed' | 'rejected' | 'no_overlap' | 'no_fit';
   /** Cancel two-face bracket placement. */
   cancelBracketFacePicking: () => void;
   /**
@@ -144,6 +146,7 @@ export const useDiyStore = create<DiyState>((set, get) => ({
   addRootProfile: (size, pos, dir) => {
     const p: DiyProfile = {
       id: uid(),
+      seq: ++_seq,
       profileSize: size,
       length: 100,
       position: pos,
@@ -193,6 +196,7 @@ export const useDiyStore = create<DiyState>((set, get) => ({
 
     const child: DiyProfile = {
       id: uid(),
+      seq: ++_seq,
       profileSize: size,
       length: 100, // default child length
       position: pPos,
@@ -292,6 +296,7 @@ export const useDiyStore = create<DiyState>((set, get) => ({
 
     const child: DiyProfile = {
       id: uid(),
+      seq: ++_seq,
       profileSize: parent.profileSize,
       length: 100,
       position: childPos,
@@ -386,8 +391,21 @@ export const useDiyStore = create<DiyState>((set, get) => ({
     const pa = s.profiles.find((p) => p.id === a.profileId);
     const pb = s.profiles.find((p) => p.id === info.profileId);
     if (!pa || !pb) return 'rejected';
-    const pos = centeredJointPosition(pa, a.normal, pb, info.normal);
-    if (!pos) return 'no_overlap';
+    const fit = jointFitInfo(pa, a.normal, pb, info.normal);
+    if (!fit) return 'no_overlap';
+
+    const dimOf = (id: string) => {
+      const p = s.profiles.find((q) => q.id === id);
+      return p ? (PROFILE_DIMS[p.profileSize] ?? 30) : 30;
+    };
+    const size = Math.max(dimOf(a.profileId), dimOf(info.profileId));
+
+    // Reject a placement whose mounting faces don't have enough room for the
+    // bracket (joint too close to a profile end, or a too-short profile) — the
+    // bracket would visibly stick out past the profile.
+    if (!cornerBracketFits(fit, size)) return 'no_fit';
+
+    const pos = fit.position;
 
     // Rotation: R·(1,0,0)=n1, R·(0,1,0)=n2 — the same convention the backend
     // uses for a placed bracket, so the flush corner bracket matches.
@@ -396,11 +414,6 @@ export const useDiyStore = create<DiyState>((set, get) => ({
     const nz = new THREE.Vector3().crossVectors(nx, ny);
     const rotM = new THREE.Matrix4().makeBasis(nx, ny, nz);
     const eul = new THREE.Euler().setFromRotationMatrix(rotM, 'XYZ');
-
-    const dimOf = (id: string) => {
-      const p = s.profiles.find((q) => q.id === id);
-      return p ? (PROFILE_DIMS[p.profileSize] ?? 30) : 30;
-    };
 
     const bracket: DiyBracket = {
       id: uid(),
@@ -419,7 +432,7 @@ export const useDiyStore = create<DiyState>((set, get) => ({
       anchorRotation: { roll: 0, pitch: 0, yaw: 0 },
       connectedProfiles: [a.profileId, info.profileId],
       enabled: true,
-      size: Math.max(dimOf(a.profileId), dimOf(info.profileId)),
+      size,
     };
 
     set((st) => ({
@@ -465,6 +478,7 @@ export const useDiyStore = create<DiyState>((set, get) => ({
 
     const child: DiyProfile = {
       id: uid(),
+      seq: ++_seq,
       profileSize: placingProfile.size,
       length: childLen,
       position: childPos,

@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import DiyViewer from './DiyViewer';
 import DiyProfileLibrary from '../components/DiyProfileLibrary';
 import DiyPropertyPanel from './DiyPropertyPanel';
+import DiyStructureTree from './DiyStructureTree';
 import BracketEditModal from './BracketEditModal';
 import { useDiyStore } from '../store/diyStore';
 import { useModelStore } from '../store/modelStore';
@@ -18,6 +19,7 @@ const DiyPage: React.FC = () => {
   const cancelBracketFacePicking = useDiyStore((s) => s.cancelBracketFacePicking);
   const isPickingFaces = mode === 'placing_bracket_faces';
   const [projectName, setProjectName] = useState('未命名');
+  const [showTree, setShowTree] = useState(true);
 
   return (
     <div className="w-screen h-screen flex flex-col bg-neutral-950 overflow-hidden">
@@ -43,6 +45,17 @@ const DiyPage: React.FC = () => {
           型材: {profiles.length} | 角码: {brackets.length} | 总长: {(totalLength / 1000).toFixed(1)}m
         </span>
         <button
+          onClick={() => setShowTree((v) => !v)}
+          className={`px-3 py-1 text-xs rounded transition-colors cursor-pointer ${
+            showTree
+              ? 'bg-wood-600 text-white'
+              : 'bg-neutral-800 text-neutral-400 hover:text-white'
+          }`}
+          title="显示/隐藏左侧结构树"
+        >
+          结构树
+        </button>
+        <button
           onClick={() => (isPickingFaces ? cancelBracketFacePicking() : startBracketFacePicking())}
           className={`px-3 py-1 text-xs rounded transition-colors cursor-pointer ${
             isPickingFaces
@@ -60,8 +73,9 @@ const DiyPage: React.FC = () => {
 
       {/* Main Content */}
       <div className="flex-1 flex overflow-hidden">
-        {/* Left — Profile Library */}
+        {/* Left — Structure tree + Profile Library */}
         <aside className="w-56 flex-shrink-0 border-r border-neutral-800 bg-neutral-950 overflow-y-auto">
+          {showTree && <DiyStructureTree />}
           <DiyProfileLibrary />
         </aside>
 

@@ -5,7 +5,7 @@ import { PROFILE_DIMS } from '../types/furniture';
 import type { DiyProfile } from '../types/furniture';
 import { CornerBracketStl } from './DiyBracketStl';
 import { logDiyBracket } from './diyLog';
-import { centeredJointPosition } from './diyJointGeometry';
+import { jointFitInfo, cornerBracketFits } from './diyJointGeometry';
 
 const M = 0.001;
 const COPLANAR_MARGIN = 2; // mm — faces within this distance are on the same plane
@@ -223,8 +223,11 @@ export function computeCornerHints(profiles: DiyProfile[]): CornerHint[] {
             const u = axisVec(Ps.direction);
             for (const sgn of [-1, 1]) {
               const nB = { x: sgn * u.x, y: sgn * u.y, z: sgn * u.z };
-              const pos = centeredJointPosition(Ps, n0, Pe, nB);
-              if (!pos) continue;
+              const fit = jointFitInfo(Ps, n0, Pe, nB);
+              // Skip a joint whose mounting faces are too narrow for the bracket —
+              // the preview would visibly stick out past the profile.
+              if (!fit || !cornerBracketFits(fit, size)) continue;
+              const pos = fit.position;
               hints.push({
                 position: { x: Math.round(pos.x), y: Math.round(pos.y), z: Math.round(pos.z) },
                 size,
@@ -242,8 +245,9 @@ export function computeCornerHints(profiles: DiyProfile[]): CornerHint[] {
             for (const sgn of [-1, 1]) {
               const nA = { x: sgn * nP.x, y: sgn * nP.y, z: sgn * nP.z };
               const nB = { x: sgn * nQ.x, y: sgn * nQ.y, z: sgn * nQ.z };
-              const pos = centeredJointPosition(profiles[ai], nA, profiles[bi], nB);
-              if (!pos) continue;
+              const fit = jointFitInfo(profiles[ai], nA, profiles[bi], nB);
+              if (!fit || !cornerBracketFits(fit, size)) continue;
+              const pos = fit.position;
               hints.push({
                 position: { x: Math.round(pos.x), y: Math.round(pos.y), z: Math.round(pos.z) },
                 size,
@@ -316,11 +320,25 @@ const DiyCornerHints: React.FC = () => {
   // During a two-face comparison the blue auto-reference bracket already shows
   // the auto result — hide the orange previews to avoid overlap.
   const autoRefBracket = useDiyStore((s) => s.autoRefBracket);
+  const brackets = useDiyStore((s) => s.brackets);
 
-  const hints = useMemo(
-    () => (showCornerHints && !autoRefBracket ? computeCornerHints(profiles) : []),
-    [showCornerHints, profiles, autoRefBracket],
-  );
+  const hints = useMemo(() => {
+    if (!showCornerHints || autoRefBracket) return [];
+    const all = computeCornerHints(profiles);
+    // Skip previews where a bracket is already placed at the same spot, so the
+    // preview does not draw on top of an existing (orange/placed) bracket.
+    const placed = brackets.filter((b) => b.enabled);
+    if (placed.length === 0) return all;
+    return all.filter((h) =>
+      !placed.some((b) =>
+        Math.hypot(
+          b.position.x - h.position.x,
+          b.position.y - h.position.y,
+          b.position.z - h.position.z,
+        ) <= 2,
+      ),
+    );
+  }, [showCornerHints, profiles, autoRefBracket, brackets]);
 
   // Persist every preview-mode hint set (position + pose) when the corner
   // preview turns on, or when the joint configuration changes.
