@@ -38,7 +38,7 @@ const BracketEditor: FC = () => {
         </div>
         <div className="flex gap-1">
           <button onClick={handleAdd} className="px-2 py-1 text-xs rounded bg-neutral-800 hover:bg-neutral-700 text-neutral-300 transition-colors cursor-pointer" title="Add bracket">+ Add</button>
-          <button onClick={resetBracketsToDefault} className="px-2 py-1 text-xs rounded bg-neutral-800 hover:bg-neutral-700 text-neutral-400 transition-colors cursor-pointer" title="Reset">↺</button>
+          <button onClick={resetBracketsToDefault} className="px-2 py-1 text-xs rounded bg-amber-900/40 hover:bg-amber-900/70 text-amber-300 transition-colors cursor-pointer" title="按接头算法重新生成角码(覆盖手动调整)">⚡ 自动</button>
         </div>
       </div>
 
@@ -80,15 +80,24 @@ const BracketRow: FC<{
   const [localPos, setLocalPos] = useState({ ...bracket.position });
   const [localRot, setLocalRot] = useState({ ...bracket.rotation });
   const [localParts, setLocalParts] = useState(bracket.connectedParts.join(', '));
+  const [localStl, setLocalStl] = useState(bracket.stlUrl ?? '');
 
-  // Sync from store when bracket changes externally
-  const [lastBracketId, setLastId] = useState(bracket.id);
-  if (bracket.id !== lastBracketId) {
-    setLastId(bracket.id);
+  // Sync from store when the bracket's committed data changes externally.
+  // The auto-regenerator reuses the same bracket ids across regenerations, so
+  // keying on id alone would leave stale positions/rotations in the edit panel
+  // (e.g. after ⚡ 自动 or a template switch). Compare a data signature instead.
+  const dataKey = JSON.stringify([
+    bracket.id, bracket.name, bracket.position, bracket.rotation,
+    bracket.connectedParts, bracket.stlUrl ?? '',
+  ]);
+  const [prevKey, setPrevKey] = useState(dataKey);
+  if (dataKey !== prevKey) {
+    setPrevKey(dataKey);
     setLocalName(bracket.name);
     setLocalPos({ ...bracket.position });
     setLocalRot({ ...bracket.rotation });
     setLocalParts(bracket.connectedParts.join(', '));
+    setLocalStl(bracket.stlUrl ?? '');
   }
 
   const commit = () => {
@@ -97,6 +106,7 @@ const BracketRow: FC<{
       position: localPos,
       rotation: localRot,
       connectedParts: localParts.split(',').map((s) => s.trim()).filter(Boolean),
+      stlUrl: localStl.trim() || undefined,
     });
     console.log('[Bracket] Updated:', bracket.id.slice(-6),
       'pos:', localPos, 'rot:', localRot,
@@ -140,6 +150,9 @@ const BracketRow: FC<{
 
           {/* Connected parts */}
           <InputRow label="Connected Parts" value={localParts} onChange={setLocalParts} onBlur={commit} placeholder="e.g. leg_front_left, beam_front" />
+
+          {/* STL model — swap this bracket's connector model (leave empty for default) */}
+          <InputRow label="STL Model (stlUrl)" value={localStl} onChange={setLocalStl} onBlur={commit} placeholder="/Cast_Corner_Bracket.stl" />
 
           {/* Actions */}
           <div className="flex gap-1 pt-1 flex-wrap">

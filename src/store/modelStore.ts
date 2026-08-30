@@ -15,6 +15,7 @@ import type { DxfTabletopShape } from '../utils/dxfImport';
 import { generateModel, fetchDefaultModel, fetchProgress } from '../api/modelApi';
 import type { ServerProgress } from '../api/modelApi';
 import { mockModel, delay } from '../mock/exampleModel';
+import { autoGenerateBrackets } from '../diy/mainBracketAuto';
 
 // ============================================================
 // Model Store — manages the current furniture model state
@@ -222,64 +223,6 @@ interface ModelState {
   setBrackets: (brackets: BracketInstance[]) => void;
 }
 
-/** Generate default bracket instances for a template + dimensions. */
-function generateDefaultBrackets(templateId: string, width: number, depth: number, height: number, tabletopThickness: number, profileSize: number): BracketInstance[] {
-  const cfg = TEMPLATE_LAYOUTS[templateId];
-  if (!cfg || !cfg.brackets.enabled) return [];
-
-  const ps = profileSize;
-  const h = height;
-  const tt = tabletopThickness;
-  const beamTopY = h - tt;          // top of beams = bottom of tabletop
-  const beamBotY = h - tt - ps;     // bottom of beams
-  const halfW = width / 2;
-  const halfD = depth / 2;
-  const ix = cfg.insetRatioX * width;
-  const iz = cfg.insetRatioZ * depth;
-  const cx = halfW - ix - ps / 2;   // corner X (absolute, positive = right)
-  const cz = halfD - iz - ps / 2;   // corner Z (absolute, positive = front)
-
-  const brackets: BracketInstance[] = [];
-  let idx = 0;
-
-  // Helper to add a bracket
-  const add = (name: string, pos: {x:number;y:number;z:number}, rot: {roll:number;pitch:number;yaw:number}, parts: string[]) => {
-    brackets.push({ id: `bracket_${idx++}`, name, position: pos, rotation: rot, connectedParts: parts, enabled: true });
-  };
-
-  if (cfg.brackets.placements.includes('beam_corners')) {
-    // Corner L brackets at each beam corner (on the OUTSIDE face of beams)
-    // These sit at the beam intersection at the top outer edge
-    // Front-left corner: beam_front meets beam_left
-    add('角铁-前左角', { x: cx, y: beamTopY, z: cz }, { roll: 0, pitch: 0, yaw: 0 }, ['beam_front', 'beam_left']);
-    // Front-right corner
-    add('角铁-前右角', { x: -cx, y: beamTopY, z: cz }, { roll: 0, pitch: 0, yaw: 0 }, ['beam_front', 'beam_right']);
-    // Back-left corner
-    add('角铁-后左角', { x: cx, y: beamTopY, z: -cz }, { roll: 0, pitch: 0, yaw: 0 }, ['beam_back', 'beam_left']);
-    // Back-right corner
-    add('角铁-后右角', { x: -cx, y: beamTopY, z: -cz }, { roll: 0, pitch: 0, yaw: 0 }, ['beam_back', 'beam_right']);
-  }
-
-  if (cfg.brackets.placements.includes('leg_tops')) {
-    // Leg-top L brackets: connect each leg's top to the beam above it
-    // Position at leg top inner face
-    // Front-left leg
-    add('角铁-左前腿-前', { x: cx, y: beamBotY, z: cz }, { roll: 0, pitch: 0, yaw: 0 }, ['leg_front_left', 'beam_front']);
-    add('角铁-左前腿-左', { x: cx, y: beamBotY, z: cz }, { roll: 0, pitch: 0, yaw: 0 }, ['leg_front_left', 'beam_left']);
-    // Front-right leg
-    add('角铁-右前腿-前', { x: -cx, y: beamBotY, z: cz }, { roll: 0, pitch: 0, yaw: 0 }, ['leg_front_right', 'beam_front']);
-    add('角铁-右前腿-右', { x: -cx, y: beamBotY, z: cz }, { roll: 0, pitch: 0, yaw: 0 }, ['leg_front_right', 'beam_right']);
-    // Back-left leg
-    add('角铁-左后腿-后', { x: cx, y: beamBotY, z: -cz }, { roll: 0, pitch: 0, yaw: 0 }, ['leg_back_left', 'beam_back']);
-    add('角铁-左后腿-左', { x: cx, y: beamBotY, z: -cz }, { roll: 0, pitch: 0, yaw: 0 }, ['leg_back_left', 'beam_left']);
-    // Back-right leg
-    add('角铁-右后腿-后', { x: -cx, y: beamBotY, z: -cz }, { roll: 0, pitch: 0, yaw: 0 }, ['leg_back_right', 'beam_back']);
-    add('角铁-右后腿-右', { x: -cx, y: beamBotY, z: -cz }, { roll: 0, pitch: 0, yaw: 0 }, ['leg_back_right', 'beam_right']);
-  }
-
-  return brackets;
-}
-
 export const useModelStore = create<ModelState>((set, get) => ({
   model: null,
   isLoading: false,
@@ -345,15 +288,8 @@ export const useModelStore = create<ModelState>((set, get) => ({
         components,
       };
 
-      // Generate default brackets for this model
-      const defaultBrackets = generateDefaultBrackets(
-        get().currentParams.templateId,
-        get().currentParams.width,
-        get().currentParams.depth,
-        get().currentParams.height,
-        get().currentParams.tabletopThickness,
-        30,
-      );
+      // Auto-place brackets at reasonable joints (reuses the DIY corner logic)
+      const defaultBrackets = autoGenerateBrackets(model, get().currentParams);
 
       set({
         model,
@@ -392,13 +328,18 @@ export const useModelStore = create<ModelState>((set, get) => ({
       p.id === parameterId ? { ...p, value } : p,
     );
     const newParams = { ...get().currentParams };
-    if (parameterId in newParams) {
-      (newParams as Record<string, unknown>)[parameterId] = value;
+    const curKey = paramToCurrentKey(parameterId);
+    if (curKey in newParams) {
+      (newParams as Record<string, unknown>)[curKey] = value;
     }
     set({
       model: { ...model, parameters: updatedModelParams },
       currentParams: newParams,
     });
+
+    // Frame geometry changed — re-anchor the auto brackets to the new joints so
+    // they follow the table as it is resized.
+    if (GEOMETRY_PARAMS.has(curKey)) regenerateBracketsForCurrent();
 
     // 2. Debounced background regeneration (only fires after 2s of inactivity)
     const backendId = TEMPLATE_BACKEND_ID[newParams.templateId] || 'basic-desk';
@@ -483,6 +424,8 @@ export const useModelStore = create<ModelState>((set, get) => ({
     set((s) => ({
       currentParams: { ...s.currentParams, [key]: value },
     }));
+    // Inset / cross-beam-height changes move the frame too — brackets follow.
+    if (GEOMETRY_PARAMS.has(key)) regenerateBracketsForCurrent();
   },
 
   // ---- DXF tabletop ----
@@ -520,6 +463,7 @@ export const useModelStore = create<ModelState>((set, get) => ({
           depth: Math.round(shape.bounds.depth),
         },
       }));
+      regenerateBracketsForCurrent();
     }
   },
 
@@ -649,21 +593,69 @@ export const useModelStore = create<ModelState>((set, get) => ({
   },
 
   resetBracketsToDefault: () => {
-    const { currentParams, defaultBracketCount } = get();
-    const defaults = generateDefaultBrackets(
-      currentParams.templateId,
-      currentParams.width,
-      currentParams.depth,
-      currentParams.height,
-      currentParams.tabletopThickness,
-      30,
-    );
+    const { model, currentParams } = get();
+    const defaults = autoGenerateBrackets(model, currentParams);
     set({ brackets: defaults, defaultBracketCount: defaults.length, selectedBracketId: null });
   },
 
   setBrackets: (brackets: BracketInstance[]) =>
     set({ brackets, defaultBracketCount: brackets.length }),
 }));
+
+// ============================================================
+// Bracket re-anchoring on geometry change
+// ============================================================
+
+/** currentParams keys that move the aluminum frame (and thus bracket joints). */
+const GEOMETRY_PARAMS = new Set([
+  'width', 'depth', 'height', 'tabletopThickness',
+  'insetRatioX', 'insetRatioZ', 'crossBeamHeightRatio',
+]);
+
+/** Map a model-parameter id to the matching currentParams key. */
+const paramToCurrentKey = (id: string): string =>
+  id === 'tabletop_thickness' ? 'tabletopThickness' : id;
+
+const bracketPairKey = (parts: string[]) => [...parts].sort().join('|');
+
+const bracketPosDist = (
+  a: { x: number; y: number; z: number },
+  b: { x: number; y: number; z: number },
+) => Math.hypot(a.x - b.x, a.y - b.y, a.z - b.z);
+
+/**
+ * Recompute the auto brackets against the current params so they follow the
+ * frame when the table is resized / re-templated. Manual brackets
+ * (bracket_user_*) are kept verbatim; per-bracket STL override and enabled
+ * state are carried onto the regenerated auto brackets by matching joint
+ * (same connected parts, nearest old position).
+ */
+function regenerateBracketsForCurrent() {
+  const s = useModelStore.getState();
+  const { model, currentParams } = s;
+  if (!model) return;
+  const fresh = autoGenerateBrackets(model, currentParams);
+  const oldAuto = s.brackets.filter((b) => b.id.startsWith('bracket_auto_'));
+  const manual = s.brackets.filter((b) => !b.id.startsWith('bracket_auto_'));
+  const matched = fresh.map((fb) => {
+    const fk = bracketPairKey(fb.connectedParts);
+    const candidates = oldAuto.filter((ob) => bracketPairKey(ob.connectedParts) === fk);
+    if (candidates.length === 0) return fb;
+    const near = candidates.reduce((best, c) =>
+      bracketPosDist(c.position, fb.position) < bracketPosDist(best.position, fb.position) ? c : best,
+    );
+    return { ...fb, stlUrl: near.stlUrl, enabled: near.enabled };
+  });
+  const all = [...matched, ...manual];
+  useModelStore.setState((st) => ({
+    brackets: all,
+    defaultBracketCount: fresh.length,
+    selectedBracketId:
+      st.selectedBracketId && all.some((b) => b.id === st.selectedBracketId)
+        ? st.selectedBracketId
+        : null,
+  }));
+}
 
 // ============================================================
 // STL Polling — retry until warmup completes

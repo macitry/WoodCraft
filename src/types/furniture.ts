@@ -366,4 +366,12 @@ export interface BracketInstance {
   connectedParts: string[];
   /** Whether to render this bracket. */
   enabled: boolean;
+  /** Profile cross-section the bracket matches (mm) — display metadata. */
+  size?: number;
+  /** Override bracket STL model per bracket; falls back to the default. */
+  stlUrl?: string;
 }
+
+/** Default cast corner bracket STL. Configurable so the model can be swapped
+ *  without touching the renderer (see also BracketInstance.stlUrl). */
+export const DEFAULT_BRACKET_STL_URL = '/Cast_Corner_Bracket.stl';

@@ -1,10 +1,11 @@
 import { useRef, useState, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useModelStore, injectVirtualComponents } from '../store/modelStore';
+import { autoGenerateBrackets } from '../diy/mainBracketAuto';
 import { mockTemplates } from '../mock/exampleModel';
 import { parseTabletopDxf } from '../utils/dxfImport';
 import { generateTabletopDxf, dxfShapeToDxf } from '../utils/dxfExport';
-import { computeBom, bomToCsv } from '../utils/bomExport';
+import BomPreviewModal from './BomPreviewModal';
 import type { ViewPreset } from '../types/furniture';
 import type { ViewMode } from '../app/App';
 
@@ -27,6 +28,7 @@ const Toolbar: React.FC<ToolbarProps> = ({
   const model = useModelStore((s) => s.model);
   const isLoading = useModelStore((s) => s.isLoading);
   const [templateMenuOpen, setTemplateMenuOpen] = useState(false);
+  const [showBom, setShowBom] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
 
   // Close menu on outside click
@@ -61,7 +63,19 @@ const Toolbar: React.FC<ToolbarProps> = ({
           model.components.filter((c) => !c.id.startsWith('cross_beam') && !c.id.startsWith('bracket_')),
           templateId,
         );
-        useModelStore.setState({ model: { ...model, components: updated } });
+        const updatedModel = { ...model, components: updated };
+        // Template switch is a structural change — regenerate the auto brackets
+        // so the new joints (e.g. cross beams) get their connectors immediately.
+        const freshBrackets = autoGenerateBrackets(
+          updatedModel,
+          useModelStore.getState().currentParams,
+        );
+        useModelStore.setState({
+          model: updatedModel,
+          brackets: freshBrackets,
+          defaultBracketCount: freshBrackets.length,
+          selectedBracketId: null,
+        });
       } else {
         loadModelFromApi();
       }
@@ -77,6 +91,7 @@ const Toolbar: React.FC<ToolbarProps> = ({
   ];
 
   return (
+    <>
     <div className="h-12 px-4 flex items-center gap-3 border-b border-neutral-800 bg-neutral-950/90 backdrop-blur-sm flex-shrink-0 relative z-50">
       {/* Logo */}
       <div className="flex items-center gap-2 mr-4">
@@ -245,18 +260,12 @@ const Toolbar: React.FC<ToolbarProps> = ({
       >
         📤 DXF
       </button>
-      {/* Export BOM */}
+      {/* Export BOM — opens the preview modal (CSV export lives inside) */}
       <button
         className="px-3 py-1.5 text-xs rounded-md text-neutral-400
           hover:text-white hover:bg-neutral-900 transition-colors cursor-pointer"
-        title="Export BOM as CSV"
-        onClick={() => {
-          const model = useModelStore.getState().model;
-          if (!model) return;
-          const bom = computeBom(model);
-          const csv = bomToCsv(bom);
-          downloadFile(`bom_${model.id}.csv`, csv, 'text/csv');
-        }}
+        title="查看 BOM 物料清单"
+        onClick={() => setShowBom(true)}
       >
         📋 BOM
       </button>
@@ -270,6 +279,8 @@ const Toolbar: React.FC<ToolbarProps> = ({
         ↺
       </button>
     </div>
+    {showBom && <BomPreviewModal onClose={() => setShowBom(false)} />}
+    </>
   );
 };
 

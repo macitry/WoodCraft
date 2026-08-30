@@ -4,7 +4,7 @@ import { useLoader } from '@react-three/fiber';
 import { STLLoader } from 'three-stdlib';
 import type { FurnitureModel, Component, TabletopHole, BracketInstance } from '../types/furniture';
 import type { DxfTabletopShape } from '../utils/dxfImport';
-import { TEMPLATE_LAYOUTS } from '../types/furniture';
+import { TEMPLATE_LAYOUTS, DEFAULT_BRACKET_STL_URL } from '../types/furniture';
 import { useModelStore } from '../store/modelStore';
 
 const { Euler, Quaternion } = THREE;
@@ -760,22 +760,21 @@ const GroundPlane: React.FC = () => {
 // UserBrackets — renders user-editable brackets from the store
 // ============================================================
 
-/** URL for the cast corner bracket STL model. */
-const BRACKET_STL_URL = '/Cast_Corner_Bracket.stl';
-
 interface UserBracketPartProps {
   bracket: BracketInstance;
   isSelected: boolean;
   onClick: () => void;
 }
 
-/** Renders a single bracket using the real cast corner bracket STL model. */
+/** Renders a single bracket using the cast corner bracket STL model.
+ *  The model is configurable per bracket via `stlUrl` (falls back to the
+ *  global default) so different brackets can use different connectors. */
 const UserBracketPart: React.FC<UserBracketPartProps> = ({
   bracket,
   isSelected,
   onClick,
 }) => {
-  const geom = useLoader(STLLoader, BRACKET_STL_URL);
+  const geom = useLoader(STLLoader, bracket.stlUrl || DEFAULT_BRACKET_STL_URL);
 
   // Clone so each bracket instance has its own geometry reference
   const cloned = useMemo(() => geom.clone(), [geom]);
