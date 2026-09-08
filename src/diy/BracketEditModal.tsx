@@ -1,4 +1,4 @@
-import { Suspense, useMemo, useState } from 'react';
+import { Suspense, useState } from 'react';
 import { Canvas } from '@react-three/fiber';
 import { useLoader } from '@react-three/fiber';
 import { STLLoader } from 'three-stdlib';
@@ -6,9 +6,10 @@ import { OrbitControls, GizmoHelper, GizmoViewport } from '@react-three/drei';
 import * as THREE from 'three';
 import { useDiyStore } from '../store/diyStore';
 import type { DiyBracket } from '../types/furniture';
+import { useConnectorGeometry } from './DiyBracketStl';
+import { CONNECTORS, connectorById } from './connectors';
 
 const M = 0.001;
-const BRACKET_STL = '/Cast_Corner_Bracket.stl';
 
 /**
  * Full-screen modal for editing a bracket part in isolation.
@@ -28,8 +29,10 @@ const BracketEditModal: React.FC = () => {
     <div className="fixed inset-0 z-50 bg-neutral-950/95 backdrop-blur-sm flex flex-col">
       {/* Header */}
       <div className="h-12 px-4 flex items-center gap-3 border-b border-neutral-800 flex-shrink-0">
-        <span className="text-sm text-white font-medium">Edit Bracket — {bracket.name}</span>
-        <span className="text-xs text-neutral-500">Size: {bracket.size}×{bracket.size}×{bracket.size}mm</span>
+        <span className="text-sm text-white font-medium">Edit {connectorById(bracket.connectorId).label}</span>
+        <span className="text-xs text-neutral-500">
+          {connectorById(bracket.connectorId).dim} · {bracket.size}×{bracket.size}×{bracket.size}mm
+        </span>
         <div className="flex-1" />
         <button onClick={close} className="px-3 py-1 text-xs rounded bg-neutral-800 hover:bg-neutral-700 text-neutral-300 transition-colors cursor-pointer">✕ Close</button>
       </div>
@@ -62,11 +65,25 @@ const BracketEditModal: React.FC = () => {
   );
 };
 
-/** STL model + wireframe in isolation, with anchor transforms applied. */
+/**
+ * STL model + wireframe in isolation, with anchor transforms applied.
+ * The connector's geometry is fully centred and scaled ext->size so it floats
+ * in the middle of the viewport; the wireframe is its boxMm bbox scaled the
+ * same way (both centred, so they coincide).
+ */
 const BracketModel: React.FC<{ bracket: DiyBracket }> = ({ bracket }) => {
-  const s = M * bracket.size;
+  const cc = connectorById(bracket.connectorId);
   const ap = bracket.anchorPosition ?? { x: 0, y: 0, z: 0 };
   const ar = bracket.anchorRotation ?? { roll: 0, pitch: 0, yaw: 0 };
+
+  const sc = (M * bracket.size) / cc.extMm;
+  const mn = cc.boxMm.min;
+  const mx = cc.boxMm.max;
+  const dims: [number, number, number] = [
+    (mx[0] - mn[0]) * sc,
+    (mx[1] - mn[1]) * sc,
+    (mx[2] - mn[2]) * sc,
+  ];
 
   return (
     <group
@@ -79,46 +96,25 @@ const BracketModel: React.FC<{ bracket: DiyBracket }> = ({ bracket }) => {
     >
       {/* Wireframe */}
       <mesh renderOrder={1}>
-        <boxGeometry args={[s, s, s]} />
+        <boxGeometry args={dims} />
         <meshBasicMaterial color="#4488aa" wireframe transparent opacity={0.4} depthTest />
       </mesh>
 
       {/* STL */}
       <Suspense fallback={null}>
-        <BracketStlModel size={bracket.size} />
+        <ModalConnectorMesh url={cc.stlUrl} size={bracket.size} color={cc.color} />
       </Suspense>
     </group>
   );
 };
 
-const BracketStlModel: React.FC<{ size: number }> = ({ size }) => {
-  const geom = useLoader(STLLoader, BRACKET_STL);
-  const s = M * size;
-
-  const cloned = useMemo(() => {
-    const g = geom.clone();
-    const pos = g.getAttribute('position');
-    let minX = Infinity, minY = Infinity, minZ = Infinity;
-    let maxX = -Infinity, maxY = -Infinity, maxZ = -Infinity;
-    for (let i = 0; i < pos.count; i++) {
-      const x = pos.getX(i), y = pos.getY(i), z = pos.getZ(i);
-      if (x < minX) minX = x; if (x > maxX) maxX = x;
-      if (y < minY) minY = y; if (y > maxY) maxY = y;
-      if (z < minZ) minZ = z; if (z > maxZ) maxZ = z;
-    }
-    const cx = (minX + maxX) / 2, cy = (minY + maxY) / 2, cz = (minZ + maxZ) / 2;
-    const ext = Math.max(maxX - minX, maxY - minY, maxZ - minZ);
-    const ref = ext > 0 ? s / ext : 1;
-    for (let i = 0; i < pos.count; i++) {
-      pos.setXYZ(i, (pos.getX(i) - cx) * ref, (pos.getY(i) - cy) * ref, (pos.getZ(i) - cz) * ref);
-    }
-    pos.needsUpdate = true;
-    return g;
-  }, [geom, s]);
-
+/** Loads a connector's own STL and renders it centred at ext->size. */
+const ModalConnectorMesh: React.FC<{ url: string; size: number; color: string }> = ({ url, size, color }) => {
+  const geom = useLoader(STLLoader, url);
+  const geometry = useConnectorGeometry(geom, size, { x: true, y: true, z: true });
   return (
-    <mesh geometry={cloned}>
-      <meshStandardMaterial color="#707070" metalness={0.9} roughness={0.25} />
+    <mesh geometry={geometry}>
+      <meshStandardMaterial color={color} metalness={0.9} roughness={0.25} />
     </mesh>
   );
 };
@@ -146,6 +142,23 @@ const BracketEditor: React.FC<{
 
   return (
     <div className="space-y-4 text-xs">
+      <Section label="Model">
+        <div className="flex justify-between items-center">
+          <span className="text-neutral-400">Connector</span>
+          <select
+            value={bracket.connectorId}
+            onChange={(e) => onUpdate({ connectorId: e.target.value })}
+            className="max-w-[13rem] px-1.5 py-1 text-xs bg-neutral-900 border border-neutral-700 rounded text-neutral-200 focus:border-wood-600 focus:outline-none cursor-pointer"
+          >
+            {CONNECTORS.map((c) => (
+              <option key={c.id} value={c.id}>
+                {c.label} · {c.dim}
+              </option>
+            ))}
+          </select>
+        </div>
+      </Section>
+
       <Section label="World Position (mm)">
         {(['x','y','z'] as const).map((ax) => (
           <Row key={ax} label={ax.toUpperCase()}>

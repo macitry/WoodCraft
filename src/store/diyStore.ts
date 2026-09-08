@@ -5,13 +5,15 @@ import * as THREE from 'three';
 import type {
   DiyProfile,
   DiyBracket,
+  DiyScrew,
+  DiyScrewGhost,
   DiyMode,
   ProfileSize,
   AxisDir,
   FaceDir,
   BracketFacePick,
 } from '../types/furniture';
-import { PROFILE_DIMS } from '../types/furniture';
+import { PROFILE_DIMS, SCREW_DEFAULT_LENGTH } from '../types/furniture';
 import { jointFitInfo, cornerBracketFits } from '../diy/diyJointGeometry';
 
 let _nextId = 1;
@@ -24,8 +26,10 @@ let _seq = 0;
 interface DiyState {
   profiles: DiyProfile[];
   brackets: DiyBracket[];
+  screws: DiyScrew[];
   selectedProfileId: string | null;
   selectedBracketId: string | null;
+  selectedScrewId: string | null;
   mode: DiyMode;
   /** Profile being stretched. */
   stretchProfileId: string | null;
@@ -68,9 +72,31 @@ interface DiyState {
     connectedProfiles?: string[];
     /** Override the placement position (mm) — used to land exactly on a joint corner. */
     position?: { x: number; y: number; z: number };
+    /** Connector catalog id to stamp on the new bracket (default 'corner_bracket'). */
+    connectorId?: string;
   }) => void;
   /** Cancel the drag (left viewport / Escape). */
   cancelDraggingBracket: () => void;
+
+  // ---- Screw drag-and-drop placement ----
+  /** True while a screw is being dragged from the sidebar over the 3D view. */
+  isDraggingScrew: boolean;
+  /** Ghost screw shown on the hovered profile face during drag (mm + deg). */
+  ghostScrew: DiyScrewGhost | null;
+  /** Called when the user starts dragging a screw over the 3D viewport. */
+  startDraggingScrew: () => void;
+  /** Update ghost during mouse move. Null = no valid face under cursor. */
+  updateGhostScrew: (data: DiyScrewGhost | null) => void;
+  /** Drop: place the screw at the ghost position. */
+  placeScrew: (patch?: { length?: number }) => void;
+  /** Cancel the screw drag. */
+  cancelDraggingScrew: () => void;
+
+  // Screw CRUD
+  addScrew: (s: DiyScrew) => void;
+  updateScrew: (id: string, patch: Partial<DiyScrew>) => void;
+  removeScrew: (id: string) => void;
+  selectScrew: (id: string | null) => void;
 
   // ---- Bracket two-face placement (manual: pick two perpendicular faces) ----
   /** First picked face while placing a bracket by clicking two faces. */
@@ -134,8 +160,10 @@ interface DiyState {
 export const useDiyStore = create<DiyState>((set, get) => ({
   profiles: [],
   brackets: [],
+  screws: [],
   selectedProfileId: null,
   selectedBracketId: null,
+  selectedScrewId: null,
   mode: 'idle',
   stretchProfileId: null,
   stretchEnd: null,
@@ -222,17 +250,19 @@ export const useDiyStore = create<DiyState>((set, get) => ({
   removeProfile: (id) => {
     const descendants = get().getDescendantIds(id);
     const allToRemove = new Set([id, ...descendants]);
-    // Also remove brackets referencing removed profiles
+    // Also remove brackets referencing removed profiles, and screws mounted on them
     set((s) => ({
       profiles: s.profiles.filter((p) => !allToRemove.has(p.id)),
       brackets: s.brackets.filter(
         (b) => !b.connectedProfiles.some((pid) => allToRemove.has(pid)),
       ),
+      screws: s.screws.filter((sc) => !allToRemove.has(sc.profileId)),
       selectedProfileId: s.selectedProfileId && allToRemove.has(s.selectedProfileId) ? null : s.selectedProfileId,
+      selectedScrewId: s.selectedScrewId && s.screws.some((sc) => sc.id === s.selectedScrewId && allToRemove.has(sc.profileId)) ? null : s.selectedScrewId,
     }));
   },
 
-  selectProfile: (id) => set({ selectedProfileId: id, selectedBracketId: null }),
+  selectProfile: (id) => set({ selectedProfileId: id, selectedBracketId: null, selectedScrewId: null }),
 
   setStretchProfile: (id, end) =>
     set({ stretchProfileId: id, stretchEnd: end, mode: id ? 'stretching' : 'idle' }),
@@ -337,6 +367,7 @@ export const useDiyStore = create<DiyState>((set, get) => ({
     rotation?: DiyBracket['rotation'];
     connectedProfiles?: string[];
     position?: { x: number; y: number; z: number };
+    connectorId?: string;
   }) => {
     const { ghostBracket, profiles } = get();
     if (!ghostBracket) return;
@@ -344,6 +375,7 @@ export const useDiyStore = create<DiyState>((set, get) => ({
     const size = ghostBracket.size;
     const bracket: DiyBracket = {
       id: uid(),
+      connectorId: patch?.connectorId ?? 'corner_bracket',
       position: patch?.position ?? ghostBracket.position,
       rotation: patch?.rotation ?? { roll: 0, pitch: 0, yaw: 0 },
       anchorPosition: { x: 0, y: 0, z: 0 },
@@ -355,6 +387,9 @@ export const useDiyStore = create<DiyState>((set, get) => ({
     set((s) => ({
       brackets: [...s.brackets, bracket],
       selectedBracketId: bracket.id,
+      // Mutual selection: placing a bracket deselects any profile/screw.
+      selectedProfileId: null,
+      selectedScrewId: null,
       isDraggingBracket: false,
       ghostBracket: null,
       autoRefBracket: null,
@@ -417,6 +452,8 @@ export const useDiyStore = create<DiyState>((set, get) => ({
 
     const bracket: DiyBracket = {
       id: uid(),
+      // Manual two-face placement always drops the built-in cast bracket.
+      connectorId: 'corner_bracket',
       // 0.01 mm precision keeps the mounting faces flush without float noise.
       position: {
         x: Math.round(pos.x * 100) / 100,
@@ -515,10 +552,61 @@ export const useDiyStore = create<DiyState>((set, get) => ({
       selectedBracketId: s.selectedBracketId === id ? null : s.selectedBracketId,
     })),
 
-  selectBracket: (id) => set({ selectedBracketId: id, selectedProfileId: null }),
+  selectBracket: (id) => set({ selectedBracketId: id, selectedProfileId: null, selectedScrewId: null }),
 
   editingBracketId: null,
   openBracketEditor: (id) => set({ editingBracketId: id }),
+
+  // ---- Screw drag-and-drop ----
+  isDraggingScrew: false,
+  ghostScrew: null,
+
+  startDraggingScrew: () => set({ isDraggingScrew: true, ghostScrew: null }),
+
+  updateGhostScrew: (data) => set({ ghostScrew: data }),
+
+  placeScrew: (patch) => {
+    const { ghostScrew } = get();
+    if (!ghostScrew) return;
+    const screw: DiyScrew = {
+      id: uid(),
+      position: ghostScrew.position,
+      rotation: ghostScrew.rotation,
+      size: ghostScrew.size,
+      length: patch?.length ?? SCREW_DEFAULT_LENGTH[ghostScrew.size],
+      profileId: ghostScrew.profileId,
+      enabled: true,
+    };
+    set((s) => ({
+      screws: [...s.screws, screw],
+      selectedScrewId: screw.id,
+      // Mutual selection: placing a screw deselects any profile/bracket.
+      selectedProfileId: null,
+      selectedBracketId: null,
+      isDraggingScrew: false,
+      ghostScrew: null,
+    }));
+  },
+
+  cancelDraggingScrew: () => set({ isDraggingScrew: false, ghostScrew: null }),
+
+  // Screws CRUD
+  addScrew: (s) =>
+    set((st) => ({ screws: [...st.screws, s], selectedScrewId: s.id })),
+
+  updateScrew: (id, patch) =>
+    set((st) => ({
+      screws: st.screws.map((sc) => (sc.id === id ? { ...sc, ...patch } : sc)),
+    })),
+
+  removeScrew: (id) =>
+    set((st) => ({
+      screws: st.screws.filter((sc) => sc.id !== id),
+      selectedScrewId: st.selectedScrewId === id ? null : st.selectedScrewId,
+    })),
+
+  selectScrew: (id) =>
+    set({ selectedScrewId: id, selectedProfileId: null, selectedBracketId: null }),
 
   getProfilesByParent: (parentId) =>
     get().profiles.filter((p) => p.parentId === parentId),

@@ -257,6 +257,12 @@ export interface DiyProfile {
 /** A corner bracket in the DIY frame. */
 export interface DiyBracket {
   id: string;
+  /**
+   * Which connector catalog entry renders this bracket (see src/diy/connectors.ts).
+   * 'corner_bracket' = the built-in cast bracket; any other id is a baked
+   * MayTec 角码 model dropped from the Connectors tab.
+   */
+  connectorId: string;
   /** World position (mm). */
   position: { x: number; y: number; z: number };
   /** World rotation (degrees, ZYX Euler). */
@@ -269,6 +275,48 @@ export interface DiyBracket {
   enabled: boolean;
   /** Cube edge length (mm), matches profile cross-section. */
   size: number;
+}
+
+/** Socket-head screw sizes offered in the DIY library. */
+export type ScrewSize = 'M4' | 'M5' | 'M6';
+
+/** A screw mounted on a DIY profile face (head flush on the face, shaft in). */
+export interface DiyScrew {
+  id: string;
+  /** Shoulder origin world position (mm) — the screw head rests on the face. */
+  position: { x: number; y: number; z: number };
+  /** World rotation (degrees, XYZ Euler — same convention as brackets). */
+  rotation: { roll: number; pitch: number; yaw: number };
+  size: ScrewSize;
+  /** Total screw length (mm, head + shaft). */
+  length: number;
+  /** The profile face this screw is mounted on (removal cascades). */
+  profileId: string;
+  enabled: boolean;
+  /** Optional STL override — entry point for real screw models later. */
+  stlUrl?: string;
+}
+
+/** Head diameter / head height per screw size (mm, DIN912 socket head). */
+export const SCREW_HEAD_DIMS: Record<ScrewSize, { headD: number; headH: number }> = {
+  M4: { headD: 7, headH: 4 },
+  M5: { headD: 8.5, headH: 5 },
+  M6: { headD: 10, headH: 6 },
+};
+
+/** Default total length per screw size (mm). */
+export const SCREW_DEFAULT_LENGTH: Record<ScrewSize, number> = {
+  M4: 14,
+  M5: 16,
+  M6: 18,
+};
+
+/** Ghost screw shown while dragging a screw over the 3D viewport. */
+export interface DiyScrewGhost {
+  position: { x: number; y: number; z: number };
+  rotation: { roll: number; pitch: number; yaw: number };
+  size: ScrewSize;
+  profileId: string;
 }
 
 /** DIY editor mode. */

@@ -9,6 +9,8 @@ import DiyProfileRenderer from './DiyProfileRenderer';
 import DiyStretchGizmo from './DiyStretchGizmo';
 import DiyBracketRenderer from './DiyBracketRenderer';
 import DiyBracketPlacementGhost from './DiyBracketPlacementGhost';
+import DiyScrewRenderer from './DiyScrewRenderer';
+import DiyScrewPlacementGhost from './DiyScrewPlacementGhost';
 import DiyPlacingGhost from './DiyPlacingGhost';
 import DiyCornerHints from './DiyCornerHints';
 import DiyBracketFaceMarker from './DiyBracketFaceMarker';
@@ -25,8 +27,9 @@ const DiyScene: React.FC<DiySceneProps> = ({ onCameraReady }) => {
   const controlsRef = useRef<OrbitControlsImpl | null>(null);
   const setControlsRef = useDiyStore((s) => s.setControlsRef);
   const isDraggingBracket = useDiyStore((s) => s.isDraggingBracket);
+  const isDraggingScrew = useDiyStore((s) => s.isDraggingScrew);
   const placingProfile = useDiyStore((s) => s.placingProfile);
-  const orbitDisabled = isDraggingBracket || !!placingProfile;
+  const orbitDisabled = isDraggingBracket || isDraggingScrew || !!placingProfile;
   const cameraFocus = useDiyStore((s) => s.cameraFocus);
   const clearCameraFocus = useDiyStore((s) => s.clearCameraFocus);
   const focusRef = useRef<THREE.Vector3 | null>(null);
@@ -94,9 +97,11 @@ const DiyScene: React.FC<DiySceneProps> = ({ onCameraReady }) => {
 
       <DiyProfileRenderer />
       <DiyBracketRenderer />
+      <DiyScrewRenderer />
       <DiyCornerHints />
       <DiyStretchGizmo />
       <DiyBracketPlacementGhost />
+      <DiyScrewPlacementGhost />
       <DiyPlacingGhost />
       <DiyBracketFaceMarker />
     </>

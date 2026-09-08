@@ -234,6 +234,7 @@ async function runFaceComparison(first: BracketFacePick, second: BracketFacePick
     const autoE = eulerFromNormals(corner.faceA, corner.faceB);
     useDiyStore.getState().setAutoRefBracket({
       id: 'auto-ref',
+      connectorId: 'corner_bracket',
       position: { x: corner.position.x, y: corner.position.y, z: corner.position.z },
       rotation: {
         roll: THREE.MathUtils.radToDeg(autoE.x),

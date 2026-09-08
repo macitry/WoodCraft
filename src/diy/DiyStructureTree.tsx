@@ -83,19 +83,15 @@ const DiyStructureTree: React.FC = () => {
   };
 
   return (
-    <div className="flex flex-col border-b border-neutral-800">
-      <div className="px-4 py-2.5 flex items-center justify-between border-b border-neutral-800">
-        <span className="text-xs uppercase tracking-wider text-neutral-500 font-medium">
-          结构树
-        </span>
-        <span className="text-xs text-neutral-600">{profiles.length}</span>
-      </div>
+    <div className="flex flex-col h-full">
       {profiles.length === 0 ? (
         <div className="px-4 py-3 text-xs text-neutral-600">
-          暂无型材 — 从下方型材库拖入
+          暂无型材 — 从「元件库」tab 拖入型材
         </div>
       ) : (
-        <div className="py-1">{roots.map((r) => renderNode(r, 0))}</div>
+        <div className="flex-1 min-h-0 overflow-y-auto py-1">
+          {roots.map((r) => renderNode(r, 0))}
+        </div>
       )}
     </div>
   );

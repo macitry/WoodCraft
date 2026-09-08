@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import DiyViewer from './DiyViewer';
 import DiyProfileLibrary from '../components/DiyProfileLibrary';
@@ -8,10 +8,17 @@ import BracketEditModal from './BracketEditModal';
 import { useDiyStore } from '../store/diyStore';
 import { useModelStore } from '../store/modelStore';
 
+const LEFT_W_KEY = 'diy.leftW';
+const LEFT_W_DEFAULT = 300;
+const LEFT_W_MIN = 240;
+const LEFT_W_MAX = 440;
+const clampLeftW = (v: number) => Math.min(LEFT_W_MAX, Math.max(LEFT_W_MIN, v));
+
 const DiyPage: React.FC = () => {
   const navigate = useNavigate();
   const profiles = useDiyStore((s) => s.profiles);
   const brackets = useDiyStore((s) => s.brackets);
+  const screws = useDiyStore((s) => s.screws);
   const totalLength = profiles.reduce((sum, p) => sum + p.length, 0);
   const mode = useDiyStore((s) => s.mode);
   const bracketFaceA = useDiyStore((s) => s.bracketFaceA);
@@ -19,7 +26,44 @@ const DiyPage: React.FC = () => {
   const cancelBracketFacePicking = useDiyStore((s) => s.cancelBracketFacePicking);
   const isPickingFaces = mode === 'placing_bracket_faces';
   const [projectName, setProjectName] = useState('未命名');
-  const [showTree, setShowTree] = useState(true);
+  // Left column: only one panel at a time (结构树 | 元件库), resizable width.
+  const [leftTab, setLeftTab] = useState<'structure' | 'library'>(
+    profiles.length > 0 ? 'structure' : 'library',
+  );
+  const [leftW, setLeftW] = useState<number>(() => {
+    const raw = Number(localStorage.getItem(LEFT_W_KEY));
+    return Number.isFinite(raw) && raw > 0 ? clampLeftW(raw) : LEFT_W_DEFAULT;
+  });
+  const [resizing, setResizing] = useState(false);
+  const resizeRef = useRef<{ x: number; w: number } | null>(null);
+
+  useEffect(() => {
+    localStorage.setItem(LEFT_W_KEY, String(leftW));
+  }, [leftW]);
+
+  useEffect(() => {
+    document.body.style.cursor = resizing ? 'col-resize' : '';
+    document.body.style.userSelect = resizing ? 'none' : '';
+    return () => {
+      document.body.style.cursor = '';
+      document.body.style.userSelect = '';
+    };
+  }, [resizing]);
+
+  const startResize = (e: React.PointerEvent<HTMLDivElement>) => {
+    resizeRef.current = { x: e.clientX, w: leftW };
+    e.currentTarget.setPointerCapture(e.pointerId);
+    setResizing(true);
+  };
+  const onResize = (e: React.PointerEvent<HTMLDivElement>) => {
+    const d = resizeRef.current;
+    if (!d) return;
+    setLeftW(clampLeftW(d.w + e.clientX - d.x));
+  };
+  const endResize = () => {
+    resizeRef.current = null;
+    setResizing(false);
+  };
 
   return (
     <div className="w-screen h-screen flex flex-col bg-neutral-950 overflow-hidden">
@@ -42,19 +86,8 @@ const DiyPage: React.FC = () => {
         />
         <div className="flex-1" />
         <span className="text-xs text-neutral-500">
-          型材: {profiles.length} | 角码: {brackets.length} | 总长: {(totalLength / 1000).toFixed(1)}m
+          型材: {profiles.length} | 角码: {brackets.length} | 螺丝: {screws.length} | 总长: {(totalLength / 1000).toFixed(1)}m
         </span>
-        <button
-          onClick={() => setShowTree((v) => !v)}
-          className={`px-3 py-1 text-xs rounded transition-colors cursor-pointer ${
-            showTree
-              ? 'bg-wood-600 text-white'
-              : 'bg-neutral-800 text-neutral-400 hover:text-white'
-          }`}
-          title="显示/隐藏左侧结构树"
-        >
-          结构树
-        </button>
         <button
           onClick={() => (isPickingFaces ? cancelBracketFacePicking() : startBracketFacePicking())}
           className={`px-3 py-1 text-xs rounded transition-colors cursor-pointer ${
@@ -73,10 +106,37 @@ const DiyPage: React.FC = () => {
 
       {/* Main Content */}
       <div className="flex-1 flex overflow-hidden">
-        {/* Left — Structure tree + Profile Library */}
-        <aside className="w-56 flex-shrink-0 border-r border-neutral-800 bg-neutral-950 overflow-y-auto">
-          {showTree && <DiyStructureTree />}
-          <DiyProfileLibrary />
+        {/* Left — single panel (结构树 | 元件库), draggable width */}
+        <aside
+          className="relative flex flex-col flex-shrink-0 overflow-hidden border-r border-neutral-800 bg-neutral-950"
+          style={{ width: leftW, userSelect: resizing ? 'none' : undefined }}
+        >
+          <div className="flex flex-shrink-0 border-b border-neutral-800 p-2 gap-1">
+            {(['structure', 'library'] as const).map((t) => (
+              <button
+                key={t}
+                onClick={() => setLeftTab(t)}
+                className={`flex-1 px-3 py-1.5 text-xs rounded-md transition-colors cursor-pointer ${
+                  leftTab === t
+                    ? 'bg-wood-600 text-white'
+                    : 'bg-neutral-800 text-neutral-400 hover:text-white'
+                }`}
+              >
+                {t === 'structure' ? '结构树' : '元件库'}
+              </button>
+            ))}
+          </div>
+          <div className="flex-1 min-h-0 overflow-hidden">
+            {leftTab === 'structure' ? <DiyStructureTree /> : <DiyProfileLibrary />}
+          </div>
+          {/* Width resize handle */}
+          <div
+            className="absolute inset-y-0 right-0 w-1.5 z-20 cursor-col-resize hover:bg-wood-500/40"
+            onPointerDown={startResize}
+            onPointerMove={onResize}
+            onPointerUp={endResize}
+            onPointerCancel={endResize}
+          />
         </aside>
 
         {/* Center — 3D Viewer */}

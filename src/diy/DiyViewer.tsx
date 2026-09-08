@@ -1,14 +1,31 @@
 import { useRef, useCallback, useEffect, type DragEvent } from 'react';
 import { Canvas } from '@react-three/fiber';
 import { useDiyStore } from '../store/diyStore';
-import type { ProfileSize, AxisDir } from '../types/furniture';
+import type { ProfileSize, AxisDir, ScrewSize } from '../types/furniture';
 import { findNearestSnap } from './DiySnap';
 import { findCornerAt } from './DiyCornerHints';
 import { fetchBracketRotation } from '../api/modelApi';
+import { raycastScrewTarget } from './DiyScrewRaycast';
 import DiyScene from './DiyScene';
 import * as THREE from 'three';
 
 const M = 0.001;
+
+/**
+ * Screw sizes are carried as their own dataTransfer type
+ * (`application/diy-screw-M5`) so the size is readable during dragover —
+ * `dataTransfer.getData` only works in the drop event.
+ *
+ * Note: browsers normalize custom MIME types to lowercase (Chrome lowercases
+ * them in `types`), so the size suffix is matched case-insensitively.
+ */
+const SCREW_TYPE_PREFIX = 'application/diy-screw-';
+const screwSizeFromTypes = (types: readonly string[]): ScrewSize | null => {
+  const t = types.find((x) => x.toLowerCase().startsWith(SCREW_TYPE_PREFIX));
+  if (!t) return null;
+  const size = t.slice(SCREW_TYPE_PREFIX.length).toUpperCase() as ScrewSize;
+  return size === 'M4' || size === 'M5' || size === 'M6' ? size : null;
+};
 
 /**
  * 3D viewport for the DIY builder.
@@ -16,6 +33,7 @@ const M = 0.001;
  * Handles HTML5 drag-and-drop from the sidebar library:
  *   - Profiles → raycast against ground plane, place root at grid-snapped position
  *   - Brackets  → raycast, find nearest profile corner (endpoint), show ghost, snap on drop
+ *   - Screws    → raycast against profile faces, show ghost, place oriented on the face
  */
 const DiyViewer: React.FC = () => {
   const addRootProfile = useDiyStore((s) => s.addRootProfile);
@@ -24,6 +42,10 @@ const DiyViewer: React.FC = () => {
   const updateGhostBracket = useDiyStore((s) => s.updateGhostBracket);
   const placeBracket = useDiyStore((s) => s.placeBracket);
   const cancelDraggingBracket = useDiyStore((s) => s.cancelDraggingBracket);
+  const startDraggingScrew = useDiyStore((s) => s.startDraggingScrew);
+  const updateGhostScrew = useDiyStore((s) => s.updateGhostScrew);
+  const placeScrew = useDiyStore((s) => s.placeScrew);
+  const cancelDraggingScrew = useDiyStore((s) => s.cancelDraggingScrew);
 
   const containerRef = useRef<HTMLDivElement>(null);
   const cameraRef = useRef<THREE.PerspectiveCamera | null>(null);
@@ -97,12 +119,15 @@ const DiyViewer: React.FC = () => {
     }
   }, [updateGhostBracket]);
 
-  // Clean up bracket drag state when the drag ends anywhere on the page
+  // Clean up bracket/screw drag state when the drag ends anywhere on the page
   useEffect(() => {
-    const onDragEnd = () => cancelDraggingBracket();
+    const onDragEnd = () => {
+      cancelDraggingBracket();
+      cancelDraggingScrew();
+    };
     document.addEventListener('dragend', onDragEnd);
     return () => document.removeEventListener('dragend', onDragEnd);
-  }, [cancelDraggingBracket]);
+  }, [cancelDraggingBracket, cancelDraggingScrew]);
 
   // ---- event handlers ----
 
@@ -114,8 +139,16 @@ const DiyViewer: React.FC = () => {
       startDraggingBracket(); // idempotent — safe to call every frame
       const ray = getMouseRay(e);
       if (ray) updateBracketGhost(ray);
+      return;
     }
-  }, [getMouseRay, updateBracketGhost, startDraggingBracket]);
+
+    const screwSize = screwSizeFromTypes(e.dataTransfer.types);
+    if (screwSize) {
+      startDraggingScrew(); // idempotent — safe to call every frame
+      const ray = getMouseRay(e);
+      if (ray) updateGhostScrew(raycastScrewTarget(ray, profilesRef.current, screwSize));
+    }
+  }, [getMouseRay, updateBracketGhost, startDraggingBracket, startDraggingScrew, updateGhostScrew]);
 
   /**
    * Place a bracket at the ghost position, auto-oriented at a profile corner.
@@ -125,17 +158,19 @@ const DiyViewer: React.FC = () => {
    * converts the returned matrix to Euler angles using THREE's own 'XYZ'
    * convention (the same one the renderer applies), and stores the result.
    * Falls back to an unrotated bracket when there is no corner or the call
-   * fails.
+   * fails. `connectorId` (from the drop payload) stamps which catalog entry
+   * the new bracket renders.
    */
-  const placeBracketAtGhost = useCallback(async () => {
+  const placeBracketAtGhost = useCallback(async (connectorId?: string) => {
     const ghost = useDiyStore.getState().ghostBracket;
+    const patch = { connectorId: connectorId || 'corner_bracket' };
     if (!ghost) {
-      placeBracket();
+      placeBracket(patch);
       return;
     }
     const corner = findCornerAt(profilesRef.current, ghost.position);
     if (!corner) {
-      placeBracket();
+      placeBracket(patch);
       return;
     }
     try {
@@ -153,6 +188,7 @@ const DiyViewer: React.FC = () => {
       );
       const euler = new THREE.Euler().setFromRotationMatrix(m, 'XYZ');
       placeBracket({
+        ...patch,
         // Land exactly on the joint corner the rotation was computed for, so
         // position and orientation always come from the same corner.
         position: corner.position,
@@ -164,7 +200,7 @@ const DiyViewer: React.FC = () => {
         connectedProfiles: [corner.profileIdA, corner.profileIdB],
       });
     } catch {
-      placeBracket();
+      placeBracket(patch);
     }
   }, [placeBracket]);
 
@@ -172,8 +208,18 @@ const DiyViewer: React.FC = () => {
     e.preventDefault();
 
     // ---- bracket drop ----
+    // dataTransfer.getData is only readable on drop — carry the catalog id
+    // (set by DiyProfileLibrary on dragstart) so the placed bracket renders
+    // the dragged connector model.
     if (e.dataTransfer.types.includes('application/diy-bracket')) {
-      void placeBracketAtGhost();
+      const cid = e.dataTransfer.getData('application/diy-bracket') || 'corner_bracket';
+      void placeBracketAtGhost(cid);
+      return;
+    }
+
+    // ---- screw drop (size/orientation already baked into ghostScrew) ----
+    if (screwSizeFromTypes(e.dataTransfer.types)) {
+      placeScrew();
       return;
     }
 
@@ -196,7 +242,7 @@ const DiyViewer: React.FC = () => {
       const dim = ({ '2020': 20, '3030': 30, '4040': 40 } as Record<string, number>)[size] ?? 30;
       addRootProfile(size, { x: px, y: 50, z: pz }, 'Y' as AxisDir);
     }
-  }, [addRootProfile, placeBracketAtGhost, getMouseRay]);
+  }, [addRootProfile, placeBracketAtGhost, placeScrew, getMouseRay]);
 
   return (
     <div

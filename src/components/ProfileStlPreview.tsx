@@ -22,8 +22,11 @@ const M = 0.001;
 
 interface ProfileStlPreviewProps {
   profileSize: number;
-  /** Canvas size in px (default 140). */
+  /** Canvas size in px (default 270). */
   size?: number;
+  /** Fill the parent container (width/height 100%) instead of a fixed square.
+   *  Used by the inline sidebar preview strip whose width is user-resizable. */
+  fill?: boolean;
 }
 
 /**
@@ -34,11 +37,16 @@ interface ProfileStlPreviewProps {
 const ProfileStlPreview: React.FC<ProfileStlPreviewProps> = ({
   profileSize,
   size = 270,
+  fill = false,
 }) => {
   return (
     <Canvas
       camera={{ position: [0, 0, 0.10], fov: 35, near: 0.001, far: 1 }}
-      style={{ width: size, height: size, background: '#f5f5f5', borderRadius: 4 }}
+      style={
+        fill
+          ? { width: '100%', height: '100%', background: '#f5f5f5', borderRadius: 4 }
+          : { width: size, height: size, background: '#f5f5f5', borderRadius: 4 }
+      }
       gl={{ antialias: true }}
     >
       {/* Grid reference plane */}
