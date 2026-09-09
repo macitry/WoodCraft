@@ -1,7 +1,8 @@
 import { Suspense } from 'react';
 import * as THREE from 'three';
 import { Canvas } from '@react-three/fiber';
-import type { Component, FurnitureModel, TabletopHole } from '../types/furniture';
+import type { Component, FurnitureModel } from '../types/furniture';
+import { buildHolePath } from '../utils/holeGeometry';
 import { useModelStore } from '../store/modelStore';
 import ProfileStlPreview from './ProfileStlPreview';
 
@@ -39,10 +40,7 @@ const TabletopPreview3D: React.FC<{ model: FurnitureModel }> = ({ model }) => {
       shape.lineTo(-hw, hd);
       shape.closePath();
       for (const hole of holes) {
-        const hr = hole.radius / 1000;
-        const holePath = new THREE.Path();
-        holePath.absarc(hole.x / 1000, hole.y / 1000, hr, 0, Math.PI * 2, true);
-        shape.holes.push(holePath);
+        shape.holes.push(buildHolePath(hole));
       }
       const geom = new THREE.ExtrudeGeometry(shape, { depth: t, bevelEnabled: false });
       geom.rotateX(-Math.PI / 2);

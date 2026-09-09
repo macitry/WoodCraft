@@ -4,6 +4,7 @@ import { useLoader } from '@react-three/fiber';
 import { STLLoader } from 'three-stdlib';
 import type { FurnitureModel, Component, TabletopHole, BracketInstance } from '../types/furniture';
 import type { DxfTabletopShape } from '../utils/dxfImport';
+import { buildHolePath } from '../utils/holeGeometry';
 import { TEMPLATE_LAYOUTS, DEFAULT_BRACKET_STL_URL } from '../types/furniture';
 import { useModelStore } from '../store/modelStore';
 
@@ -80,15 +81,10 @@ function createHoledTabletopGeometry(
   shape.lineTo(-hw, hd);
   shape.closePath();
 
-  // Each hole as a circular Path → Shape.holes
+  // Each hole as a CW Path (circle / rounded-rect / stadium) → Shape.holes.
+  // buildHolePath returns METERS and translates/rotates the hole itself.
   for (const hole of holes) {
-    const hr = mm(hole.radius);
-    const hx = mm(hole.x);
-    const hy = mm(hole.y);
-    const holePath = new THREE.Path();
-    // absarc(cx, cy, radius, startAngle, endAngle, clockwise)
-    holePath.absarc(hx, hy, hr, 0, Math.PI * 2, true);
-    shape.holes.push(holePath);
+    shape.holes.push(buildHolePath(hole));
   }
 
   // Extrude along Z by thickness.
@@ -99,10 +95,13 @@ function createHoledTabletopGeometry(
     bevelEnabled: false,
   });
 
-  // Rotate -90° around X:  X→X,  Y→Z,  Z→-Y
-  geom.rotateX(-Math.PI / 2);
-  // Now: X = width, Y ∈ [-t, 0], Z = depth.
-  // Translate Y so the geometry is centered at origin.
+  // Rotate +90° around X: shape (X,Y) lies flat on XZ with Y → world +Z, so the
+  // plan's front (+Y) matches the desk front (front beam at +Z). The extrusion
+  // Z ∈ [0, t] becomes world Y ∈ [-t, 0].
+  geom.rotateX(Math.PI / 2);
+  // Translate Y up by t/2 so the slab is centered: Y ∈ [-t/2, t/2].
+  // (Wrong sign here would leave the centre off by +t and the board would
+  // float exactly one thickness above the frame.)
   geom.translate(0, t / 2, 0);
   // Now: X ∈ [-hw, hw], Y ∈ [-t/2, t/2], Z ∈ [-hd, hd] — matches BoxGeometry.
 
@@ -149,8 +148,10 @@ function createDxfTabletopGeometry(
     bevelEnabled: false,
   });
 
-  // Rotate -90° X → flat on XZ, thickness along Y
-  geom.rotateX(-Math.PI / 2);
+  // Rotate +90° X → flat on XZ with the drawing's Y toward world +Z (same as
+  // the holed builder); thickness along Y (Z ∈ [0, t] → Y ∈ [-t, 0]), then
+  // shift up by t/2 to centre the slab at the origin.
+  geom.rotateX(Math.PI / 2);
   geom.translate(0, t / 2, 0);
   geom.computeVertexNormals();
   return geom;

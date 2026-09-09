@@ -7,6 +7,7 @@ import FurnitureTree from '../components/FurnitureTree';
 import ParameterPanel from '../components/ParameterPanel';
 import MaterialSelector from '../components/MaterialSelector';
 import BracketEditor from '../components/BracketEditor';
+import HolePropertiesPanel from '../components/HolePropertiesPanel';
 import ModelInfo from '../components/ModelInfo';
 import DiyPage from '../diy/DiyPage';
 import { useModelStore } from '../store/modelStore';
@@ -38,6 +39,14 @@ const HomePage: React.FC = () => {
     setControls(controls);
   }, []);
 
+  // When a hole is selected the right sidebar becomes its property editor
+  // (selected state lives in the store so it survives plan↔3d switching).
+  const editingHoleId = useModelStore((s) =>
+    s.selectedHoleId && s.holes.some((h) => h.id === s.selectedHoleId)
+      ? s.selectedHoleId
+      : null,
+  );
+
   return (
     <div className="w-screen h-screen flex flex-col bg-neutral-950 overflow-hidden">
       <Toolbar
@@ -62,15 +71,21 @@ const HomePage: React.FC = () => {
         </main>
 
         <aside className="w-72 flex-shrink-0 border-l border-neutral-800 bg-neutral-950 flex flex-col overflow-hidden">
-          <div className="flex-1 overflow-y-auto">
-            <ParameterPanel />
-            <div className="border-t border-neutral-800">
-              <MaterialSelector />
-            </div>
-          </div>
-          <div className="border-t border-neutral-800 max-h-80 overflow-y-auto">
-            <BracketEditor />
-          </div>
+          {editingHoleId ? (
+            <HolePropertiesPanel />
+          ) : (
+            <>
+              <div className="flex-1 overflow-y-auto">
+                <ParameterPanel />
+                <div className="border-t border-neutral-800">
+                  <MaterialSelector />
+                </div>
+              </div>
+              <div className="border-t border-neutral-800 max-h-80 overflow-y-auto">
+                <BracketEditor />
+              </div>
+            </>
+          )}
         </aside>
       </div>
 

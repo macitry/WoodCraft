@@ -10,6 +10,7 @@
 
 import type { TabletopHole } from '../types/furniture';
 import type { DxfTabletopShape, ContourPoint } from './dxfImport';
+import { sampleHolePerimeterCCW } from './holeGeometry';
 
 /**
  * Generate a DXF file (R12/LWPolyline) for a rectangular tabletop with holes.
@@ -29,15 +30,8 @@ export function generateTabletopDxf(
     { x: -hw, y: hd },
   ];
 
-  const holeContours: ContourPoint[][] = holes.map((h) => {
-    const pts: ContourPoint[] = [];
-    const n = 48;
-    for (let i = 0; i < n; i++) {
-      const a = (2 * Math.PI * i) / n;
-      pts.push({ x: h.x + h.radius * Math.cos(a), y: h.y + h.radius * Math.sin(a) });
-    }
-    return pts;
-  });
+  // Every shape is emitted as a CCW polyline perimeter (>8 pts → LWPOLYLINE).
+  const holeContours: ContourPoint[][] = holes.map((h) => sampleHolePerimeterCCW(h));
 
   return buildDxf(outline, holeContours);
 }

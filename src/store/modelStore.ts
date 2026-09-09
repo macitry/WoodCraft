@@ -6,11 +6,15 @@ import type {
   Component,
   GenerateModelResponse,
   TabletopHole,
+  HolePatch,
+  MeasureAnnotation,
   BracketInstance,
   MateState,
   MateHit,
 } from '../types/furniture';
 import { TEMPLATE_BACKEND_ID, TEMPLATE_LAYOUTS } from '../types/furniture';
+import { nextHoleId } from '../utils/holeGeometry';
+import { reflowAnchoredHoles, reanchorFromCoord } from '../utils/holeTemplates';
 import type { DxfTabletopShape } from '../utils/dxfImport';
 import { generateModel, fetchDefaultModel, fetchProgress } from '../api/modelApi';
 import type { ServerProgress } from '../api/modelApi';
@@ -171,6 +175,14 @@ interface ModelState {
   holes: TabletopHole[];
   selectedHoleId: string | null;
 
+  // Hole undo/redo history (scoped to hole ops only — NOT product params).
+  holePast: { holes: TabletopHole[]; selectedHoleId: string | null }[];
+  holeFuture: { holes: TabletopHole[]; selectedHoleId: string | null }[];
+
+  // Retained measure annotations + show/hide toggle (UI-only: not in BOM/DXF/undo).
+  annotations: MeasureAnnotation[];
+  annotationsVisible: boolean;
+
   // Bracket editing — user-defined corner bracket placements
   brackets: BracketInstance[];
   selectedBracketId: string | null;
@@ -198,10 +210,21 @@ interface ModelState {
   setError: (error: string | null) => void;
   // Hole actions
   addHole: (hole: TabletopHole) => void;
-  updateHole: (id: string, patch: Partial<TabletopHole>) => void;
+  updateHole: (id: string, patch: HolePatch) => void;
   removeHole: (id: string) => void;
   selectHole: (id: string | null) => void;
   setHoles: (holes: TabletopHole[]) => void;
+  /** Clone the selected hole (+10mm x), select the copy. One undo step. */
+  duplicateHole: (id: string) => void;
+  undoHoles: () => void;
+  redoHoles: () => void;
+  /** Turn every template (anchored) hole into an ordinary editable copy by
+   *  dropping its edge anchors, unlocking free manual editing. One undo step. */
+  detachAnchors: () => void;
+  // Measure annotations (persist across plan↔3d via store; not undoable/exported)
+  addAnnotation: (a: MeasureAnnotation) => void;
+  removeAnnotation: (id: string) => void;
+  setAnnotationsVisible: (v: boolean) => void;
   setDxfTabletop: (shape: DxfTabletopShape | null) => void;
   /** Toggle solo: hide all other parts, show only this one. */
   soloComponent: (componentId: string) => void;
@@ -221,6 +244,49 @@ interface ModelState {
   resetBracketsToDefault: () => void;
   /** Replace all brackets (e.g. when switching templates). */
   setBrackets: (brackets: BracketInstance[]) => void;
+}
+
+// ---------------------------------------------------------------------------
+// Hole-history helpers (module-level so the plan editor can bracket a gesture
+// with a single history step instead of one per mousemove).
+// ---------------------------------------------------------------------------
+
+const HOLE_HISTORY_LIMIT = 50;
+
+export type HoleSnapshot = { holes: TabletopHole[]; selectedHoleId: string | null };
+
+function pushPast<T>(list: T[], item: T): T[] {
+  const next = [...list, item];
+  return next.length > HOLE_HISTORY_LIMIT ? next.slice(next.length - HOLE_HISTORY_LIMIT) : next;
+}
+
+/** Snapshot of the hole state — call BEFORE starting a mutation gesture. */
+export function captureHoleSnapshot(): HoleSnapshot {
+  const s = useModelStore.getState();
+  return { holes: s.holes, selectedHoleId: s.selectedHoleId };
+}
+
+/** Record one undo step from the snapshot captured before the mutation.
+ *  No-op unless the holes array actually changed (selection-only changes
+ *  are intentionally not history steps). Clears the redo stack. */
+export function commitHoleEdit(before: HoleSnapshot): void {
+  const s = useModelStore.getState();
+  const holeChanged =
+    s.holes !== before.holes ||
+    s.holes.length !== before.holes.length ||
+    s.holes.some((h, i) => h !== before.holes[i]);
+  if (!holeChanged) return;
+  useModelStore.setState({ holePast: pushPast(s.holePast, before), holeFuture: [] });
+}
+
+/** Silently re-resolve anchored (template) holes to a board size. Never a history
+ *  step — used after a product width/depth change and after undo/redo restore, so
+ *  hole coordinates never go stale vs the current board. No-op with no anchors. */
+function reflowManagedHoles(width: number, depth: number): void {
+  const s = useModelStore.getState();
+  if (!s.holes.some((h) => h.anchorX || h.anchorY)) return;
+  const next = reflowAnchoredHoles(s.holes, width, depth);
+  if (next !== s.holes) useModelStore.setState({ holes: next });
 }
 
 export const useModelStore = create<ModelState>((set, get) => ({
@@ -341,6 +407,11 @@ export const useModelStore = create<ModelState>((set, get) => ({
     // they follow the table as it is resized.
     if (GEOMETRY_PARAMS.has(curKey)) regenerateBracketsForCurrent();
 
+    // Board resized → re-resolve anchored (template) holes against the new edges.
+    if (parameterId === 'width' || parameterId === 'depth') {
+      reflowManagedHoles(newParams.width, newParams.depth);
+    }
+
     // 2. Debounced background regeneration (only fires after 2s of inactivity)
     const backendId = TEMPLATE_BACKEND_ID[newParams.templateId] || 'basic-desk';
     const key = 'regen_timer';
@@ -434,14 +505,30 @@ export const useModelStore = create<ModelState>((set, get) => ({
   // ---- Hole editing state (shared) ----
   holes: [],
   selectedHoleId: null,
+  holePast: [],
+  holeFuture: [],
+  annotations: [],
+  annotationsVisible: true,
 
   addHole: (hole: TabletopHole) =>
     set((s) => ({ holes: [...s.holes, hole], selectedHoleId: hole.id })),
 
-  updateHole: (id: string, patch: Partial<TabletopHole>) =>
-    set((s) => ({
-      holes: s.holes.map((h) => (h.id === id ? { ...h, ...patch } : h)),
-    })),
+  updateHole: (id: string, patch: HolePatch) =>
+    set((s) => {
+      const target = s.holes.find((h) => h.id === id);
+      if (!target) return { holes: s.holes };
+      const next = { ...target, ...patch } as TabletopHole;
+      // A coordinate edit on a managed (anchored) hole auto re-anchors that axis
+      // to its nearest edge (mode preserved) — unless the caller already supplies
+      // the anchor (axis editor), which recomputes x/y from the rule itself.
+      if (patch.x !== undefined && patch.anchorX === undefined && next.anchorX && next.anchorX.mode !== 'abs') {
+        next.anchorX = reanchorFromCoord(next.anchorX, next.x, s.currentParams.width / 2, s.currentParams.width);
+      }
+      if (patch.y !== undefined && patch.anchorY === undefined && next.anchorY && next.anchorY.mode !== 'abs') {
+        next.anchorY = reanchorFromCoord(next.anchorY, next.y, s.currentParams.depth / 2, s.currentParams.depth);
+      }
+      return { holes: s.holes.map((h) => (h.id === id ? next : h)) };
+    }),
 
   removeHole: (id: string) =>
     set((s) => ({
@@ -452,6 +539,78 @@ export const useModelStore = create<ModelState>((set, get) => ({
   selectHole: (id: string | null) => set({ selectedHoleId: id }),
 
   setHoles: (holes: TabletopHole[]) => set({ holes }),
+
+  duplicateHole: (id: string) => {
+    const s = get();
+    const src = s.holes.find((h) => h.id === id);
+    if (!src) return;
+    const before: HoleSnapshot = { holes: s.holes, selectedHoleId: s.selectedHoleId };
+    const copy = { ...src, id: nextHoleId(), x: src.x + 10, y: src.y + 10 } as TabletopHole;
+    // The +10 mm nudge shifts a managed copy off its old anchor → re-anchor both
+    // axes so the copy's rule still matches its coordinates.
+    if (copy.anchorX && copy.anchorX.mode !== 'abs') {
+      copy.anchorX = reanchorFromCoord(copy.anchorX, copy.x, s.currentParams.width / 2, s.currentParams.width);
+    }
+    if (copy.anchorY && copy.anchorY.mode !== 'abs') {
+      copy.anchorY = reanchorFromCoord(copy.anchorY, copy.y, s.currentParams.depth / 2, s.currentParams.depth);
+    }
+    set({
+      holes: [...s.holes, copy],
+      selectedHoleId: copy.id,
+      holePast: pushPast(s.holePast, before),
+      holeFuture: [],
+    });
+  },
+
+  detachAnchors: () => {
+    const s = get();
+    if (!s.holes.some((h) => h.anchorX || h.anchorY)) return;
+    const before: HoleSnapshot = { holes: s.holes, selectedHoleId: s.selectedHoleId };
+    const holes = s.holes.map((h) =>
+      h.anchorX || h.anchorY
+        ? ({ ...h, anchorX: undefined, anchorY: undefined } as TabletopHole)
+        : h,
+    );
+    set({ holes, holePast: pushPast(s.holePast, before), holeFuture: [] });
+  },
+
+  undoHoles: () => {
+    const s = get();
+    const prev = s.holePast[s.holePast.length - 1];
+    if (!prev) return;
+    set({
+      holePast: s.holePast.slice(0, -1),
+      holeFuture: pushPast(s.holeFuture, { holes: s.holes, selectedHoleId: s.selectedHoleId }),
+      holes: prev.holes,
+      selectedHoleId: prev.selectedHoleId,
+    });
+    // Restored snapshots may hold anchored holes resolved for an older board size
+    // (reflow is silent and never a history step) — re-sync to the current board.
+    const p = get().currentParams;
+    reflowManagedHoles(p.width, p.depth);
+  },
+
+  redoHoles: () => {
+    const s = get();
+    const next = s.holeFuture[s.holeFuture.length - 1];
+    if (!next) return;
+    set({
+      holeFuture: s.holeFuture.slice(0, -1),
+      holePast: pushPast(s.holePast, { holes: s.holes, selectedHoleId: s.selectedHoleId }),
+      holes: next.holes,
+      selectedHoleId: next.selectedHoleId,
+    });
+    const p = get().currentParams;
+    reflowManagedHoles(p.width, p.depth);
+  },
+
+  addAnnotation: (a: MeasureAnnotation) =>
+    set((s) => ({ annotations: [...s.annotations, a] })),
+
+  removeAnnotation: (id: string) =>
+    set((s) => ({ annotations: s.annotations.filter((x) => x.id !== id) })),
+
+  setAnnotationsVisible: (v: boolean) => set({ annotationsVisible: v }),
 
   setDxfTabletop: (shape: DxfTabletopShape | null) => {
     set({ dxfTabletop: shape });
@@ -464,6 +623,9 @@ export const useModelStore = create<ModelState>((set, get) => ({
         },
       }));
       regenerateBracketsForCurrent();
+      // Board got new bounds → re-resolve anchored (template) holes, if any.
+      const p = get().currentParams;
+      reflowManagedHoles(p.width, p.depth);
     }
   },
 

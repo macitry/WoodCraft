@@ -378,13 +378,65 @@ export const TEMPLATE_BACKEND_ID: Record<string, string> = {
   'side-cross-desk': 'basic-desk',  // same YAML, different layout
 };
 
-/** A user-defined hole/cutout on the tabletop plan. */
-export interface TabletopHole {
+/** Per-axis edge rule that keeps a "managed" (template-inserted) hole glued to a
+ *  board edge while the tabletop is resized. Plain holes (manually placed, or
+ *  detached copies) carry no anchor and keep their absolute coordinates.
+ *
+ *  `sign` names the reference edge side: X +1 = right (+W/2), X -1 = left (-W/2);
+ *  Y +1 = front (+D/2), Y -1 = rear (-D/2). `value` is measured inboard from that
+ *  edge to the hole CENTRE — in mm for `mode:'mm'`, or as a fraction of the full
+ *  board dimension (W for X, D for Y) for `mode:'pct'`.
+ *  `mode:'abs'` means "don't move when the board resizes". */
+export type AxisAnchor =
+  | { mode: 'abs' }
+  | { mode: 'mm'; sign: -1 | 1; value: number }
+  | { mode: 'pct'; sign: -1 | 1; value: number };
+
+/** Common transform shared by every cutout shape.
+ *  Position is in the tabletop frame (mm, origin at board centre, X right / Y front).
+ *  `angle` is degrees around the hole centre, 0 default (optional so pre-existing
+ *  circle literals need no migration — consumers must use `(h.angle ?? 0)`).
+ *  `anchorX`/`anchorY` are only present on template-inserted (managed) holes —
+ *  see {@link AxisAnchor}. */
+export interface HoleBase {
   id: string;
-  x: number;       // center X (mm, from tabletop center, right = +X)
-  y: number;       // center Y (mm, from tabletop center, depth = +Y)
-  radius: number;  // mm
-  type: 'circle';
+  x: number;
+  y: number;
+  angle?: number;
+  anchorX?: AxisAnchor;
+  anchorY?: AxisAnchor;
+}
+
+/** A user-defined hole/cutout on the tabletop plan. Discriminated on `type`. */
+export type TabletopHole =
+  | (HoleBase & { type: 'circle'; radius: number }) // round hole
+  | (HoleBase & { type: 'rect'; width: number; height: number; cornerRadius: number }) // square / rounded-rect; cr 0 = sharp
+  | (HoleBase & { type: 'slot'; length: number; width: number }); // stadium (腰孔); length >= width, cap radius = width/2
+
+/** A retained measure annotation (line between two board-frame mm points). */
+export interface MeasureAnnotation {
+  id: string;
+  x1: number;
+  y1: number;
+  x2: number;
+  y2: number;
+}
+
+/** Shape-agnostic hole edit patch (union members can't be spread via Partial).
+ *  Never patches `type` — a hole keeps its shape while it is edited.
+ *  anchorX/anchorY let an explicit anchor edit (the axis editor) replace the rule
+ *  in the same atomic update as the coordinate derived from it. */
+export interface HolePatch {
+  x?: number;
+  y?: number;
+  angle?: number;
+  radius?: number;
+  width?: number;
+  height?: number;
+  cornerRadius?: number;
+  length?: number;
+  anchorX?: AxisAnchor;
+  anchorY?: AxisAnchor;
 }
 
 /** Mate state machine for SolidWorks-style assembly. */
