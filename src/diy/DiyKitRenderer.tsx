@@ -4,6 +4,7 @@ import { useDiyStore } from '../store/diyStore';
 import { connectorById } from './connectors';
 import type { DiyBracket } from '../types/furniture';
 import { accessoryKitById, jointFasteners } from '../utils/accessoryKits';
+import { useKitLayoutFor } from '../store/kitLayoutStore';
 import type { LocalFastener } from '../utils/accessoryKits';
 import { buildScrewGroup } from './DiyScrewGeometry';
 import { buildTNutGroup } from './DiyNutGeometry';
@@ -67,9 +68,12 @@ const KitGroup: React.FC<{ bracket: DiyBracket; kitId: string }> = ({ bracket, k
   // be scaled by the same ratio or they drift off the plate.
   const scale = bracket.size / cc.extMm;
 
+  // Resolved per kit INSTANCE (this bracket's connector): the edits are keyed on
+  // the hole pattern, so two instances on different connectors can differ.
+  const layout = useKitLayoutFor(kitId, cc.stlUrl);
   const fasteners = useMemo(
-    () => (kit ? jointFasteners(kit, cc.stlUrl, scale) : []),
-    [kit, cc.stlUrl, scale],
+    () => (kit ? jointFasteners(kit, cc.stlUrl, scale, layout) : []),
+    [kit, cc.stlUrl, scale, layout],
   );
   const shown = showFasteners ? fasteners.filter((f) => !f.internal || showNuts) : [];
 
@@ -85,8 +89,9 @@ const KitGroup: React.FC<{ bracket: DiyBracket; kitId: string }> = ({ bracket, k
   if (shown.length === 0) return null;
   return (
     <>
-      {shown.map((f, i) => (
-        <KitFastener key={`${f.spec.kind}-${i}`} fastener={f} ghosted={f.internal} />
+      {shown.map((f) => (
+        // `f.key` (the seat), not the index — see the main renderer.
+        <KitFastener key={f.key} fastener={f} ghosted={f.internal} />
       ))}
     </>
   );

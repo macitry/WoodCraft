@@ -17,7 +17,7 @@
 
 import { create } from 'zustand';
 import type { ExtraPart, HardwareSpec, KitLayout, PartEdit } from '../utils/accessoryKits';
-import { EMPTY_LAYOUT, accessoryKitById, offsetFromAbsolute, patternKeyFor, resizeScrew } from '../utils/accessoryKits';
+import { EMPTY_LAYOUT, accessoryKitById, kitLayoutKey, offsetFromAbsolute, resizeScrew } from '../utils/accessoryKits';
 import type { ScrewSize } from '../types/furniture';
 
 export type Vec3 = [number, number, number];
@@ -27,11 +27,10 @@ const STORAGE_KEY = 'woodcraft.kitLayouts.v1';
  *  rather than migrated — the worst case is losing cosmetic tweaks. */
 const SCHEMA = 1;
 
-/** `` `${kitId}@${patternSig}` `` — the pattern, not a connector id: see the note
+/** Re-exported so consumers have one import for the whole key story.
+ *  `` `${kitId}@${patternSig}` `` — the pattern, not a connector id: see the note
  *  on holePatternSignature for why the distinction is load-bearing. */
-export function kitLayoutKey(kitId: string, stlUrl?: string | null): string {
-  return `${kitId}@${patternKeyFor(stlUrl)}`;
-}
+export { kitLayoutKey };
 
 function kitIdOf(setKey: string): string {
   const i = setKey.indexOf('@');
@@ -339,4 +338,20 @@ export const useKitLayoutStore = create<KitLayoutState>((set, get) => ({
  */
 export function useKitLayout(setKey: string | null): KitLayout | null {
   return useKitLayoutStore((s) => (setKey ? (s.layouts[setKey] ?? null) : null));
+}
+
+/**
+ * The edits for a kit as seen through a particular connector — the form every
+ * renderer and panel needs, since each resolves its own `stlUrl`.
+ *
+ * A NEW STORE DOES NOT RE-RENDER ANYTHING THAT DOES NOT SUBSCRIBE TO IT. Every
+ * consumer of `jointFasteners`/`kitSchedule` must call this (or useKitLayout),
+ * not merely receive a layout it read once, or an edit would move the part in the
+ * editor and leave the 3D and the BOM showing the old position.
+ *
+ * Returns the stored object by reference, or null — so it is safe as a useMemo
+ * dependency and cannot loop the way a freshly-built object would.
+ */
+export function useKitLayoutFor(kitId: string | null | undefined, stlUrl?: string | null): KitLayout | null {
+  return useKitLayout(kitId ? kitLayoutKey(kitId, stlUrl) : null);
 }

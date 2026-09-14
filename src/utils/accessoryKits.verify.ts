@@ -14,6 +14,8 @@ import {
   accessoryKitById,
   holePatternFor,
   holePatternSignature,
+  kitLayoutKey,
+  layoutFor,
   jointFasteners,
   jointSeats,
   kitFitReason,
@@ -33,7 +35,7 @@ import {
   tNut,
   woodScrewName,
 } from './accessoryKits';
-import type { HardwareSpec, KitLayout, LocalFastener, PartRole } from './accessoryKits';
+import type { HardwareSpec, KitLayout, KitLayoutMap, LocalFastener, PartRole } from './accessoryKits';
 import { DEFAULT_BRACKET_STL_URL } from '../types/furniture';
 
 function assert(cond: boolean, msg: string): void {
@@ -404,8 +406,8 @@ function jointScheduleStable(kit: (typeof ACCESSORY_KITS)[number]): boolean {
     // (kit, connector) pair it has never seen edited.
     assert(isNoop(jointFasteners(kit, STL, 1, EMPTY_LAYOUT), bare), `${kit.id}: an empty layout must be a no-op`);
     assert(isNoop(kitSchedule(kit, 5, STL, null), kitSchedule(kit, 5, STL)), `${kit.id}: kitSchedule(kit, n, stl, null)`);
-    assert(isNoop(kitSchedule(kit, 5, STL, EMPTY_LAYOUT), kitSchedule(kit, 5, STL)), `${kit.id}: kitSchedule with an empty layout`);
-    assert(isNoop(kitScheduleFor(kit, [STL, STL], EMPTY_LAYOUT), kitScheduleFor(kit, [STL, STL])), `${kit.id}: kitScheduleFor with an empty layout`);
+    assert(isNoop(kitSchedule(kit, 5, STL, { [kitLayoutKey(kit.id, STL)]: EMPTY_LAYOUT }), kitSchedule(kit, 5, STL)), `${kit.id}: kitSchedule with an empty layout`);
+    assert(isNoop(kitScheduleFor(kit, [STL, STL], { [kitLayoutKey(kit.id, STL)]: EMPTY_LAYOUT }), kitScheduleFor(kit, [STL, STL])), `${kit.id}: kitScheduleFor with an empty layout`);
     assert(isNoop(specSummary(kit, STL, EMPTY_LAYOUT), specSummary(kit, STL)), `${kit.id}: specSummary with an empty layout`);
   }
 }
@@ -424,6 +426,8 @@ function jointScheduleStable(kit: (typeof ACCESSORY_KITS)[number]): boolean {
   const drawnCount = (parts: LocalFastener[], spec: HardwareSpec) =>
     parts.filter((f) => specKey(f.spec) === specKey(spec)).length;
   const find = (parts: LocalFastener[], key: string) => parts.find((f) => f.key === key);
+  /** File one layout under this kit's cast-bracket pattern, the way the store does. */
+  const mapOf = (layout: KitLayout): KitLayoutMap => ({ [kitLayoutKey(KIT.id, STL)]: layout });
 
   const base = jointFasteners(KIT, STL);
   const baseBolt = find(base, EDIT_KEY)!;
@@ -478,7 +482,7 @@ function jointScheduleStable(kit: (typeof ACCESSORY_KITS)[number]): boolean {
   assert(mixedParts.length === base.length, 'a spec swap must not change the piece count');
   assert(find(mixedParts, EDIT_KEY)!.spec.name === socketScrewName('M5', 30), 'the edited bolt takes the new spec');
   assert(find(mixedParts, MATE_KEY)!.spec === baseMate.spec, 'its T-nut keeps the preset spec object');
-  const mixedLines = kitSchedule(KIT, 4, STL, mixed);
+  const mixedLines = kitSchedule(KIT, 4, STL, mapOf(mixed));
   assert(mixedLines.length === 3, `two specs + one mate must be three lines (got ${mixedLines.length})`);
   assert(mixedLines[0].qty === 4 && mixedLines[1].qty === 4, 'each spec keeps its own quantity');
   assert(mixedLines[2].spec.kind === 't_nut' && mixedLines[2].qty === 8, 'mates follow the bolt count');
@@ -494,7 +498,7 @@ function jointScheduleStable(kit: (typeof ACCESSORY_KITS)[number]): boolean {
   assert(!find(cutParts, EDIT_KEY), 'a removed part must not appear at all');
   // Per-part, not per-pair: its T-nut stays until it is removed too.
   assert(!!find(cutParts, MATE_KEY), 'removing a bolt must leave its T-nut alone');
-  const cutLines = kitSchedule(KIT, 3, STL, cut);
+  const cutLines = kitSchedule(KIT, 3, STL, mapOf(cut));
   assert(cutLines[0].qty === 3, `a removed bolt must drop out of the BOM too (got ${cutLines[0].qty})`);
   assert(cutLines[1].qty === 6, 'its mate line is untouched');
 
@@ -519,7 +523,7 @@ function jointScheduleStable(kit: (typeof ACCESSORY_KITS)[number]): boolean {
   assert(nearVec(jointFasteners(KIT, STL, 2, extras).find((f) => f.key === 'extra:v2')!.position, [-18, -18, 0], 1e-12), 'added parts must scale too');
   // An added part is part of the kit's DEFINITION, so it is replicated at every
   // joint; and identical hardware merges into one line rather than two.
-  const extraLines = kitSchedule(KIT, 2, STL, extras);
+  const extraLines = kitSchedule(KIT, 2, STL, mapOf(extras));
   assert(extraLines.length === 3, `added hardware that is already in the kit must merge (got ${extraLines.length})`);
   assert(extraLines[0].qty === 4, 'seated bolts, 2 per joint');
   assert(extraLines[1].qty === 6, `added T-nut must merge with the seated ones: 4 seated + 2 added (got ${extraLines[1].qty})`);
@@ -538,14 +542,14 @@ function jointScheduleStable(kit: (typeof ACCESSORY_KITS)[number]): boolean {
   ];
   for (const [label, lay] of CASES) {
     const parts = jointFasteners(KIT, STL, 1, lay);
-    const lines = kitSchedule(KIT, 3, STL, lay);
+    const lines = kitSchedule(KIT, 3, STL, lay ? mapOf(lay) : null);
     for (const line of lines) {
       assert(line.qty === drawnCount(parts, line.spec) * 3, `${label}: ${line.spec.name} — BOM ${line.qty} must be drawn × 3 joints (${drawnCount(parts, line.spec)})`);
     }
     assert(lines.length === new Set(parts.map((f) => specKey(f.spec))).size, `${label}: every distinct drawn spec needs exactly one line`);
     assert(lines[0].spec.kind === 'socket_screw' || lines[0].spec.kind === 'wood_screw', `${label}: line [0] must stay the bolt line`);
     // The panels show the one-joint schedule, so it must be exactly that.
-    assert(JSON.stringify(specSummary(KIT, STL, lay)) === JSON.stringify(kitSchedule(KIT, 1, STL, lay)), `${label}: specSummary must be the one-joint schedule`);
+    assert(JSON.stringify(specSummary(KIT, STL, lay)) === JSON.stringify(kitSchedule(KIT, 1, STL, lay ? mapOf(lay) : null)), `${label}: specSummary must be the one-joint schedule`);
   }
   assert(specSummary(KIT, STL, mixed).reduce((a, l) => a + l.qty, 0) === mixedParts.length, 'the listed total must equal the drawn total');
 
@@ -557,17 +561,51 @@ function jointScheduleStable(kit: (typeof ACCESSORY_KITS)[number]): boolean {
     'an edit keyed on the cast bracket must not touch a connector whose seats sit elsewhere',
   );
   assert(
-    JSON.stringify(kitScheduleFor(KIT, [BIG, BIG], nudge)) === JSON.stringify(kitScheduleFor(KIT, [BIG, BIG])),
+    JSON.stringify(kitScheduleFor(KIT, [BIG, BIG], mapOf(nudge))) === JSON.stringify(kitScheduleFor(KIT, [BIG, BIG])),
     'nor its schedule',
   );
   // A schedule over BOTH connectors: each joint resolved at its own seats, so this
   // is where a single representative stlUrl would have gone wrong.
-  const twoPatterns = kitScheduleFor(KIT, [STL, BIG], nudge);
+  const twoPatterns = kitScheduleFor(KIT, [STL, BIG], mapOf(nudge));
   const bothDrawn = [...jointFasteners(KIT, STL, 1, nudge), ...jointFasteners(KIT, BIG, 1, nudge)];
   for (const line of twoPatterns) {
     assert(line.qty === drawnCount(bothDrawn, line.spec), `mixed connectors: ${line.spec.name} must equal the sum drawn at each joint`);
   }
   assert(twoPatterns[0].qty === 4, `2 seats either side of a 48mm gusset is 4 bolts (got ${twoPatterns[0].qty})`);
+
+  // ---- an assembly may carry a DIFFERENT edit on each connector ----
+  // Each pattern gets its own edit: remove one bolt on the cast bracket, remove
+  // one on the gusset, and add a distinct part only on the gusset. Resolving a
+  // single layout for the whole assembly — instead of per joint — would drop one
+  // or the other silently, which is the shape of the bug this keying prevents.
+  const bigKey = partKey('bolt', jointSeats(bigPattern)[0]);
+  const perJoint: KitLayoutMap = {
+    [kitLayoutKey(KIT.id, STL)]: { parts: { [EDIT_KEY]: { removed: true } }, extra: [] },
+    [kitLayoutKey(KIT.id, BIG)]: {
+      parts: { [bigKey]: { removed: true } },
+      extra: [{ id: 'g', spec: socketScrew('M6', 30), position: [1, 2, 3], rotation: [0, 0, 0], internal: false }],
+    },
+  };
+  const mixedEdits = kitScheduleFor(KIT, [STL, BIG], perJoint);
+  // Each joint drops one of its two bolts; mates are untouched on both.
+  assert(mixedEdits[0].qty === 2, `each joint must resolve its OWN edits (got ${mixedEdits[0].qty} bolts)`);
+  assert(mixedEdits[1].qty === 4, `neither joint's T-nuts are touched (got ${mixedEdits[1].qty})`);
+  assert(mixedEdits[2].spec.length === 30 && mixedEdits[2].qty === 1, 'the 48mm-only added part appears exactly once');
+  // With the gusset's entry gone, its own removal must stop applying — the 21mm
+  // edit must NOT be reused in its place.
+  const onlyCast = kitScheduleFor(KIT, [STL, BIG], { [kitLayoutKey(KIT.id, STL)]: perJoint[kitLayoutKey(KIT.id, STL)] });
+  assert(onlyCast[0].qty === 3, `dropping the gusset's entry must restore its bolt (got ${onlyCast[0].qty})`);
+  assert(onlyCast.length === 2, `and drop its added part (${JSON.stringify(onlyCast.map((l) => l.qty))})`);
+  // `layoutFor` is the only way in, so it must never fall back to another
+  // connector's edits — or another kit's.
+  assert(layoutFor(perJoint, KIT.id, STL) === perJoint[kitLayoutKey(KIT.id, STL)], 'layoutFor must find the exact pair');
+  assert(layoutFor(perJoint, KIT.id, BIG) === perJoint[kitLayoutKey(KIT.id, BIG)], 'layoutFor must resolve the gusset to its own');
+  assert(layoutFor(perJoint, KIT.id, BIG) !== layoutFor(perJoint, KIT.id, STL), 'two patterns must not share edits');
+  assert(layoutFor(perJoint, 'nope', STL) === null, 'layoutFor must not fall back to a different kit');
+  assert(layoutFor(null, KIT.id, STL) === null && layoutFor(undefined, KIT.id, STL) === null, 'no map → no edits');
+  // An unknown stlUrl falls back to the default pattern, so it legitimately
+  // shares the cast bracket's edits — the fallback must be consistent, not empty.
+  assert(layoutFor(perJoint, KIT.id, '/nope.stl') === layoutFor(perJoint, KIT.id, STL), 'an unknown connector falls back to the default pattern, and to its edits');
 
   // ---- the edit follows its seat into a bigger kit ----
   const heavyBase = jointFasteners(HEAVY, STL);
@@ -582,11 +620,11 @@ function jointScheduleStable(kit: (typeof ACCESSORY_KITS)[number]): boolean {
   // ---- determinism and call-order independence, with a layout ----
   for (const [label, lay] of CASES) {
     const a = JSON.stringify(jointFasteners(KIT, STL, 1, lay));
-    kitSchedule(KIT, 3, STL, lay);
+    kitSchedule(KIT, 3, STL, lay ? mapOf(lay) : null);
     specSummary(KIT, STL, lay);
     assert(a === JSON.stringify(jointFasteners(KIT, STL, 1, lay)), `${label}: jointFasteners must be deterministic`);
-    const s = JSON.stringify(kitSchedule(KIT, 5, STL, lay));
-    assert(s === JSON.stringify(kitSchedule(KIT, 5, STL, lay)), `${label}: kitSchedule must be deterministic`);
+    const s = JSON.stringify(kitSchedule(KIT, 5, STL, lay ? mapOf(lay) : null));
+    assert(s === JSON.stringify(kitSchedule(KIT, 5, STL, lay ? mapOf(lay) : null)), `${label}: kitSchedule must be deterministic`);
   }
 }
 

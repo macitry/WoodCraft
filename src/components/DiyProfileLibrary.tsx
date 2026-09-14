@@ -10,8 +10,16 @@ import { CONNECTORS, connectorById } from '../diy/connectors';
 import type { DiyConnector } from '../diy/connectors';
 import type { ProfileSize, ScrewSize } from '../types/furniture';
 import { DEFAULT_BRACKET_STL_URL, PROFILE_DIMS, SCREW_DEFAULT_LENGTH } from '../types/furniture';
-import { ACCESSORY_KITS, jointFasteners, kitFitReason, kitParts } from '../utils/accessoryKits';
-import type { AccessoryKit, HardwareSpec } from '../utils/accessoryKits';
+import {
+  ACCESSORY_KITS,
+  accessoryKitById,
+  jointFasteners,
+  kitFitReason,
+  layoutFor,
+  specSummary,
+} from '../utils/accessoryKits';
+import type { AccessoryKit, HardwareSpec, KitLayoutMap } from '../utils/accessoryKits';
+import { useKitLayoutFor, useKitLayoutStore } from '../store/kitLayoutStore';
 
 // ---------------------------------------------------------------------------
 // Data
@@ -46,6 +54,23 @@ type TabId = 'profiles' | 'connectors' | 'screws' | 'kits';
  * nothing. The main configurator, which does have a tabletop, offers all four.
  */
 const DIY_KITS = ACCESSORY_KITS.filter((k) => k.scope === 'joint');
+
+/**
+ * The part names a kit card advertises, after the user's edits.
+ *
+ * Derived through specSummary rather than kitParts: the latter is the PRESET
+ * list, so it would keep naming a spec the user has since replaced and keep
+ * counting a part they deleted. Resolved against DEFAULT_BRACKET_STL_URL
+ * because a catalog card has no bracket bound to it yet — which is the same
+ * connector RotatingKitMesh previews, so the thumbnail, the caption and the
+ * card cannot disagree with each other.
+ */
+const kitLineNames = (kitId: string, layouts: KitLayoutMap | null): string[] =>
+  specSummary(
+    accessoryKitById(kitId),
+    DEFAULT_BRACKET_STL_URL,
+    layoutFor(layouts, kitId, DEFAULT_BRACKET_STL_URL),
+  ).map((line) => line.spec.name);
 
 // ---------------------------------------------------------------------------
 // Rotating 3D bracket preview
@@ -176,13 +201,17 @@ function hardwareMesh(spec: HardwareSpec, ghosted: boolean): THREE.Object3D {
  */
 const RotatingKitMesh: React.FC<{ kit: AccessoryKit }> = ({ kit }) => {
   const groupRef = useRef<THREE.Group>(null);
+  // The preview stands in for a cast bracket, so it resolves through that
+  // connector's pattern — the same lookup the real scene does. Showing the
+  // PRESET here would promise parts the user would not get after editing.
+  const layout = useKitLayoutFor(kit.id, DEFAULT_BRACKET_STL_URL);
   const items = useMemo(
     () =>
-      jointFasteners(kit, DEFAULT_BRACKET_STL_URL, 1).map((f) => ({
+      jointFasteners(kit, DEFAULT_BRACKET_STL_URL, 1, layout).map((f) => ({
         f,
         obj: hardwareMesh(f.spec, f.internal),
       })),
-    [kit],
+    [kit, layout],
   );
 
   useFrame((_, delta) => {
@@ -295,6 +324,12 @@ const DiyProfileLibrary: React.FC = () => {
     { id: 'kits', label: 'Kits' },
   ];
 
+  // Subscribed, not read once: the cards below list parts, and a card that kept
+  // showing preset hardware after an edit would disagree with both the rotating
+  // preview above it and the property panel on the other side of the screen.
+  // The whole map rather than useKitLayoutFor because this renders every kit.
+  const layouts = useKitLayoutStore((s) => s.layouts);
+
   // Resolved models for the inline preview strip.
   const previewProfileSize: ProfileSize =
     SIZES.find((x) => x.id === hoveredId)?.id ?? selProfileSize ?? SIZES[0].id;
@@ -314,7 +349,7 @@ const DiyProfileLibrary: React.FC = () => {
       : activeTab === 'connectors'
         ? `${previewConnector.label} · ${previewConnector.dim}`
         : activeTab === 'kits'
-          ? `${previewKit.name} · ${kitParts(previewKit).map((p) => p.name).join(' + ')}`
+          ? `${previewKit.name} · ${kitLineNames(previewKit.id, layouts).join(' + ')}`
           : `螺丝 ${previewScrewSize}`;
 
   return (
@@ -516,7 +551,7 @@ const DiyProfileLibrary: React.FC = () => {
             {DIY_KITS.map((k) => {
               const reason = fitMm === null ? null : kitFitReason(k, fitMm);
               const blocked = reason !== null;
-              const parts = kitParts(k);
+              const parts = kitLineNames(k.id, layouts);
               return (
                 <div
                   key={k.id}
@@ -544,7 +579,7 @@ const DiyProfileLibrary: React.FC = () => {
                       {k.name}
                     </div>
                     <div className="text-[10px] text-neutral-500 truncate">
-                      {parts.map((p) => p.name).join(' + ')}
+                      {parts.join(' + ')}
                     </div>
                     {reason && (
                       <div className="text-[10px] text-amber-600/80">{reason}</div>
@@ -560,7 +595,7 @@ const DiyProfileLibrary: React.FC = () => {
               <p><span className="text-neutral-400">Drag</span> kit → 实心角点（虚线幽灵出现时松手）</p>
               <p><span className="text-neutral-400">Esc</span> 或点空白 → 取消</p>
               <p><span className="text-neutral-400">T 型螺母</span> 默认透视隐藏，可在右侧打开</p>
-              <p className="pt-1 text-neutral-600">组合是整体，不能单独删某颗螺丝</p>
+              <p className="pt-1 text-neutral-600">微调改的是组合定义本身，所有角点同步</p>
             </div>
           </>
         )}

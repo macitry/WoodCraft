@@ -3,7 +3,8 @@ import { useDiyStore } from '../store/diyStore';
 import { PROFILE_DIMS, SCREW_HEAD_DIMS, SCREW_DEFAULT_LENGTH } from '../types/furniture';
 import type { DiyBracket, DiyProfile, DiyScrew, ScrewSize } from '../types/furniture';
 import { CONNECTORS, connectorById } from './connectors';
-import { accessoryKitById, jointFasteners, kitParts } from '../utils/accessoryKits';
+import { accessoryKitById, jointFasteners, specSummary } from '../utils/accessoryKits';
+import { useKitLayoutFor } from '../store/kitLayoutStore';
 import type { DiyKitInstance } from '../types/furniture';
 
 /** Right-side property panel for DIY: shows selected profile or bracket details. */
@@ -69,11 +70,12 @@ const DiyPropertyPanel: React.FC = () => {
 /**
  * Accessory-kit editor.
  *
- * Read-only by design: a kit is a binding record, so there is no per-screw
- * editing and no quantity field — the listed hardware is DERIVED from the
- * bracket's connector (see jointFasteners), which is what keeps the count here,
- * the count drawn in 3D and the count in the BOM in agreement. The only
- * mutations are the display toggles and deleting the whole kit.
+ * Nothing here is typed in: a kit is a binding record, so the listed hardware —
+ * count included — is DERIVED from the bracket's connector plus the layout the
+ * /kits page writes (see jointFasteners / specSummary). That derivation is what
+ * keeps the count here, the count drawn in 3D and the count in the BOM in
+ * agreement. The mutations are the display toggles, deleting the kit, and the
+ * link to the per-part editing page.
  */
 const KitProps: React.FC<{ instance: DiyKitInstance }> = ({ instance }) => {
   const removeKitInstance = useDiyStore((s) => s.removeKitInstance);
@@ -87,7 +89,8 @@ const KitProps: React.FC<{ instance: DiyKitInstance }> = ({ instance }) => {
   if (!kit) return <div className="text-xs text-neutral-500">未知组合：{instance.kitId}</div>;
 
   const cc = connectorById(bracket?.connectorId);
-  const fasteners = jointFasteners(kit, cc.stlUrl, bracket ? bracket.size / cc.extMm : 1);
+  const layout = useKitLayoutFor(instance.kitId, cc.stlUrl);
+  const fasteners = jointFasteners(kit, cc.stlUrl, bracket ? bracket.size / cc.extMm : 1, layout);
   const drawn = fasteners.filter((f) => !f.internal);
   const internal = fasteners.filter((f) => f.internal);
 
@@ -100,13 +103,13 @@ const KitProps: React.FC<{ instance: DiyKitInstance }> = ({ instance }) => {
       </Section>
 
       <Section label="派生零件">
-        {kitParts(kit).map((p) => (
-          <Row key={p.name} label={p.name}>
-            ×{kit.scope === 'frame' ? kit.perFrame ?? 0 : fasteners.filter((f) => f.spec.name === p.name).length}
+        {specSummary(kit, cc.stlUrl, layout).map((line) => (
+          <Row key={line.spec.name} label={line.spec.name}>
+            ×{line.qty}
           </Row>
         ))}
         <p className="text-[10px] text-neutral-600 pt-1">
-          数量由角码孔位自动得出，不单独编辑
+          数量由角码孔位自动得出，可在「微调零件」页逐颗调整
         </p>
       </Section>
 

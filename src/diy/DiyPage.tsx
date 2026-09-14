@@ -9,6 +9,7 @@ import { useDiyStore } from '../store/diyStore';
 import { useModelStore } from '../store/modelStore';
 import { bomToCsv, bomToText } from '../utils/bomExport';
 import { computeDiyBom, diyOps, diyBomName } from '../utils/diyBom';
+import { useKitLayoutStore } from '../store/kitLayoutStore';
 import { downloadFile } from '../utils/download';
 
 const LEFT_W_KEY = 'diy.leftW';
@@ -180,9 +181,10 @@ const DiyExportButton: React.FC = () => {
   const kitInstances = useDiyStore((s) => s.kitInstances);
   const [open, setOpen] = useState(false);
 
+  const kitLayouts = useKitLayoutStore((s) => s.layouts);
   const rows = useMemo(
-    () => computeDiyBom(profiles, brackets, screws, kitInstances),
-    [profiles, brackets, screws, kitInstances],
+    () => computeDiyBom(profiles, brackets, screws, kitInstances, kitLayouts),
+    [profiles, brackets, screws, kitInstances, kitLayouts],
   );
   const ops = useMemo(() => diyOps(kitInstances), [kitInstances]);
 

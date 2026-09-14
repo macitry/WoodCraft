@@ -3,6 +3,7 @@ import { useModelStore } from '../store/modelStore';
 import { computeBom, bomToCsv, bomOpsFrom, type BomRow } from '../utils/bomExport';
 import { TEMPLATE_LAYOUTS } from '../types/furniture';
 import { accessoryKitById } from '../utils/accessoryKits';
+import { useKitLayoutStore } from '../store/kitLayoutStore';
 
 interface BomPreviewModalProps {
   onClose: () => void;
@@ -19,6 +20,9 @@ const BomPreviewModal: FC<BomPreviewModalProps> = ({ onClose }) => {
   const brackets = useModelStore((s) => s.brackets);
   const activeKitId = useModelStore((s) => s.activeKitId);
   const kit = accessoryKitById(activeKitId);
+  // Subscribed, not read once: without this the modal would keep exporting the
+  // preset count after an edit moved or removed a part.
+  const kitLayouts = useKitLayoutStore((s) => s.layouts);
 
   // Close on Escape
   useEffect(() => {
@@ -32,6 +36,7 @@ const BomPreviewModal: FC<BomPreviewModalProps> = ({ onClose }) => {
   const rows = useMemo<BomRow[]>(() => {
     if (!model) return [];
     const layout = TEMPLATE_LAYOUTS[currentParams.templateId];
+    const enabled = brackets.filter((b) => b.enabled);
     return computeBom(
       model,
       {
@@ -41,10 +46,13 @@ const BomPreviewModal: FC<BomPreviewModalProps> = ({ onClose }) => {
         hasCrossBeams: layout?.hasCrossBeams ?? false,
         crossBeamOrientation: layout?.crossBeamOrientation ?? 'front_back',
       },
-      brackets.filter((b) => b.enabled).length,
-      kit,
+      enabled.length,
+      // One stlUrl per enabled bracket, in the order they are drawn: the export
+      // must resolve each joint through the connector the 3D used, or a model
+      // mixing connectors would export hardware nobody drew.
+      kit ? { kit, layouts: kitLayouts, jointStlUrls: enabled.map((b) => b.stlUrl) } : null,
     );
-  }, [model, currentParams, brackets, kit]);
+  }, [model, currentParams, brackets, kit, kitLayouts]);
 
   const ops = useMemo(() => bomOpsFrom([kit]), [kit]);
 

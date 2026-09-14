@@ -9,14 +9,14 @@
 //
 // Grouping: profiles by (size, length), brackets by connector catalog entry,
 // hand-placed screws by (size, length), kit hardware by part name. Kit lines go
-// through kitSchedule — the same function the 3D renderers' count comes from —
-// so the exported quantity is the number of pieces actually drawn.
+// through kitScheduleFor — the same function the 3D renderers' count comes from
+// — so the exported quantity is the number of pieces actually drawn.
 // ---------------------------------------------------------------------------
 
 import type { DiyBracket, DiyKitInstance, DiyProfile, DiyScrew } from '../types/furniture';
 import type { BomRow } from './bomExport';
-import { accessoryKitById, kitSchedule } from './accessoryKits';
-import type { HardwareKind } from './accessoryKits';
+import { accessoryKitById, kitScheduleFor } from './accessoryKits';
+import type { HardwareKind, KitLayoutMap } from './accessoryKits';
 import { connectorById } from '../diy/connectors';
 
 const HARDWARE_MATERIAL: Record<HardwareKind, string> = {
@@ -55,6 +55,8 @@ export function computeDiyBom(
   brackets: DiyBracket[],
   screws: DiyScrew[],
   kitInstances: DiyKitInstance[],
+  /** The user's per-part kit edits, as the store holds them. */
+  layouts?: KitLayoutMap | null,
 ): BomRow[] {
   const bag = new RowBag();
 
@@ -110,7 +112,7 @@ export function computeDiyBom(
     const bracket = bracketById.get(k.bracketId);
     if (!kit || !bracket || !bracket.enabled) continue;
     const stlUrl = connectorById(bracket.connectorId).stlUrl;
-    for (const line of kitSchedule(kit, 1, stlUrl)) {
+    for (const line of kitScheduleFor(kit, [stlUrl], layouts)) {
       bag.add(`hw|${line.spec.name}`, {
         part: line.spec.name,
         type: 'hardware',

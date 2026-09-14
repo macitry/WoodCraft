@@ -6,9 +6,11 @@ import {
   ACCESSORY_KITS,
   accessoryKitById,
   kitFitReason,
-  kitSchedule,
-  perJointCount,
+  kitScheduleFor,
+  layoutFor,
+  specSummary,
 } from '../utils/accessoryKits';
+import { useKitLayoutStore } from '../store/kitLayoutStore';
 
 const BracketEditor: FC = () => {
   const brackets = useModelStore((s) => s.brackets);
@@ -94,11 +96,35 @@ const AccessoryKitPanel: FC = () => {
 
   const profileSize = profileSizeOf(profile);
   const enabled = brackets.filter((b) => b.enabled);
-  const stlUrl = enabled[0]?.stlUrl || DEFAULT_BRACKET_STL_URL;
   const kit = accessoryKitById(activeKitId);
-  const perJoint = perJointCount(kit, stlUrl);
-  // Frame-scope kits are budgeted per assembly, so one "joint" stands for the desk.
-  const lines = kitSchedule(kit, kit?.scope === 'frame' ? 1 : enabled.length, stlUrl);
+  // Subscribed, not read once: without this the panel would keep printing the
+  // preset hardware after a per-part edit retyped, removed or added something.
+  const layouts = useKitLayoutStore((s) => s.layouts);
+  // Frame-scope kits are budgeted per assembly and resolve to their own lines
+  // whatever the joint list says; for joint-scope kits each bracket is counted
+  // through the connector it is actually drawn with (see jointGroups below).
+  const lines = kitScheduleFor(kit, enabled.map((b) => b.stlUrl), layouts);
+
+  // One entry per distinct connector in play, each described through its own
+  // hole pattern. The old `enabled[0]?.stlUrl` representative was a single
+  // number for the whole desk, which is false the moment a model mixes
+  // connectors — and it resolved every joint through one pattern, so edits
+  // keyed on another would have gone unreported.
+  const jointGroups = (() => {
+    if (!kit || kit.scope === 'frame') return [];
+    const count = new Map<string, number>();
+    for (const b of enabled) {
+      const key = b.stlUrl || DEFAULT_BRACKET_STL_URL;
+      count.set(key, (count.get(key) ?? 0) + 1);
+    }
+    // Nothing enabled: still describe ONE joint on the default pattern, so the
+    // amber "no bracket" warning below has something to sit under.
+    if (count.size === 0) count.set(DEFAULT_BRACKET_STL_URL, 0);
+    return [...count].map(([stl, n]) => ({
+      n,
+      parts: specSummary(kit, stl, layoutFor(layouts, kit.id, stl)),
+    }));
+  })();
 
   return (
     <div className="px-4 py-3 border-b border-neutral-800 bg-neutral-900/60">
@@ -158,9 +184,17 @@ const AccessoryKitPanel: FC = () => {
           <p className="text-[10px] text-neutral-500 leading-snug">
             {kit.scope === 'frame'
               ? `${kit.bolt.name} · 清单与工序专用，不在 3D 中显示`
-              : `每处角码 ${perJoint} 颗 ${kit.bolt.name}${
-                  kit.mate ? ` + ${perJoint} 颗 ${kit.mate.name}` : ''
-                }${enabled.length > 0 ? ` · 共 ${enabled.length} 处` : ''}`}
+              : jointGroups
+                  .map(
+                    (g) =>
+                      // Counts and specs come from the same derivation the 3D and
+                      // the BOM use, so a retyped or deleted part shows up here
+                      // rather than leaving a preset figure behind.
+                      `每处 ${g.parts
+                        .map((l) => `${l.qty} 颗 ${l.spec.name}`)
+                        .join(' + ')}${g.n > 0 ? ` · 共 ${g.n} 处` : ''}`,
+                  )
+                  .join('；')}
           </p>
           {kit.scope === 'joint' && enabled.length === 0 && (
             <p className="text-[10px] text-amber-500/80">

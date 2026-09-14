@@ -281,6 +281,28 @@ export function patternKeyFor(stlUrl?: string | null): string {
   return holePatternSignature(holePatternFor(stlUrl));
 }
 
+/** Edits for many (kit, connector) pairs, as the store holds them. */
+export type KitLayoutMap = Record<string, KitLayout>;
+
+/**
+ * The key a (kit, connector) pair's edits are filed under. It lives here beside
+ * `patternKeyFor` rather than in the store because the pure BOM path and the
+ * store must agree on it exactly — a mismatch would look up a different pattern
+ * and quietly export hardware the 3D never drew.
+ */
+export function kitLayoutKey(kitId: string, stlUrl?: string | null): string {
+  return `${kitId}@${patternKeyFor(stlUrl)}`;
+}
+
+/** The edits for one joint, resolved through its own connector. */
+export function layoutFor(
+  layouts: KitLayoutMap | null | undefined,
+  kitId: string,
+  stlUrl?: string | null,
+): KitLayout | null {
+  return layouts?.[kitLayoutKey(kitId, stlUrl)] ?? null;
+}
+
 /**
  * A degree delta applied per axis to a seat's XYZ Euler (radians), wrapped into
  * (−180, 180].
@@ -620,13 +642,18 @@ function frameLines(kit: AccessoryKit): KitLine[] {
 export function kitScheduleFor(
   kit: AccessoryKit | null,
   jointStlUrls: (string | null | undefined)[],
-  layout?: KitLayout | null,
+  layouts?: KitLayoutMap | null,
 ): KitLine[] {
   if (!kit) return [];
   if (kit.scope === 'frame') return frameLines(kit);
   if (jointStlUrls.length === 0) return [];
   const parts: LocalFastener[] = [];
-  for (const stlUrl of jointStlUrls) parts.push(...jointFasteners(kit, stlUrl, 1, layout));
+  // Resolved PER JOINT, not once for the assembly: a model may mix connectors,
+  // and an edit authored against one pattern must not be applied to — or worse,
+  // silently dropped from — the joints using another.
+  for (const stlUrl of jointStlUrls) {
+    parts.push(...jointFasteners(kit, stlUrl, 1, layoutFor(layouts, kit.id, stlUrl)));
+  }
   return linesFrom(parts);
 }
 
@@ -639,13 +666,13 @@ export function kitSchedule(
   kit: AccessoryKit | null,
   jointCount: number,
   stlUrl?: string | null,
-  layout?: KitLayout | null,
+  layouts?: KitLayoutMap | null,
 ): KitLine[] {
   if (!kit) return [];
   const n = Math.max(0, Math.floor(jointCount));
   if (n === 0) return [];
   if (kit.scope === 'frame') return frameLines(kit);
-  return kitScheduleFor(kit, new Array<string | null | undefined>(n).fill(stlUrl), layout);
+  return kitScheduleFor(kit, new Array<string | null | undefined>(n).fill(stlUrl), layouts);
 }
 
 /**

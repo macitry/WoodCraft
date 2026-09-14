@@ -6,8 +6,27 @@
  */
 
 import type { FurnitureModel } from '../types/furniture';
-import type { AccessoryKit, HardwareKind } from './accessoryKits';
-import { kitSchedule } from './accessoryKits';
+import type { AccessoryKit, HardwareKind, KitLayoutMap } from './accessoryKits';
+import { kitScheduleFor } from './accessoryKits';
+
+/**
+ * The accessory kit applied to this model, plus where to find the user's edits.
+ *
+ * A binding object rather than one more positional argument: there is exactly one
+ * caller, and kit + edits + joints are one thought — which kit, edited how, over
+ * which joints.
+ */
+export interface KitBinding {
+  kit: AccessoryKit;
+  /** The user's per-part edits, keyed per connector (see kitLayoutKey). */
+  layouts?: KitLayoutMap | null;
+  /**
+   * One stlUrl per joint the kit is bound to — its LENGTH is the joint count, so
+   * it must describe the same set of brackets as `bracketCount`. Omit only when
+   * every joint uses the default hole pattern, which is the pre-edits behaviour.
+   */
+  jointStlUrls?: (string | null | undefined)[];
+}
 
 export interface BomRow {
   part: string;
@@ -42,7 +61,7 @@ export function computeBom(
   params: BomParams,
   bracketCount: number,
   /** Accessory kit applied to every joint. Omit / null for no hardware rows. */
-  kit?: AccessoryKit | null,
+  binding?: KitBinding | null,
 ): BomRow[] {
   const w = getParam(model, 'width', 1200);
   const d = getParam(model, 'depth', 600);
@@ -126,18 +145,24 @@ export function computeBom(
     });
   }
 
-  // Accessory-kit hardware — same source as the 3D fasteners, so the listed
-  // count is exactly what is drawn. Frame-scope kits are budgeted per desk.
-  for (const line of kitSchedule(kit ?? null, kit?.scope === 'frame' ? 1 : bracketCount)) {
-    rows.push({
-      part: line.spec.name,
-      type: 'hardware',
-      material: HARDWARE_MATERIAL[line.spec.kind],
-      profile: line.spec.size ?? '-',
-      lengthMm: line.spec.length ?? 0,
-      qty: line.qty,
-      note: kit?.name,
-    });
+  // Accessory-kit hardware — the same `jointFasteners` the 3D draws, resolved
+  // joint by joint so each is counted against its OWN connector's hole pattern
+  // (and so its own edits). Frame-scope kits ignore the joints entirely and are
+  // budgeted per desk, which kitScheduleFor handles itself.
+  const kit = binding?.kit ?? null;
+  if (kit) {
+    const joints = binding?.jointStlUrls ?? new Array<string | null | undefined>(bracketCount).fill(null);
+    for (const line of kitScheduleFor(kit, joints, binding?.layouts)) {
+      rows.push({
+        part: line.spec.name,
+        type: 'hardware',
+        material: HARDWARE_MATERIAL[line.spec.kind],
+        profile: line.spec.size ?? '-',
+        lengthMm: line.spec.length ?? 0,
+        qty: line.qty,
+        note: kit.name,
+      });
+    }
   }
 
   return rows.filter(keepsInExport);
