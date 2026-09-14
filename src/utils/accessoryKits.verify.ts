@@ -8,17 +8,32 @@
 import {
   ACCESSORY_KITS,
   DEFAULT_HOLE_PATTERN,
+  EMPTY_LAYOUT,
+  HOLE_PATTERNS,
   MATE_DEPTH_MM,
   accessoryKitById,
   holePatternFor,
+  holePatternSignature,
   jointFasteners,
   jointSeats,
   kitFitReason,
   kitParts,
   kitSchedule,
+  kitScheduleFor,
+  minScrewLength,
+  offsetFromAbsolute,
+  partKey,
+  patternKeyFor,
   perJointCount,
+  resizeScrew,
   socketAxis,
+  socketScrew,
+  socketScrewName,
+  specSummary,
+  tNut,
+  woodScrewName,
 } from './accessoryKits';
+import type { HardwareSpec, KitLayout, LocalFastener, PartRole } from './accessoryKits';
 import { DEFAULT_BRACKET_STL_URL } from '../types/furniture';
 
 function assert(cond: boolean, msg: string): void {
@@ -289,6 +304,289 @@ function jointScheduleStable(kit: (typeof ACCESSORY_KITS)[number]): boolean {
     assert(kitFitReason(kit, 40) === null, `${kit.id}: must fit a 40-series profile`);
     assert(kitFitReason(kit, 20) !== null, `${kit.id}: must refuse a 20-series profile`);
     assert(kitFitReason(kit, 20)!.includes('20'), `${kit.id}: the refusal must state the current size`);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Catalog names are DERIVED from the spec, never stored literals
+// ---------------------------------------------------------------------------
+{
+  // The BOM prints `spec.name` verbatim, so a stored literal would go on
+  // describing hardware that is no longer there the moment a size override lands.
+  const rebuiltName = (s: HardwareSpec) =>
+    s.kind === 'socket_screw'
+      ? socketScrewName(s.size!, s.length!)
+      : s.kind === 'wood_screw'
+        ? woodScrewName(s.size!, s.length!)
+        : tNut(s.size!).name; // the catalog's series is tNut's own default
+
+  for (const kit of ACCESSORY_KITS) {
+    for (const spec of kitParts(kit)) {
+      assert(rebuiltName(spec) === spec.name, `${kit.id}: "${spec.name}" is not what its own fields derive`);
+      if (spec.kind === 't_nut') {
+        assert(spec.length === undefined, `${kit.id}: a T-nut carries no length`);
+      } else {
+        assert(!!spec.size && typeof spec.length === 'number', `${kit.id}: a screw needs a size and a length`);
+      }
+    }
+  }
+
+  // A shorter screw would lose its shaft entirely — buildScrewGroup clamps
+  // shaftLen to 0 and draws a bare head — so the floor belongs here, not in the UI.
+  const bolt = accessoryKitById('corner-standard')!.bolt;
+  const wood = accessoryKitById('tabletop-fix')!.bolt;
+  assert(resizeScrew(bolt, 'M6', 1).length === minScrewLength('M6'), 'a too-short override must clamp to the shortest usable screw');
+  assert(resizeScrew(bolt, 'M6', 18.4).length === 18, 'lengths must round to whole mm');
+  assert(resizeScrew(bolt, 'M5', 30).name === socketScrewName('M5', 30), 'a re-specced bolt must rename itself');
+  assert(resizeScrew(bolt, 'M5', 30).kind === 'socket_screw', 'a re-specced bolt must stay a bolt');
+  assert(resizeScrew(wood, 'M5', 20).kind === 'wood_screw', 'a wood screw must stay a wood screw');
+  assert(resizeScrew(wood, 'M5', 20).name === woodScrewName('M5', 20), 'and keep its own name prefix');
+  // A T-nut's name carries a profile series that `size` does not determine, so
+  // rebuilding one from a size would print a lying name — it is passed through.
+  const nut = accessoryKitById('corner-standard')!.mate!;
+  assert(resizeScrew(nut, 'M5', 30) === nut, 'a T-nut must never be re-specced into a screw');
+}
+
+// ---------------------------------------------------------------------------
+// Part identity: a seat, not an array index
+// ---------------------------------------------------------------------------
+{
+  const ROLES: PartRole[] = ['bolt', 'mate', 'extra'];
+
+  // Within one pattern every seat must key uniquely — two seats sharing a key
+  // would silently share one PartEdit, and an edit to one would move the other.
+  for (const [label, pattern] of Object.entries(HOLE_PATTERNS)) {
+    for (const role of ROLES) {
+      const keys = jointSeats(pattern).map((s) => partKey(role, s));
+      assert(new Set(keys).size === keys.length, `${label}/${role}: duplicate seat keys would collide`);
+    }
+  }
+  for (const role of ROLES) {
+    const keys = jointSeats(DEFAULT_HOLE_PATTERN).map((s) => partKey(role, s));
+    assert(new Set(keys).size === keys.length, `default pattern / ${role}: duplicate seat keys`);
+  }
+
+  // The key must survive a scale change, or one edit would need one layout per mode.
+  const KIT = accessoryKitById('corner-standard')!;
+  const keysAt = (scale: number) => jointFasteners(KIT, STL, scale).map((f) => f.key).join(' ');
+  assert(keysAt(1) === keysAt(2), 'partKey must not depend on scale');
+
+  // Keying on the seat (not the index) means an edit follows its seat into a kit
+  // that asks for MORE bolts: the 4-bolt kit's leading seats are the same four.
+  const EDIT_KEY = 'bolt|x|8|0';
+  assert(jointSeats(DEFAULT_HOLE_PATTERN).some((s) => partKey('bolt', s) === EDIT_KEY), 'the probe key must exist');
+  const nudge: KitLayout = { parts: { [EDIT_KEY]: { offset: [1, 2, 3] } }, extra: [] };
+  assert(
+    jointFasteners(KIT, STL, 1, nudge).map((f) => f.key).join(' ') === jointFasteners(KIT, STL, 1).map((f) => f.key).join(' '),
+    'an offset must not renumber the parts',
+  );
+
+  // Scoping. Layouts are keyed on the PATTERN signature rather than a connector
+  // id because the BOM resolves `holePatternFor(undefined)` whenever it has no
+  // stlUrl — that lookup has to land on the same pattern the renderer used.
+  assert(holePatternSignature(DEFAULT_HOLE_PATTERN) === patternKeyFor(STL), 'the cast bracket must key to the authored pattern');
+  assert(patternKeyFor(STL) === patternKeyFor(null) && patternKeyFor(null) === patternKeyFor(undefined), 'the no-stlUrl lookup must reach the cast bracket\'s pattern');
+}
+
+// ---------------------------------------------------------------------------
+// The no-layout path is byte-for-byte what it always was
+// ---------------------------------------------------------------------------
+{
+  const KIT = accessoryKitById('corner-standard')!;
+  const HEAVY = accessoryKitById('corner-heavy')!;
+  const FRAME = accessoryKitById('tabletop-fix')!;
+  const isNoop = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b);
+
+  for (const kit of [KIT, HEAVY, FRAME]) {
+    const bare = jointFasteners(kit, STL);
+    assert(isNoop(jointFasteners(kit, STL, 1, null), bare), `${kit.id}: an explicit null layout must match no layout`);
+    // The one that actually bites: the store hands an EMPTY layout to every
+    // (kit, connector) pair it has never seen edited.
+    assert(isNoop(jointFasteners(kit, STL, 1, EMPTY_LAYOUT), bare), `${kit.id}: an empty layout must be a no-op`);
+    assert(isNoop(kitSchedule(kit, 5, STL, null), kitSchedule(kit, 5, STL)), `${kit.id}: kitSchedule(kit, n, stl, null)`);
+    assert(isNoop(kitSchedule(kit, 5, STL, EMPTY_LAYOUT), kitSchedule(kit, 5, STL)), `${kit.id}: kitSchedule with an empty layout`);
+    assert(isNoop(kitScheduleFor(kit, [STL, STL], EMPTY_LAYOUT), kitScheduleFor(kit, [STL, STL])), `${kit.id}: kitScheduleFor with an empty layout`);
+    assert(isNoop(specSummary(kit, STL, EMPTY_LAYOUT), specSummary(kit, STL)), `${kit.id}: specSummary with an empty layout`);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Edits layer on top: offset, rotation, spec, delete, add
+// ---------------------------------------------------------------------------
+{
+  const KIT = accessoryKitById('corner-standard')!;
+  const HEAVY = accessoryKitById('corner-heavy')!;
+  const BIG = '/connectors/1.46.20536.stl'; // Angle Alu 48x48 — a different hole pattern
+  const EDIT_KEY = 'bolt|x|8|0';
+  const MATE_KEY = 'mate|x|8|0';
+
+  const specKey = (s: HardwareSpec) => `${s.kind}|${s.size ?? ''}|${s.length ?? ''}|${s.name}`;
+  const drawnCount = (parts: LocalFastener[], spec: HardwareSpec) =>
+    parts.filter((f) => specKey(f.spec) === specKey(spec)).length;
+  const find = (parts: LocalFastener[], key: string) => parts.find((f) => f.key === key);
+
+  const base = jointFasteners(KIT, STL);
+  const baseBolt = find(base, EDIT_KEY)!;
+  const baseMate = find(base, MATE_KEY)!;
+  assert(!!baseBolt && !!baseMate, 'precondition: the probe seats must be seated');
+
+  // ---- offset: exact, catalog mm, and it follows the scale ----
+  const nudge: KitLayout = { parts: { [EDIT_KEY]: { offset: [1, 2, 3] } }, extra: [] };
+  const moved = jointFasteners(KIT, STL, 1, nudge);
+  assert(moved.length === base.length, 'an offset must not change the piece count');
+  const movedBolt = find(moved, EDIT_KEY)!;
+  assert(
+    nearVec(movedBolt.position, [baseBolt.position[0] + 1, baseBolt.position[1] + 2, baseBolt.position[2] + 3], 1e-6),
+    `offset must land exactly (got ${movedBolt.position})`,
+  );
+  assert(nearVec(movedBolt.rotation, baseBolt.rotation, 1e-12), 'an offset must not touch orientation');
+  // Per-part, meaning per-part: a neighbour stays put.
+  assert(nearVec(find(moved, MATE_KEY)!.position, baseMate.position, 1e-12), 'editing one part must not move its neighbour');
+
+  const moved2 = jointFasteners(KIT, STL, 2, { parts: { [EDIT_KEY]: { offset: [1, 2, 3] } }, extra: [] });
+  const b2 = find(jointFasteners(KIT, STL, 2), EDIT_KEY)!;
+  assert(
+    nearVec(find(moved2, EDIT_KEY)!.position, [b2.position[0] + 2, b2.position[1] + 4, b2.position[2] + 6], 1e-6),
+    'a catalog-mm offset must scale with the model',
+  );
+
+  // The editor shows absolute mm and stores the delta; typing a number in must
+  // come back out unchanged or the panel and the model would disagree.
+  assert(nearVec(offsetFromAbsolute(baseBolt.position, [baseBolt.position[0] + 1, baseBolt.position[1] + 2, baseBolt.position[2] + 3]), [1, 2, 3]), 'absolute → delta');
+  const typed: [number, number, number] = [baseBolt.position[0] + 1.5, baseBolt.position[1] - 2.25, baseBolt.position[2]];
+  const roundTrip = find(
+    jointFasteners(KIT, STL, 1, { parts: { [EDIT_KEY]: { offset: offsetFromAbsolute(baseBolt.position, typed) } }, extra: [] }),
+    EDIT_KEY,
+  )!;
+  assert(nearVec(roundTrip.position, typed, 1e-6), `an absolute position typed in the editor must come back out unchanged (got ${roundTrip.position})`);
+
+  // ---- rotation: a delta in degrees, wrapped ----
+  const turned = (deg: number) => find(jointFasteners(KIT, STL, 1, { parts: { [EDIT_KEY]: { rotOffset: [0, deg, 0] } }, extra: [] }), EDIT_KEY)!;
+  assert(nearVec(socketAxis(turned(90).rotation), [1, 0, 0], 1e-12), 'a +90° Y delta must swing the bolt axis from -Y to +X');
+  assert(nearVec(turned(90).position, baseBolt.position, 1e-12), 'rotating a bolt in place must not move it');
+  assert(nearVec(turned(270).rotation, turned(-90).rotation, 1e-12), 'a rotation delta must wrap, not accumulate');
+  // A Z delta spins the part about its own axis, and socketAxis ignores it — the
+  // +Z image of an XYZ Euler depends only on x and y. For a round bolt that is a
+  // cosmetically inert control, so the panel must not oversell it.
+  const spun = find(jointFasteners(KIT, STL, 1, { parts: { [EDIT_KEY]: { rotOffset: [0, 0, 90] } }, extra: [] }), EDIT_KEY)!;
+  assert(nearVec(socketAxis(spun.rotation), socketAxis(baseBolt.rotation), 1e-12), 'a Z delta must not change which way a bolt faces');
+  assert(spun.rotation[2] !== baseBolt.rotation[2], '...though it is still stored');
+
+  // ---- spec: only the edited screw changes, and it earns its own BOM line ----
+  const mixed: KitLayout = { parts: { [EDIT_KEY]: { size: 'M5', length: 30 } }, extra: [] };
+  const mixedParts = jointFasteners(KIT, STL, 1, mixed);
+  assert(mixedParts.length === base.length, 'a spec swap must not change the piece count');
+  assert(find(mixedParts, EDIT_KEY)!.spec.name === socketScrewName('M5', 30), 'the edited bolt takes the new spec');
+  assert(find(mixedParts, MATE_KEY)!.spec === baseMate.spec, 'its T-nut keeps the preset spec object');
+  const mixedLines = kitSchedule(KIT, 4, STL, mixed);
+  assert(mixedLines.length === 3, `two specs + one mate must be three lines (got ${mixedLines.length})`);
+  assert(mixedLines[0].qty === 4 && mixedLines[1].qty === 4, 'each spec keeps its own quantity');
+  assert(mixedLines[2].spec.kind === 't_nut' && mixedLines[2].qty === 8, 'mates follow the bolt count');
+
+  // A T-nut is not re-speccable, so an edit aimed at one is inert.
+  const nutEdit = jointFasteners(KIT, STL, 1, { parts: { [MATE_KEY]: { size: 'M5', length: 30 } }, extra: [] });
+  assert(find(nutEdit, MATE_KEY)!.spec === baseMate.spec, 'a spec override aimed at a T-nut must be ignored');
+
+  // ---- removed: out of the 3D and out of the BOM, together ----
+  const cut: KitLayout = { parts: { [EDIT_KEY]: { removed: true } }, extra: [] };
+  const cutParts = jointFasteners(KIT, STL, 1, cut);
+  assert(cutParts.length === base.length - 1, 'a removed part must not be drawn');
+  assert(!find(cutParts, EDIT_KEY), 'a removed part must not appear at all');
+  // Per-part, not per-pair: its T-nut stays until it is removed too.
+  assert(!!find(cutParts, MATE_KEY), 'removing a bolt must leave its T-nut alone');
+  const cutLines = kitSchedule(KIT, 3, STL, cut);
+  assert(cutLines[0].qty === 3, `a removed bolt must drop out of the BOM too (got ${cutLines[0].qty})`);
+  assert(cutLines[1].qty === 6, 'its mate line is untouched');
+
+  // ---- extra: hand-added hardware joins the drawn AND the counted set ----
+  const ADDED_SPEC = socketScrew('M6', 30);
+  const extras: KitLayout = {
+    parts: {},
+    extra: [
+      { id: 'v1', spec: ADDED_SPEC, position: [5, 6, 7], rotation: [0, 0, 0], internal: false },
+      { id: 'v2', spec: tNut('M6'), position: [-9, -9, 0], rotation: [0, -90, 0], internal: true },
+    ],
+  };
+  const added = jointFasteners(KIT, STL, 1, extras);
+  assert(added.length === base.length + 2, 'hand-added parts must join the drawn set');
+  const v1 = find(added, 'extra:v1')!;
+  assert(!!v1 && v1.added === true && v1.role === 'extra', 'an added part must be tagged and identifiable by role');
+  assert(nearVec(v1.position, [5, 6, 7]), 'an added part keeps the absolute catalog position it was given');
+  assert(nearVec(v1.rotation, [0, 0, 0], 1e-12), 'added-part degrees must convert to radians');
+  const v2 = find(added, 'extra:v2')!;
+  assert(v2.internal === true, 'an added T-nut must stay internal (ghosted, x-ray only)');
+  assert(nearVec(v2.rotation, [0, -Math.PI / 2, 0], 1e-12), 'added-part degrees must convert to radians');
+  assert(nearVec(jointFasteners(KIT, STL, 2, extras).find((f) => f.key === 'extra:v2')!.position, [-18, -18, 0], 1e-12), 'added parts must scale too');
+  // An added part is part of the kit's DEFINITION, so it is replicated at every
+  // joint; and identical hardware merges into one line rather than two.
+  const extraLines = kitSchedule(KIT, 2, STL, extras);
+  assert(extraLines.length === 3, `added hardware that is already in the kit must merge (got ${extraLines.length})`);
+  assert(extraLines[0].qty === 4, 'seated bolts, 2 per joint');
+  assert(extraLines[1].qty === 6, `added T-nut must merge with the seated ones: 4 seated + 2 added (got ${extraLines[1].qty})`);
+  assert(extraLines[2].qty === 2 && extraLines[2].spec.length === 30, 'the added bolt is its own line, one per joint');
+
+  // ---- the invariant, in its general form ----
+  // Listed === drawn, spec for spec and count for count, for every layout. The
+  // old check only looked at line [0]; a mixed spec or a delete is exactly where
+  // "line order is the contract" stops being enough on its own.
+  const CASES: [string, KitLayout | null][] = [
+    ['base', null],
+    ['offset', nudge],
+    ['mixed', mixed],
+    ['cut', cut],
+    ['added', extras],
+  ];
+  for (const [label, lay] of CASES) {
+    const parts = jointFasteners(KIT, STL, 1, lay);
+    const lines = kitSchedule(KIT, 3, STL, lay);
+    for (const line of lines) {
+      assert(line.qty === drawnCount(parts, line.spec) * 3, `${label}: ${line.spec.name} — BOM ${line.qty} must be drawn × 3 joints (${drawnCount(parts, line.spec)})`);
+    }
+    assert(lines.length === new Set(parts.map((f) => specKey(f.spec))).size, `${label}: every distinct drawn spec needs exactly one line`);
+    assert(lines[0].spec.kind === 'socket_screw' || lines[0].spec.kind === 'wood_screw', `${label}: line [0] must stay the bolt line`);
+    // The panels show the one-joint schedule, so it must be exactly that.
+    assert(JSON.stringify(specSummary(KIT, STL, lay)) === JSON.stringify(kitSchedule(KIT, 1, STL, lay)), `${label}: specSummary must be the one-joint schedule`);
+  }
+  assert(specSummary(KIT, STL, mixed).reduce((a, l) => a + l.qty, 0) === mixedParts.length, 'the listed total must equal the drawn total');
+
+  // ---- an edit must not leak to a connector it was not authored against ----
+  const bigPattern = holePatternFor(BIG);
+  assert(bigPattern !== DEFAULT_HOLE_PATTERN, 'precondition: the 48mm gusset has its own pattern');
+  assert(
+    JSON.stringify(jointFasteners(KIT, BIG, 1, nudge)) === JSON.stringify(jointFasteners(KIT, BIG, 1)),
+    'an edit keyed on the cast bracket must not touch a connector whose seats sit elsewhere',
+  );
+  assert(
+    JSON.stringify(kitScheduleFor(KIT, [BIG, BIG], nudge)) === JSON.stringify(kitScheduleFor(KIT, [BIG, BIG])),
+    'nor its schedule',
+  );
+  // A schedule over BOTH connectors: each joint resolved at its own seats, so this
+  // is where a single representative stlUrl would have gone wrong.
+  const twoPatterns = kitScheduleFor(KIT, [STL, BIG], nudge);
+  const bothDrawn = [...jointFasteners(KIT, STL, 1, nudge), ...jointFasteners(KIT, BIG, 1, nudge)];
+  for (const line of twoPatterns) {
+    assert(line.qty === drawnCount(bothDrawn, line.spec), `mixed connectors: ${line.spec.name} must equal the sum drawn at each joint`);
+  }
+  assert(twoPatterns[0].qty === 4, `2 seats either side of a 48mm gusset is 4 bolts (got ${twoPatterns[0].qty})`);
+
+  // ---- the edit follows its seat into a bigger kit ----
+  const heavyBase = jointFasteners(HEAVY, STL);
+  const heavyEdit = find(jointFasteners(HEAVY, STL, 1, nudge), EDIT_KEY)!;
+  const heavyOrig = find(heavyBase, EDIT_KEY)!;
+  assert(heavyBase.length === 8 && !!heavyOrig, 'precondition: the heavy kit seats 4 bolts + 4 nuts');
+  assert(
+    nearVec(heavyEdit.position, [heavyOrig.position[0] + 1, heavyOrig.position[1] + 2, heavyOrig.position[2] + 3], 1e-6),
+    'an edit authored on a 2-bolt kit must land on the same seat in a 4-bolt one',
+  );
+
+  // ---- determinism and call-order independence, with a layout ----
+  for (const [label, lay] of CASES) {
+    const a = JSON.stringify(jointFasteners(KIT, STL, 1, lay));
+    kitSchedule(KIT, 3, STL, lay);
+    specSummary(KIT, STL, lay);
+    assert(a === JSON.stringify(jointFasteners(KIT, STL, 1, lay)), `${label}: jointFasteners must be deterministic`);
+    const s = JSON.stringify(kitSchedule(KIT, 5, STL, lay));
+    assert(s === JSON.stringify(kitSchedule(KIT, 5, STL, lay)), `${label}: kitSchedule must be deterministic`);
   }
 }
 

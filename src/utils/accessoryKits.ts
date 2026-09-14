@@ -23,7 +23,7 @@
 // ---------------------------------------------------------------------------
 
 import type { ScrewSize } from '../types/furniture';
-import { DEFAULT_BRACKET_STL_URL } from '../types/furniture';
+import { DEFAULT_BRACKET_STL_URL, SCREW_HEAD_DIMS } from '../types/furniture';
 import { CAST_CONNECTOR, CONNECTORS } from '../diy/connectors';
 
 // ---------------------------------------------------------------------------
@@ -45,10 +45,59 @@ export interface HardwareSpec {
 /** How deep past the mating plane the T-nut body sits (mm) — display only. */
 export const MATE_DEPTH_MM = 8;
 
-const M6_SOCKET_18: HardwareSpec = { kind: 'socket_screw', name: '内六角圆柱头螺栓 M6×18', size: 'M6', length: 18 };
-const M6_SOCKET_20: HardwareSpec = { kind: 'socket_screw', name: '内六角圆柱头螺栓 M6×20', size: 'M6', length: 20 };
-const M6_TNUT: HardwareSpec = { kind: 't_nut', name: 'T 型螺母 M6 · 30 系列', size: 'M6' };
-const M5_WOOD_16: HardwareSpec = { kind: 'wood_screw', name: '十字沉头木螺钉 M5×16', size: 'M5', length: 16 };
+// Display names are BUILT from the spec's own fields, never stored as literals:
+// a user can change a bolt's size/length, and a stored literal would then be
+// left behind describing hardware that is no longer there. Consumers only ever
+// read `spec.name` (the BOM text, the property panels), so building it here is
+// the one place the name can be wrong-or-right.
+export function socketScrewName(size: ScrewSize, length: number): string {
+  return `内六角圆柱头螺栓 ${size}×${length}`;
+}
+export function woodScrewName(size: ScrewSize, length: number): string {
+  return `十字沉头木螺钉 ${size}×${length}`;
+}
+/** `series` is the profile series the nut's slot fits (30 series → 30 mm profile).
+ *  It is NOT derivable from `size`: the thread size and the slot it wedges into
+ *  are independent facts, which is why a nut's spec is not user-overridable. */
+export function tNutName(size: ScrewSize, series: number): string {
+  return `T 型螺母 ${size} · ${series} 系列`;
+}
+
+const SCREW_SERIES = 30;
+
+export function socketScrew(size: ScrewSize, length: number): HardwareSpec {
+  return { kind: 'socket_screw', name: socketScrewName(size, length), size, length };
+}
+export function woodScrew(size: ScrewSize, length: number): HardwareSpec {
+  return { kind: 'wood_screw', name: woodScrewName(size, length), size, length };
+}
+export function tNut(size: ScrewSize, series = SCREW_SERIES): HardwareSpec {
+  return { kind: 't_nut', name: tNutName(size, series), size };
+}
+
+/** Shortest screw that still has a shaft: below this `buildScrewGroup` clamps
+ *  `shaftLen` to 0 and draws a head with nothing behind it. */
+export function minScrewLength(size: ScrewSize): number {
+  return SCREW_HEAD_DIMS[size].headH + 1;
+}
+
+/**
+ * Re-spec a SCREW at a new size/length, keeping its kind (and so its display-name
+ * prefix). T-nuts are rejected: their name carries a profile series that `size`
+ * does not determine, so rebuilding one from `size` would print a lying name.
+ */
+export function resizeScrew(spec: HardwareSpec, size: ScrewSize, length: number): HardwareSpec {
+  // Rejected here, where the type says it should be, and not only at the call
+  // site: falling through to socketScrew would silently turn a T-nut into a bolt.
+  if (spec.kind === 't_nut') return spec;
+  const len = Math.max(minScrewLength(size), Math.round(length));
+  return spec.kind === 'wood_screw' ? woodScrew(size, len) : socketScrew(size, len);
+}
+
+const M6_SOCKET_18 = socketScrew('M6', 18);
+const M6_SOCKET_20 = socketScrew('M6', 20);
+const M6_TNUT = tNut('M6');
+const M5_WOOD_16 = woodScrew('M5', 16);
 
 // ---------------------------------------------------------------------------
 // Hole patterns — where a given connector can take a fastener
@@ -56,8 +105,10 @@ const M5_WOOD_16: HardwareSpec = { kind: 'wood_screw', name: '十字沉头木螺
 // The pattern belongs to the CONNECTOR, not to the kit: a kit says "how many
 // bolts per joint", the connector says "how many seats exist and where". A
 // 4-bolt kit on a 2-seat bracket must cap at 2, never hang a screw head off the
-// edge of the plate. That capping rule is `perJointCount` and both the renderers
-// and the BOM go through it.
+// edge of the plate. That cap is applied inside `jointFasteners`, which the
+// renderers, the panels and the BOM all read — one code path, so they cannot
+// disagree about how many pieces exist. (`perJointCount` exposes the cap alone,
+// for callers that want the geometric limit rather than the current set.)
 // ---------------------------------------------------------------------------
 
 /** One fastener site on one leg: `along` = distance out from the corner along
@@ -123,6 +174,11 @@ export function holePatternFor(stlUrl?: string | null): ConnectorHolePattern {
 
 export interface JointSeat {
   leg: 'x' | 'y';
+  /** Distance out from the corner along this leg (catalog mm, unscaled). This is
+   *  the seat's identity, not its `position` — see partKey. */
+  along: number;
+  /** Offset along z, the profile-slot direction (catalog mm, unscaled). */
+  across: number;
   /** Shoulder (bearing surface) position, bracket-local mm. */
   position: readonly [number, number, number];
   /** XYZ Euler (radians) mapping the hardware's +Z axis onto the inward normal. */
@@ -144,6 +200,8 @@ export function jointSeats(pattern: ConnectorHolePattern): JointSeat[] {
     if (x) {
       out.push({
         leg: 'x',
+        along: x.along,
+        across: x.across,
         position: [x.along, pattern.plateT.y, x.across],
         rotation: [Math.PI / 2, 0, 0],
         plateT: pattern.plateT.y,
@@ -153,6 +211,8 @@ export function jointSeats(pattern: ConnectorHolePattern): JointSeat[] {
     if (y) {
       out.push({
         leg: 'y',
+        along: y.along,
+        across: y.across,
         position: [pattern.plateT.x, y.along, y.across],
         rotation: [0, -Math.PI / 2, 0],
         plateT: pattern.plateT.x,
@@ -171,6 +231,138 @@ export function socketAxis(rotation: readonly [number, number, number]): [number
   const [rx, ry] = rotation;
   return [Math.sin(ry), -Math.sin(rx) * Math.cos(ry), Math.cos(rx) * Math.cos(ry)];
 }
+
+// ---------------------------------------------------------------------------
+// Part identity
+// ---------------------------------------------------------------------------
+
+export type PartRole = 'bolt' | 'mate' | 'extra';
+
+/** Trim float noise without losing meaning: derived hole patterns multiply the
+ *  authored seat out by an `extMm` ratio (8 × 48/21 = 18.285714285714285), and
+ *  using that raw value in an identity makes the key unreadable and brittle
+ *  against any rounding later added to holePatternFor. */
+const q3 = (v: number) => Math.round(v * 1000) / 1000;
+const q6 = (v: number) => Math.round(v * 1e6) / 1e6;
+const DEG = Math.PI / 180;
+
+/**
+ * Stable identity for a derived part, keyed on the SEAT rather than its index in
+ * `jointFasteners`' output. That buys three things an index cannot:
+ *   · independent of `scale`, so one layout serves the main configurator
+ *     (scale 1) and DIY (scale = size/extMm) alike;
+ *   · independent of the kit, so swapping a 2-bolt kit for a 4-bolt one keeps
+ *     the edits on the seats they were made on (the leading seats are the same);
+ *   · scoped to the hole pattern, so a nudge authored against one connector does
+ *     not silently re-apply to a connector whose seats sit somewhere else.
+ */
+export function partKey(role: PartRole, seat: JointSeat): string {
+  return `${role}|${seat.leg}|${q3(seat.along)}|${q3(seat.across)}`;
+}
+
+/**
+ * Identifies a hole pattern, for scoping edits.
+ *
+ * Deliberately a PATTERN signature and not a connector id: `holePatternFor`
+ * derives patterns purely from a connector's `extMm`, and the catalog has four
+ * connectors sharing `extMm: 40` (plus two sharing 48 and two sharing 30.12)
+ * which therefore produce byte-identical patterns. Scoping by connector would
+ * let two names for one pattern disagree — and since the BOM side resolves
+ * through `holePatternFor(undefined)` whenever it has no stlUrl, it could look
+ * up a different pattern than the renderer did and quietly export other hardware.
+ */
+export function holePatternSignature(pattern: ConnectorHolePattern): string {
+  const run = (r: HoleSpec[]) => r.map((s) => `${q3(s.along)}:${q3(s.across)}`).join(',');
+  return `${q3(pattern.extMm)}|${q3(pattern.plateT.x)}:${q3(pattern.plateT.y)}|${run(pattern.xRun)}|${run(pattern.yRun)}`;
+}
+
+/** The pattern signature a connector's STL resolves to. */
+export function patternKeyFor(stlUrl?: string | null): string {
+  return holePatternSignature(holePatternFor(stlUrl));
+}
+
+/**
+ * A degree delta applied per axis to a seat's XYZ Euler (radians), wrapped into
+ * (−180, 180].
+ *
+ * A DELTA rather than an absolute override: the seat's authored orientation is
+ * the connector's business, so pinning it from the outside would fight any future
+ * pattern that gives a seat a tilt. Returning `rotation` untouched when there is
+ * no delta also preserves the reference identity that accessoryKits.verify.ts
+ * asserts between calls.
+ */
+function applyRotOffset(
+  rotation: readonly [number, number, number],
+  delta?: readonly [number, number, number],
+): readonly [number, number, number] {
+  if (!delta) return rotation;
+  const out: [number, number, number] = [0, 0, 0];
+  for (let i = 0; i < 3; i++) {
+    const deg = (rotation[i] * 180) / Math.PI + delta[i];
+    out[i] = (((((deg + 180) % 360) + 360) % 360) - 180) * (Math.PI / 180);
+  }
+  return out;
+}
+
+/** The delta that turns a derived position into `absolute`. The editor shows
+ *  absolute millimetres (how a user thinks about where a bolt goes) while storage
+ *  keeps the delta, so this is the single conversion between the two. */
+export function offsetFromAbsolute(
+  base: readonly [number, number, number],
+  absolute: readonly [number, number, number],
+): [number, number, number] {
+  return [q6(absolute[0] - base[0]), q6(absolute[1] - base[1]), q6(absolute[2] - base[2])];
+}
+
+// ---------------------------------------------------------------------------
+// Layout overrides — per-part edits layered on the derived set
+//
+// A kit's parts stay DERIVED (see jointFasteners); a KitLayout only adds edits
+// on top. With no layout the derived output is byte-for-byte what it always was,
+// which is what lets both modes keep rendering unchanged until someone actually
+// adjusts something.
+// ---------------------------------------------------------------------------
+
+export interface PartEdit {
+  /** Delta against the derived seat position, in CATALOG mm (i.e. before the
+   *  renderer's scale). A delta rather than an absolute position is what keeps
+   *  "0.5mm deeper than the hole" meaning the same thing after a connector swap. */
+  offset?: [number, number, number];
+  /** Orientation delta, DEGREES, XYZ order — the order the renderers consume.
+   *  Note the rest of the app labels ZYX roll/pitch/yaw, so the UI must say XYZ. */
+  rotOffset?: [number, number, number];
+  /** Screw spec override; ignored for t_nut (see resizeScrew). */
+  size?: ScrewSize;
+  length?: number;
+  /** Soft delete: out of the 3D AND out of the BOM at once. There is deliberately
+   *  no "hidden but still counted" state — that would break the
+   *  drawn === listed === exported identity this module exists to hold. */
+  removed?: boolean;
+}
+
+/** A part the user added by hand. No seat behind it, so its position and
+ *  orientation are absolute rather than deltas. */
+export interface ExtraPart {
+  id: string;
+  spec: HardwareSpec;
+  /** Absolute, CATALOG mm. */
+  position: [number, number, number];
+  /** Degrees, XYZ order. */
+  rotation: [number, number, number];
+  /** Hardware living inside the profile slot (a T-nut). Renders ghosted and only
+   *  under the x-ray toggle — drawn with normal depth testing it is buried by the
+   *  profile around it, which reads as a bug. */
+  internal: boolean;
+}
+
+/** Per-part edits for one (kit, hole pattern) pair. */
+export interface KitLayout {
+  /** Keyed by partKey. */
+  parts: Record<string, PartEdit>;
+  extra: ExtraPart[];
+}
+
+export const EMPTY_LAYOUT: KitLayout = { parts: {}, extra: [] };
 
 // ---------------------------------------------------------------------------
 // Kits
@@ -204,7 +396,14 @@ export interface AccessoryKit {
 
 /** A piece of hardware placed in bracket-local space by a renderer. */
 export interface LocalFastener {
+  /** Stable identity — `partKey` for derived parts, `extra:<id>` for added ones.
+   *  Renderers use it as their React key, so an add/remove does not make React
+   *  reuse a node for a different part. */
+  key: string;
   spec: HardwareSpec;
+  /** Which of the three sources this part came from. Load-bearing for BOM line
+   *  order: bolts first, then mates, then added parts. */
+  role: PartRole;
   /** Bracket-local mm. */
   position: [number, number, number];
   /** XYZ Euler, radians. */
@@ -212,6 +411,8 @@ export interface LocalFastener {
   /** True for hardware that lives inside the profile slot (T-nut) — the
    *  renderers draw these ghosted, and only when explicitly asked. */
   internal: boolean;
+  /** True for hardware the user added by hand — no seat behind it. */
+  added?: boolean;
 }
 
 /**
@@ -274,7 +475,13 @@ export function accessoryKitById(id?: string | null): AccessoryKit | null {
   return (id && byId.get(id)) || null;
 }
 
-/** Seats a kit actually fills at one joint: min(declared, available). */
+/**
+ * Seats a kit fills at one joint: min(declared, available) — the geometric cap,
+ * ignoring any layout. Deliberately stays pure: it describes what the CONNECTOR
+ * can take, so it is not the place to learn how many parts are currently drawn.
+ * `jointFasteners` applies the cap and the layout both; count its output instead
+ * when the number has to match the 3D or the BOM.
+ */
 export function perJointCount(kit: AccessoryKit | null, stlUrl?: string | null): number {
   if (!kit || kit.scope !== 'joint') return 0;
   return Math.min(kit.boltsPerJoint, jointSeats(holePatternFor(stlUrl)).length);
@@ -284,35 +491,70 @@ export function perJointCount(kit: AccessoryKit | null, stlUrl?: string | null):
  * Hardware for ONE connection joint, in bracket-local mm. Empty for a null kit,
  * for an unknown one, or for frame-scope kits (which have no per-joint location
  * — they contribute to the BOM only).
+ *
+ * `layout` layers the user's per-part edits on top of the derived set: an offset
+ * (catalog mm, so it is meaningful at any `scale`), an orientation delta, a
+ * screw size/length swap, a soft delete, and any hand-added parts. Pass null (or
+ * nothing) and the output is byte-for-byte the untouched derivation.
  */
 export function jointFasteners(
   kit: AccessoryKit | null,
   stlUrl?: string | null,
   scale = 1,
+  layout?: KitLayout | null,
 ): LocalFastener[] {
   if (!kit || kit.scope !== 'joint') return [];
   const seats = jointSeats(holePatternFor(stlUrl));
   const n = Math.min(kit.boltsPerJoint, seats.length);
   const out: LocalFastener[] = [];
-  const put = (spec: HardwareSpec, seat: JointSeat, extra: number, internal: boolean) => {
-    const axis = socketAxis(seat.rotation);
+
+  const put = (role: PartRole, spec: HardwareSpec, seat: JointSeat, extra: number, internal: boolean) => {
+    const key = partKey(role, seat);
+    const edit = layout?.parts[key];
+    if (edit?.removed) return;
+
+    // Clone a spec ONLY when it was actually overridden: accessoryKits.verify.ts
+    // asserts `spec` by reference between calls, and KitLine.spec identity with
+    // kit.bolt is what the panels' text hangs off.
+    const finalSpec =
+      edit && (edit.size || edit.length) && spec.kind !== 't_nut'
+        ? resizeScrew(spec, edit.size ?? spec.size!, edit.length ?? spec.length ?? 0)
+        : spec;
+
+    const rotation = applyRotOffset(seat.rotation, edit?.rotOffset);
+    const axis = socketAxis(rotation);
+    const off = edit?.offset;
     const d = extra * scale;
     out.push({
-      spec,
+      key,
+      spec: finalSpec,
+      role,
       position: [
-        seat.position[0] * scale + axis[0] * d,
-        seat.position[1] * scale + axis[1] * d,
-        seat.position[2] * scale + axis[2] * d,
+        (seat.position[0] + (off?.[0] ?? 0)) * scale + axis[0] * d,
+        (seat.position[1] + (off?.[1] ?? 0)) * scale + axis[1] * d,
+        (seat.position[2] + (off?.[2] ?? 0)) * scale + axis[2] * d,
       ],
-      rotation: seat.rotation,
+      rotation,
       internal,
     });
   };
-  for (let i = 0; i < n; i++) put(kit.bolt, seats[i], 0, false);
+
+  for (let i = 0; i < n; i++) put('bolt', kit.bolt, seats[i], 0, false);
   if (kit.mate) {
     // The T-nut sits in the slot just past the mating plane — the bolt's shaft
     // crosses the plate, so offset it by the plate thickness plus the nut body.
-    for (let i = 0; i < n; i++) put(kit.mate, seats[i], seats[i].plateT + MATE_DEPTH_MM, true);
+    for (let i = 0; i < n; i++) put('mate', kit.mate, seats[i], seats[i].plateT + MATE_DEPTH_MM, true);
+  }
+  for (const e of layout?.extra ?? []) {
+    out.push({
+      key: `extra:${e.id}`,
+      spec: e.spec,
+      role: 'extra',
+      position: [e.position[0] * scale, e.position[1] * scale, e.position[2] * scale],
+      rotation: [e.rotation[0] * DEG, e.rotation[1] * DEG, e.rotation[2] * DEG],
+      internal: e.internal,
+      added: true,
+    });
   }
   return out;
 }
@@ -322,31 +564,112 @@ export interface KitLine {
   qty: number;
 }
 
+const RANK: Record<PartRole, number> = { bolt: 0, mate: 1, extra: 2 };
+
 /**
- * BOM lines for a kit across `jointCount` joints. Shares `perJointCount` with
- * `jointFasteners`, so the listed quantity always equals the number of pieces
- * the renderers draw (times the joint count) — that identity is asserted in
- * accessoryKits.verify.ts.
+ * Group key for a BOM line. NOT the display name alone: once a bolt's spec is
+ * user-editable two distinct specs can end up sharing a name, and merging them
+ * would sum the quantities while taking kind/material from whichever came first
+ * — producing a row that corresponds to nothing actually drawn.
  */
-export function kitSchedule(kit: AccessoryKit | null, jointCount: number, stlUrl?: string | null): KitLine[] {
-  if (!kit) return [];
-  const n = Math.max(0, Math.floor(jointCount));
-  if (n === 0) return [];
-  if (kit.scope === 'frame') {
-    const qty = Math.max(0, Math.floor(kit.perFrame ?? 0));
-    if (qty === 0) return [];
-    const lines: KitLine[] = [{ spec: kit.bolt, qty }];
-    if (kit.mate) lines.push({ spec: kit.mate, qty });
-    return lines;
+function specLineKey(spec: HardwareSpec): string {
+  return `${spec.kind}|${spec.size ?? ''}|${spec.length ?? ''}|${spec.name}`;
+}
+
+/**
+ * Fold fasteners into BOM lines. Line ORDER is part of the contract — bolts,
+ * then mates, then hand-added parts — because accessoryKits.verify.ts indexes
+ * `[0]` as the bolt line to check it against the rendered bolt count. `sort` is
+ * stable, so parts within a role keep their seat order.
+ */
+function linesFrom(parts: LocalFastener[]): KitLine[] {
+  const ordered = [...parts].sort((a, b) => RANK[a.role] - RANK[b.role]);
+  const order: string[] = [];
+  const bag = new Map<string, KitLine>();
+  for (const f of ordered) {
+    const k = specLineKey(f.spec);
+    const line = bag.get(k);
+    if (line) line.qty += 1;
+    else { order.push(k); bag.set(k, { spec: f.spec, qty: 1 }); }
   }
-  const per = perJointCount(kit, stlUrl);
-  if (per === 0) return [];
-  const lines: KitLine[] = [{ spec: kit.bolt, qty: per * n }];
-  if (kit.mate) lines.push({ spec: kit.mate, qty: per * n });
+  return order.map((k) => bag.get(k)!);
+}
+
+/** A frame-scope kit has no per-joint location, so its lines come straight from
+ *  `perFrame` — never from `jointFasteners`, which returns [] for these. */
+function frameLines(kit: AccessoryKit): KitLine[] {
+  const qty = Math.max(0, Math.floor(kit.perFrame ?? 0));
+  if (qty === 0) return [];
+  const lines: KitLine[] = [{ spec: kit.bolt, qty }];
+  if (kit.mate) lines.push({ spec: kit.mate, qty });
   return lines;
 }
 
-/** The kit's hardware, one entry per distinct part (for summaries / previews). */
+/**
+ * BOM lines for a kit across joints whose hole patterns may DIFFER — one entry
+ * per joint. Quantities are counted from `jointFasteners`, the very list the
+ * renderers draw, so "listed === drawn" holds by construction rather than by two
+ * call sites agreeing about `perJointCount`.
+ *
+ * Takes one stlUrl per joint rather than a count plus a representative stlUrl:
+ * given a bare count the BOM resolved the DEFAULT hole pattern while the renderer
+ * used each bracket's own. The counts coincided for the built-in kits so nothing
+ * looked wrong — until a per-part edit made against one pattern got looked up
+ * against another, and the export silently stopped matching the 3D.
+ */
+export function kitScheduleFor(
+  kit: AccessoryKit | null,
+  jointStlUrls: (string | null | undefined)[],
+  layout?: KitLayout | null,
+): KitLine[] {
+  if (!kit) return [];
+  if (kit.scope === 'frame') return frameLines(kit);
+  if (jointStlUrls.length === 0) return [];
+  const parts: LocalFastener[] = [];
+  for (const stlUrl of jointStlUrls) parts.push(...jointFasteners(kit, stlUrl, 1, layout));
+  return linesFrom(parts);
+}
+
+/**
+ * Convenience for "every joint has the same connector" — forwards to
+ * kitScheduleFor. Most callers really do have a uniform count, and this reads
+ * the way it always did.
+ */
+export function kitSchedule(
+  kit: AccessoryKit | null,
+  jointCount: number,
+  stlUrl?: string | null,
+  layout?: KitLayout | null,
+): KitLine[] {
+  if (!kit) return [];
+  const n = Math.max(0, Math.floor(jointCount));
+  if (n === 0) return [];
+  if (kit.scope === 'frame') return frameLines(kit);
+  return kitScheduleFor(kit, new Array<string | null | undefined>(n).fill(stlUrl), layout);
+}
+
+/**
+ * The kit's distinct hardware at ONE joint, with counts, after any overrides —
+ * this is what the property panels list. Counted from `jointFasteners`, so the
+ * listed quantity cannot drift from the drawn one (the panels used to count
+ * matches against `kitParts`, which lists PRESET specs: a size override printed
+ * ×0 and a soft delete printed the old count).
+ */
+export function specSummary(
+  kit: AccessoryKit | null,
+  stlUrl?: string | null,
+  layout?: KitLayout | null,
+): KitLine[] {
+  if (!kit) return [];
+  if (kit.scope === 'frame') return frameLines(kit);
+  return linesFrom(jointFasteners(kit, stlUrl, 1, layout));
+}
+
+/**
+ * The kit's hardware as PRESET — one entry per distinct part, ignoring any
+ * layout. For a card's "M6×18 + T螺母" one-liner or a catalog description. For
+ * anything that must agree with what is drawn or exported use `specSummary`.
+ */
 export function kitParts(kit: AccessoryKit): HardwareSpec[] {
   return kit.mate ? [kit.bolt, kit.mate] : [kit.bolt];
 }
