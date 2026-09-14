@@ -23,6 +23,14 @@ const HomePage: React.FC = () => {
   const loadModelFromApi = useModelStore((s) => s.loadModelFromApi);
 
   useEffect(() => {
+    // Load once per session. HomePage unmounts on every route change, so without
+    // this guard navigating away and back (e.g. to /kits) would re-fetch and have
+    // `loadModelFromApi` replace `brackets` wholesale — discarding manually placed
+    // brackets and changing the count every BOM quantity is derived from.
+    // The Toolbar's template switcher calls loadModelFromApi directly when a
+    // reload IS wanted; `isLoading` also nets StrictMode's double-invoke.
+    const { model, isLoading } = useModelStore.getState();
+    if (model || isLoading) return;
     loadModelFromApi();
   }, [loadModelFromApi]);
 
