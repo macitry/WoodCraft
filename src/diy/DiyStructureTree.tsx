@@ -1,6 +1,7 @@
 import { useMemo, useState } from 'react';
 import { useDiyStore } from '../store/diyStore';
 import type { DiyProfile } from '../types/furniture';
+import { accessoryKitById } from '../utils/accessoryKits';
 
 /**
  * Left-sidebar structure tree for the DIY builder.
@@ -16,6 +17,24 @@ const DiyStructureTree: React.FC = () => {
   const profiles = useDiyStore((s) => s.profiles);
   const selectedProfileId = useDiyStore((s) => s.selectedProfileId);
   const selectProfile = useDiyStore((s) => s.selectProfile);
+  const kitInstances = useDiyStore((s) => s.kitInstances);
+  const selectedKitId = useDiyStore((s) => s.selectedKitId);
+  const selectKit = useDiyStore((s) => s.selectKit);
+  const removeKitInstance = useDiyStore((s) => s.removeKitInstance);
+  const brackets = useDiyStore((s) => s.brackets);
+
+  // 角码-N uses the bracket's index in the append-only array — the same
+  // numbering the user sees nowhere else, which is exactly why it is written
+  // down here rather than derived from the kit.
+  const kitRows = useMemo(() => {
+    const idx = new Map(brackets.map((b, i) => [b.id, i + 1]));
+    return kitInstances.map((k) => ({
+      id: k.id,
+      bracketId: k.bracketId,
+      label: `角码-${idx.get(k.bracketId) ?? '?'}`,
+      name: accessoryKitById(k.kitId)?.name ?? k.kitId,
+    }));
+  }, [kitInstances, brackets]);
 
   // Parent-id → sorted children (by seq), plus the sorted root list.
   const { roots, childrenMap } = useMemo(() => {
@@ -91,6 +110,48 @@ const DiyStructureTree: React.FC = () => {
       ) : (
         <div className="flex-1 min-h-0 overflow-y-auto py-1">
           {roots.map((r) => renderNode(r, 0))}
+        </div>
+      )}
+
+      {/* 组合 — a PARALLEL section, deliberately not folded into the profile
+          hierarchy: a kit belongs to a corner joint, not to a profile. */}
+      {kitRows.length > 0 && (
+        <div className="flex-shrink-0 max-h-56 overflow-y-auto border-t border-neutral-800 py-1">
+          <div className="px-3 py-1 text-[10px] uppercase tracking-wide text-neutral-600">
+            组合
+          </div>
+          {kitRows.map(({ id, bracketId, label, name }) => (
+            <div
+              key={id}
+              data-diy-kit-row={id}
+              className={`flex items-center gap-1 pr-2 py-1 text-sm cursor-pointer transition-colors ${
+                selectedKitId === id
+                  ? 'bg-wood-500/10 text-wood-300 border-r-2 border-wood-500'
+                  : 'text-neutral-400 hover:text-white hover:bg-neutral-800/30'
+              }`}
+              style={{ paddingLeft: 20 }}
+              onClick={() => selectKit(id)}
+              title={name}
+            >
+              <span className="truncate">{label}</span>
+              <span className="text-[10px] text-neutral-600 truncate flex-shrink">
+                {name}
+              </span>
+              <button
+                className="ml-auto flex-shrink-0 text-[11px] text-neutral-600 hover:text-red-400 transition-colors cursor-pointer"
+                title="删除组合"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  removeKitInstance(id);
+                }}
+              >
+                ✕
+              </button>
+              {/* bracketId is the binding target — kept in the DOM so the E2E can
+                  assert the instance still points at a live bracket. */}
+              <span className="hidden" data-diy-kit-bracket={bracketId} />
+            </div>
+          ))}
         </div>
       )}
     </div>

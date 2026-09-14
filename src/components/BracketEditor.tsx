@@ -1,6 +1,14 @@
 import { useState, type FC } from 'react';
 import { useModelStore } from '../store/modelStore';
 import type { BracketInstance } from '../types/furniture';
+import { DEFAULT_BRACKET_STL_URL } from '../types/furniture';
+import {
+  ACCESSORY_KITS,
+  accessoryKitById,
+  kitFitReason,
+  kitSchedule,
+  perJointCount,
+} from '../utils/accessoryKits';
 
 const BracketEditor: FC = () => {
   const brackets = useModelStore((s) => s.brackets);
@@ -42,6 +50,8 @@ const BracketEditor: FC = () => {
         </div>
       </div>
 
+      <AccessoryKitPanel />
+
       <div className="flex-1 overflow-y-auto">
         {brackets.length === 0 && <div className="p-4 text-neutral-600 text-xs text-center">No brackets. Ctrl+Click two faces.</div>}
         {brackets.map((bracket) => (
@@ -58,6 +68,138 @@ const BracketEditor: FC = () => {
           />
         ))}
       </div>
+    </div>
+  );
+};
+
+/** Profile cross-section from the template param ('3030' → 30). */
+function profileSizeOf(profile: string): number {
+  return Number(profile.slice(0, 2)) || 30;
+}
+
+/**
+ * Picks the fastener set applied to every corner joint. The kit is the only
+ * thing stored — the actual hardware is derived from it plus the bracket set,
+ * so the quantities below are what the 3D view and the BOM will both show.
+ */
+const AccessoryKitPanel: FC = () => {
+  const activeKitId = useModelStore((s) => s.activeKitId);
+  const setAccessoryKit = useModelStore((s) => s.setAccessoryKit);
+  const showFasteners = useModelStore((s) => s.showFasteners);
+  const setShowFasteners = useModelStore((s) => s.setShowFasteners);
+  const showInternalFasteners = useModelStore((s) => s.showInternalFasteners);
+  const setShowInternalFasteners = useModelStore((s) => s.setShowInternalFasteners);
+  const brackets = useModelStore((s) => s.brackets);
+  const profile = useModelStore((s) => s.currentParams.profile);
+
+  const profileSize = profileSizeOf(profile);
+  const enabled = brackets.filter((b) => b.enabled);
+  const stlUrl = enabled[0]?.stlUrl || DEFAULT_BRACKET_STL_URL;
+  const kit = accessoryKitById(activeKitId);
+  const perJoint = perJointCount(kit, stlUrl);
+  // Frame-scope kits are budgeted per assembly, so one "joint" stands for the desk.
+  const lines = kitSchedule(kit, kit?.scope === 'frame' ? 1 : enabled.length, stlUrl);
+
+  return (
+    <div className="px-4 py-3 border-b border-neutral-800 bg-neutral-900/60">
+      <div className="flex items-center justify-between">
+        <p className="text-xs uppercase tracking-wider text-neutral-500 font-medium">配件组合</p>
+        {kit && (
+          <span className="text-[10px] text-neutral-500 tabular-nums">
+            {lines.map((l) => `×${l.qty}`).join(' + ') || '—'}
+          </span>
+        )}
+      </div>
+
+      <div className="grid grid-cols-2 gap-1 mt-2">
+        <button
+          data-kit="__none__"
+          onClick={() => setAccessoryKit(null)}
+          title="不使用配件组合"
+          className={`px-2 py-1.5 text-left text-[10px] rounded border transition-colors cursor-pointer ${
+            activeKitId === null
+              ? 'border-wood-600 bg-wood-500/15 text-wood-200'
+              : 'border-neutral-700 text-neutral-400 hover:border-neutral-600'
+          }`}
+        >
+          <span className="block font-medium">无</span>
+          <span className="block text-neutral-600 mt-0.5">不统计紧固件</span>
+        </button>
+
+        {ACCESSORY_KITS.map((k) => {
+          const fit = kitFitReason(k, profileSize);
+          const on = activeKitId === k.id;
+          return (
+            <button
+              key={k.id}
+              data-kit={k.id}
+              disabled={fit !== null}
+              onClick={() => setAccessoryKit(on ? null : k.id)}
+              title={fit ?? k.desc}
+              className={`px-2 py-1.5 text-left text-[10px] rounded border transition-colors ${
+                fit !== null
+                  ? 'border-neutral-800 text-neutral-600 cursor-not-allowed'
+                  : on
+                    ? 'border-wood-600 bg-wood-500/15 text-wood-200 cursor-pointer'
+                    : 'border-neutral-700 text-neutral-400 hover:border-neutral-600 cursor-pointer'
+              }`}
+            >
+              <span className="block font-medium">{k.name}</span>
+              <span className="block text-neutral-600 mt-0.5 leading-tight">
+                {fit ?? (k.scope === 'frame' ? `每桌板 ${k.perFrame} 颗` : `每处 ${k.boltsPerJoint} 颗`)}
+              </span>
+            </button>
+          );
+        })}
+      </div>
+
+      {kit && (
+        <div className="mt-2 space-y-1">
+          <p className="text-[10px] text-neutral-500 leading-snug">
+            {kit.scope === 'frame'
+              ? `${kit.bolt.name} · 清单与工序专用，不在 3D 中显示`
+              : `每处角码 ${perJoint} 颗 ${kit.bolt.name}${
+                  kit.mate ? ` + ${perJoint} 颗 ${kit.mate.name}` : ''
+                }${enabled.length > 0 ? ` · 共 ${enabled.length} 处` : ''}`}
+          </p>
+          {kit.scope === 'joint' && enabled.length === 0 && (
+            <p className="text-[10px] text-amber-500/80">
+              当前没有启用的角码 —— 紧固件也无处可放。
+            </p>
+          )}
+          {kit.ops.map((op) => (
+            <p key={op} className="text-[10px] text-amber-500/80">⚙ {op}</p>
+          ))}
+          {kit.scope === 'joint' && (
+            <div className="flex flex-wrap gap-x-3 gap-y-1 pt-0.5">
+              <label className="flex items-center gap-1 text-[10px] text-neutral-400 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={showFasteners}
+                  onChange={(e) => setShowFasteners(e.target.checked)}
+                  className="accent-wood-600"
+                />
+                显示紧固件
+              </label>
+              <label
+                className={`flex items-center gap-1 text-[10px] cursor-pointer ${
+                  showFasteners ? 'text-neutral-400' : 'text-neutral-700'
+                }`}
+                title="半透明显示压入型材槽内的 T 型螺母"
+              >
+                <input
+                  type="checkbox"
+                  checked={showInternalFasteners}
+                  disabled={!showFasteners}
+                  onChange={(e) => setShowInternalFasteners(e.target.checked)}
+                  className="accent-wood-600"
+                />
+                槽内螺母（透视）
+              </label>
+            </div>
+          )}
+        </div>
+      )}
     </div>
   );
 };

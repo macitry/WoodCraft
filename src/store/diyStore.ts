@@ -12,9 +12,11 @@ import type {
   AxisDir,
   FaceDir,
   BracketFacePick,
+  DiyKitInstance,
 } from '../types/furniture';
 import { PROFILE_DIMS, SCREW_DEFAULT_LENGTH } from '../types/furniture';
 import { jointFitInfo, cornerBracketFits } from '../diy/diyJointGeometry';
+import { accessoryKitById } from '../utils/accessoryKits';
 
 let _nextId = 1;
 function uid(): string {
@@ -144,6 +146,27 @@ interface DiyState {
   editingBracketId: string | null;
   openBracketEditor: (id: string) => void;
 
+  // ---- Accessory kits (配件组合) ----
+  /** Kits bound to joints. Hardware is derived, never stored per screw. */
+  kitInstances: DiyKitInstance[];
+  selectedKitId: string | null;
+  /** Draw the kit bolts. */
+  showKitFasteners: boolean;
+  /** X-ray the T-nuts sitting inside the profile slots. */
+  showKitNuts: boolean;
+  /** Bind a kit to an ALREADY-PLACED bracket. Never places a bracket itself —
+   *  DiyViewer orients and places first, then binds. False if the kit id is
+   *  unknown or the bracket does not exist.
+   *
+   *  At most ONE kit per bracket: a joint's seats are fixed, so a second kit
+   *  would fill holes the first already fills. Binding a different kit to the
+   *  same bracket replaces the previous one. */
+  bindKit: (kitId: string, bracketId: string) => boolean;
+  removeKitInstance: (id: string) => void;
+  selectKit: (id: string | null) => void;
+  setShowKitFasteners: (v: boolean) => void;
+  setShowKitNuts: (v: boolean) => void;
+
   // Bulk
   getProfilesByParent: (parentId: string) => DiyProfile[];
   getDescendantIds: (profileId: string) => string[];
@@ -250,19 +273,27 @@ export const useDiyStore = create<DiyState>((set, get) => ({
   removeProfile: (id) => {
     const descendants = get().getDescendantIds(id);
     const allToRemove = new Set([id, ...descendants]);
-    // Also remove brackets referencing removed profiles, and screws mounted on them
+    // Also remove brackets referencing removed profiles — and, with them, any
+    // accessory kit bound to one of those brackets (a kit without its bracket
+    // would be orphaned hardware with nowhere to sit).
+    const doomedBrackets = new Set(
+      get().brackets.filter((b) => b.connectedProfiles.some((pid) => allToRemove.has(pid))).map((b) => b.id),
+    );
+    const doomedKits = new Set(
+      get().kitInstances.filter((k) => doomedBrackets.has(k.bracketId)).map((k) => k.id),
+    );
     set((s) => ({
       profiles: s.profiles.filter((p) => !allToRemove.has(p.id)),
-      brackets: s.brackets.filter(
-        (b) => !b.connectedProfiles.some((pid) => allToRemove.has(pid)),
-      ),
+      brackets: s.brackets.filter((b) => !doomedBrackets.has(b.id)),
       screws: s.screws.filter((sc) => !allToRemove.has(sc.profileId)),
+      kitInstances: s.kitInstances.filter((k) => !doomedKits.has(k.id)),
+      selectedKitId: s.selectedKitId && doomedKits.has(s.selectedKitId) ? null : s.selectedKitId,
       selectedProfileId: s.selectedProfileId && allToRemove.has(s.selectedProfileId) ? null : s.selectedProfileId,
       selectedScrewId: s.selectedScrewId && s.screws.some((sc) => sc.id === s.selectedScrewId && allToRemove.has(sc.profileId)) ? null : s.selectedScrewId,
     }));
   },
 
-  selectProfile: (id) => set({ selectedProfileId: id, selectedBracketId: null, selectedScrewId: null }),
+  selectProfile: (id) => set({ selectedProfileId: id, selectedBracketId: null, selectedScrewId: null, selectedKitId: null }),
 
   setStretchProfile: (id, end) =>
     set({ stretchProfileId: id, stretchEnd: end, mode: id ? 'stretching' : 'idle' }),
@@ -387,9 +418,10 @@ export const useDiyStore = create<DiyState>((set, get) => ({
     set((s) => ({
       brackets: [...s.brackets, bracket],
       selectedBracketId: bracket.id,
-      // Mutual selection: placing a bracket deselects any profile/screw.
+      // Mutual selection: placing a bracket deselects any profile/screw/kit.
       selectedProfileId: null,
       selectedScrewId: null,
+      selectedKitId: null,
       isDraggingBracket: false,
       ghostBracket: null,
       autoRefBracket: null,
@@ -549,13 +581,80 @@ export const useDiyStore = create<DiyState>((set, get) => ({
   removeBracket: (id) =>
     set((s) => ({
       brackets: s.brackets.filter((b) => b.id !== id),
+      // A kit bound to this bracket loses its seat — drop it too, never leave
+      // fasteners floating with no joint to sit in.
+      kitInstances: s.kitInstances.filter((k) => k.bracketId !== id),
       selectedBracketId: s.selectedBracketId === id ? null : s.selectedBracketId,
+      selectedKitId:
+        s.selectedKitId && s.kitInstances.some((k) => k.id === s.selectedKitId && k.bracketId === id)
+          ? null
+          : s.selectedKitId,
     })),
 
-  selectBracket: (id) => set({ selectedBracketId: id, selectedProfileId: null, selectedScrewId: null }),
+  selectBracket: (id) => set({ selectedBracketId: id, selectedProfileId: null, selectedScrewId: null, selectedKitId: null }),
 
   editingBracketId: null,
   openBracketEditor: (id) => set({ editingBracketId: id }),
+
+  // ---- Accessory kits ----
+  kitInstances: [],
+  selectedKitId: null,
+  showKitFasteners: true,
+  showKitNuts: false,
+
+  bindKit: (kitId, bracketId) => {
+    // A kit is only meaningful on a real corner joint: its fasteners are seated
+    // in the bracket's local frame, so the bracket must already exist and be
+    // oriented. DiyViewer places the bracket (through the backend rotation
+    // solve) first and then binds — this action never places anything itself,
+    // which is what keeps an unrotated fallback bracket from ever carrying
+    // hardware in a meaningless pose.
+    if (!accessoryKitById(kitId)) return false;
+    if (!get().brackets.some((b) => b.id === bracketId)) return false;
+    const existing = get().kitInstances.find((k) => k.bracketId === bracketId);
+    if (existing && existing.kitId === kitId) {
+      // Already bound — just surface it rather than stacking duplicates.
+      set({ selectedKitId: existing.id, selectedProfileId: null, selectedBracketId: null, selectedScrewId: null });
+      return true;
+    }
+    if (existing) {
+      // ONE KIT PER JOINT. A bracket has a fixed set of seats, so a second kit
+      // would drive its bolts into holes the first kit already fills. Binding a
+      // different kit to the same bracket therefore REPLACES the old one
+      // (keeping the instance id so the tree row and selection survive).
+      const swapped: DiyKitInstance = { ...existing, kitId };
+      set((s) => ({
+        kitInstances: s.kitInstances.map((k) => (k.id === existing.id ? swapped : k)),
+        selectedKitId: swapped.id,
+        selectedProfileId: null,
+        selectedBracketId: null,
+        selectedScrewId: null,
+      }));
+      return true;
+    }
+    const instance: DiyKitInstance = { id: uid(), kitId, bracketId, enabled: true };
+    set((s) => ({
+      kitInstances: [...s.kitInstances, instance],
+      // Selecting the new kit deselects the bracket it sits on, so only one
+      // property panel is ever open.
+      selectedKitId: instance.id,
+      selectedProfileId: null,
+      selectedBracketId: null,
+      selectedScrewId: null,
+    }));
+    return true;
+  },
+
+  removeKitInstance: (id) =>
+    set((s) => ({
+      kitInstances: s.kitInstances.filter((k) => k.id !== id),
+      selectedKitId: s.selectedKitId === id ? null : s.selectedKitId,
+    })),
+
+  selectKit: (id) => set({ selectedKitId: id, selectedProfileId: null, selectedBracketId: null, selectedScrewId: null }),
+
+  setShowKitFasteners: (v) => set({ showKitFasteners: v }),
+  setShowKitNuts: (v) => set({ showKitNuts: v }),
 
   // ---- Screw drag-and-drop ----
   isDraggingScrew: false,
@@ -592,7 +691,13 @@ export const useDiyStore = create<DiyState>((set, get) => ({
 
   // Screws CRUD
   addScrew: (s) =>
-    set((st) => ({ screws: [...st.screws, s], selectedScrewId: s.id })),
+    set((st) => ({
+      screws: [...st.screws, s],
+      selectedScrewId: s.id,
+      selectedProfileId: null,
+      selectedBracketId: null,
+      selectedKitId: null,
+    })),
 
   updateScrew: (id, patch) =>
     set((st) => ({
@@ -606,7 +711,7 @@ export const useDiyStore = create<DiyState>((set, get) => ({
     })),
 
   selectScrew: (id) =>
-    set({ selectedScrewId: id, selectedProfileId: null, selectedBracketId: null }),
+    set({ selectedScrewId: id, selectedProfileId: null, selectedBracketId: null, selectedKitId: null }),
 
   getProfilesByParent: (parentId) =>
     get().profiles.filter((p) => p.parentId === parentId),

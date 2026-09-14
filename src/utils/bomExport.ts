@@ -6,6 +6,8 @@
  */
 
 import type { FurnitureModel } from '../types/furniture';
+import type { AccessoryKit, HardwareKind } from './accessoryKits';
+import { kitSchedule } from './accessoryKits';
 
 export interface BomRow {
   part: string;
@@ -14,6 +16,8 @@ export interface BomRow {
   profile: string;
   lengthMm: number;
   qty: number;
+  /** Free-text remark — which kit a fastener belongs to, or a fitting note. */
+  note?: string;
 }
 
 /** Frontend layout params that shape the BOM (mirrors currentParams). */
@@ -37,6 +41,8 @@ export function computeBom(
   model: FurnitureModel,
   params: BomParams,
   bracketCount: number,
+  /** Accessory kit applied to every joint. Omit / null for no hardware rows. */
+  kit?: AccessoryKit | null,
 ): BomRow[] {
   const w = getParam(model, 'width', 1200);
   const d = getParam(model, 'depth', 600);
@@ -120,24 +126,78 @@ export function computeBom(
     });
   }
 
-  return rows.filter((r) => r.lengthMm > 0 || r.type === 'tabletop' || r.type === 'bracket');
+  // Accessory-kit hardware — same source as the 3D fasteners, so the listed
+  // count is exactly what is drawn. Frame-scope kits are budgeted per desk.
+  for (const line of kitSchedule(kit ?? null, kit?.scope === 'frame' ? 1 : bracketCount)) {
+    rows.push({
+      part: line.spec.name,
+      type: 'hardware',
+      material: HARDWARE_MATERIAL[line.spec.kind],
+      profile: line.spec.size ?? '-',
+      lengthMm: line.spec.length ?? 0,
+      qty: line.qty,
+      note: kit?.name,
+    });
+  }
+
+  return rows.filter(keepsInExport);
+}
+
+/** Row types that are legitimately counted rather than measured (length 0). */
+const COUNTED_TYPES = new Set(['tabletop', 'bracket', 'hardware']);
+
+/** Length-less rows survive the export only when they are countable parts —
+ *  a zero-length row of any other type means the geometry degenerate. */
+function keepsInExport(r: BomRow): boolean {
+  return r.lengthMm > 0 || COUNTED_TYPES.has(r.type);
+}
+
+const HARDWARE_MATERIAL: Record<HardwareKind, string> = {
+  socket_screw: 'steel',
+  t_nut: 'brass',
+  wood_screw: 'steel',
+};
+
+/** Machining lines a kit calls for. Deduped, order-stable. */
+export function bomOpsFrom(kits: (AccessoryKit | null | undefined)[]): string[] {
+  const out: string[] = [];
+  for (const kit of kits) {
+    if (!kit) continue;
+    for (const op of kit.ops) if (!out.includes(op)) out.push(op);
+  }
+  return out;
 }
 
 /**
  * Generate CSV string from BOM rows.
+ *
+ * The first six columns are byte-stable — every existing consumer keys off
+ * 数量 at index 5. The 备注 column is appended ONLY when some row actually has
+ * a remark, so a plain desk's CSV is unchanged. Ops go in a trailing comment
+ * block after a blank line, which CSV readers treat as a short row.
  */
-export function bomToCsv(rows: BomRow[]): string {
-  const header = '零件名称,类型,材料,型材型号,长度(mm),数量';
-  const body = rows.map((r) =>
-    `${r.part},${r.type},${r.material},${r.profile},${r.lengthMm || '-'},${r.qty}`,
-  );
-  return [header, ...body].join('\n');
+export function bomToCsv(rows: BomRow[], ops: string[] = []): string {
+  const hasNotes = rows.some((r) => r.note);
+  const header = hasNotes
+    ? '零件名称,类型,材料,型材型号,长度(mm),数量,备注'
+    : '零件名称,类型,材料,型材型号,长度(mm),数量';
+  const body = rows.map((r) => {
+    const base = `${r.part},${r.type},${r.material},${r.profile},${r.lengthMm || '-'},${r.qty}`;
+    return hasNotes ? `${base},${r.note ?? ''}` : base;
+  });
+  const lines = [header, ...body];
+  if (ops.length > 0) {
+    lines.push('');
+    lines.push('# 加工要求');
+    for (const op of ops) lines.push(`# ${op}`);
+  }
+  return lines.join('\n');
 }
 
 /**
  * Generate a human-readable text summary.
  */
-export function bomToText(rows: BomRow[]): string {
+export function bomToText(rows: BomRow[], ops: string[] = []): string {
   const total = rows.reduce((s, r) => s + r.qty, 0);
   let out = `WoodCraft BOM — ${new Date().toLocaleDateString()}\n`;
   out += '══════════════════════════════════════\n\n';
@@ -147,6 +207,10 @@ export function bomToText(rows: BomRow[]): string {
   }
   out += `\n──────────────────────────────────────\n`;
   out += `  Total parts: ${total}\n`;
+  if (ops.length > 0) {
+    out += `\n加工要求\n`;
+    for (const op of ops) out += `  · ${op}\n`;
+  }
   return out;
 }
 

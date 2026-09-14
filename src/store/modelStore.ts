@@ -15,6 +15,7 @@ import type {
 import { TEMPLATE_BACKEND_ID, TEMPLATE_LAYOUTS } from '../types/furniture';
 import { nextHoleId } from '../utils/holeGeometry';
 import { reflowAnchoredHoles, reanchorFromCoord } from '../utils/holeTemplates';
+import { accessoryKitById } from '../utils/accessoryKits';
 import type { DxfTabletopShape } from '../utils/dxfImport';
 import { generateModel, fetchDefaultModel, fetchProgress } from '../api/modelApi';
 import type { ServerProgress } from '../api/modelApi';
@@ -189,6 +190,16 @@ interface ModelState {
   defaultBracketCount: number; // how many were auto-generated (locked)
   placementMode: boolean; // when true, clicking 3D view places bracket at hit point
 
+  // Accessory kit — the fastener set every corner joint is built with. The
+  // fasteners themselves are NOT stored: they are derived from `brackets` +
+  // `activeKitId` (see utils/accessoryKits), so they follow the geometry for
+  // free and never need migrating when brackets are regenerated.
+  activeKitId: string | null;
+  /** Draw the bolts at each joint. */
+  showFasteners: boolean;
+  /** X-ray the T-nuts inside the profile slots (off by default). */
+  showInternalFasteners: boolean;
+
   // Mate (SolidWorks-style assembly)
   mateState: MateState;
   /** ID of the bracket being mated. */
@@ -234,6 +245,10 @@ interface ModelState {
   removeBracket: (id: string) => void;
   selectBracket: (id: string | null) => void;
   togglePlacementMode: () => void;
+  /** Choose the fastener kit applied to every corner joint (null = 无). */
+  setAccessoryKit: (kitId: string | null) => void;
+  setShowFasteners: (v: boolean) => void;
+  setShowInternalFasteners: (v: boolean) => void;
   // Mate actions
   startMate: (bracketId: string) => void;
   cancelMate: () => void;
@@ -299,6 +314,9 @@ export const useModelStore = create<ModelState>((set, get) => ({
   selectedBracketId: null,
   defaultBracketCount: 0,
   placementMode: false,
+  activeKitId: null,
+  showFasteners: true,
+  showInternalFasteners: false,
   currentParams: {
     templateId: 'basic-desk',
     width: 1200,
@@ -647,6 +665,13 @@ export const useModelStore = create<ModelState>((set, get) => ({
   selectBracket: (id: string | null) => set({ selectedBracketId: id }),
 
   togglePlacementMode: () => set((s) => ({ placementMode: !s.placementMode })),
+
+  // ---- Accessory kit ----
+  // Selecting a kit is the ONLY thing stored; the fasteners are derived, so a
+  // geometry change cannot leave stale hardware behind.
+  setAccessoryKit: (kitId) => set({ activeKitId: accessoryKitById(kitId) ? kitId : null }),
+  setShowFasteners: (v) => set({ showFasteners: v }),
+  setShowInternalFasteners: (v) => set({ showInternalFasteners: v }),
 
   // ---- Mate workflow ----
   mateState: 'idle',

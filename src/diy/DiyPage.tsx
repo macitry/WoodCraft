@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import DiyViewer from './DiyViewer';
 import DiyProfileLibrary from '../components/DiyProfileLibrary';
@@ -7,6 +7,9 @@ import DiyStructureTree from './DiyStructureTree';
 import BracketEditModal from './BracketEditModal';
 import { useDiyStore } from '../store/diyStore';
 import { useModelStore } from '../store/modelStore';
+import { bomToCsv, bomToText } from '../utils/bomExport';
+import { computeDiyBom, diyOps, diyBomName } from '../utils/diyBom';
+import { downloadFile } from '../utils/download';
 
 const LEFT_W_KEY = 'diy.leftW';
 const LEFT_W_DEFAULT = 300;
@@ -99,9 +102,7 @@ const DiyPage: React.FC = () => {
         >
           角码 · 两面对齐
         </button>
-        <button className="px-3 py-1 text-xs rounded bg-neutral-800 text-neutral-400 hover:text-white transition-colors cursor-pointer">
-          Save
-        </button>
+        <DiyExportButton />
       </div>
 
       {/* Main Content */}
@@ -160,6 +161,76 @@ const DiyPage: React.FC = () => {
         </aside>
       </div>
       <BracketEditModal />
+    </div>
+  );
+};
+
+/**
+ * DIY parts-list export. Replaces the old dead "Save" button, which had no
+ * handler at all — the free-form builder's one real export gap.
+ *
+ * Rows come from computeDiyBom and are written by the SAME csv/text writers the
+ * main configurator uses, so the two modes' files have identical columns and a
+ * trailing 加工要求 block.
+ */
+const DiyExportButton: React.FC = () => {
+  const profiles = useDiyStore((s) => s.profiles);
+  const brackets = useDiyStore((s) => s.brackets);
+  const screws = useDiyStore((s) => s.screws);
+  const kitInstances = useDiyStore((s) => s.kitInstances);
+  const [open, setOpen] = useState(false);
+
+  const rows = useMemo(
+    () => computeDiyBom(profiles, brackets, screws, kitInstances),
+    [profiles, brackets, screws, kitInstances],
+  );
+  const ops = useMemo(() => diyOps(kitInstances), [kitInstances]);
+
+  const run = (kind: 'csv' | 'txt') => {
+    const stem = diyBomName();
+    if (kind === 'csv') {
+      // U+FEFF so Excel reads the Chinese headers as UTF-8 (same as the main
+      // configurator's export).
+      downloadFile(`${stem}.csv`, `﻿${bomToCsv(rows, ops)}`, 'text/csv;charset=utf-8');
+    } else {
+      downloadFile(`${stem}.txt`, bomToText(rows, ops), 'text/plain;charset=utf-8');
+    }
+    setOpen(false);
+  };
+
+  return (
+    <div className="relative">
+      <button
+        onClick={() => setOpen((v) => !v)}
+        disabled={rows.length === 0}
+        className={`px-3 py-1 text-xs rounded transition-colors ${
+          rows.length === 0
+            ? 'bg-neutral-900 text-neutral-600 cursor-not-allowed'
+            : 'bg-neutral-800 text-neutral-400 hover:text-white cursor-pointer'
+        }`}
+        title={rows.length === 0 ? '暂无零件可导出' : `共 ${rows.length} 行`}
+      >
+        导出 BOM
+      </button>
+      {open && rows.length > 0 && (
+        <>
+          <div className="fixed inset-0 z-40" onClick={() => setOpen(false)} />
+          <div className="absolute right-0 top-full mt-1 z-50 w-40 py-1 rounded-md border border-neutral-700 bg-neutral-900 shadow-xl">
+            <button
+              onClick={() => run('csv')}
+              className="w-full px-3 py-1.5 text-left text-xs text-neutral-300 hover:bg-neutral-800 transition-colors cursor-pointer"
+            >
+              CSV（含加工要求）
+            </button>
+            <button
+              onClick={() => run('txt')}
+              className="w-full px-3 py-1.5 text-left text-xs text-neutral-300 hover:bg-neutral-800 transition-colors cursor-pointer"
+            >
+              文本清单
+            </button>
+          </div>
+        </>
+      )}
     </div>
   );
 };

@@ -1,7 +1,8 @@
 import { useEffect, useMemo, type FC } from 'react';
 import { useModelStore } from '../store/modelStore';
-import { computeBom, bomToCsv, type BomRow } from '../utils/bomExport';
+import { computeBom, bomToCsv, bomOpsFrom, type BomRow } from '../utils/bomExport';
 import { TEMPLATE_LAYOUTS } from '../types/furniture';
+import { accessoryKitById } from '../utils/accessoryKits';
 
 interface BomPreviewModalProps {
   onClose: () => void;
@@ -16,6 +17,8 @@ const BomPreviewModal: FC<BomPreviewModalProps> = ({ onClose }) => {
   const model = useModelStore((s) => s.model);
   const currentParams = useModelStore((s) => s.currentParams);
   const brackets = useModelStore((s) => s.brackets);
+  const activeKitId = useModelStore((s) => s.activeKitId);
+  const kit = accessoryKitById(activeKitId);
 
   // Close on Escape
   useEffect(() => {
@@ -39,8 +42,11 @@ const BomPreviewModal: FC<BomPreviewModalProps> = ({ onClose }) => {
         crossBeamOrientation: layout?.crossBeamOrientation ?? 'front_back',
       },
       brackets.filter((b) => b.enabled).length,
+      kit,
     );
-  }, [model, currentParams, brackets]);
+  }, [model, currentParams, brackets, kit]);
+
+  const ops = useMemo(() => bomOpsFrom([kit]), [kit]);
 
   if (!model) return null;
 
@@ -48,7 +54,7 @@ const BomPreviewModal: FC<BomPreviewModalProps> = ({ onClose }) => {
   const dims = `${model.parameters.find((p) => p.id === 'width')?.value ?? 1200} × ${model.parameters.find((p) => p.id === 'depth')?.value ?? 600} mm`;
 
   const handleExport = () => {
-    const csv = bomToCsv(rows);
+    const csv = bomToCsv(rows, ops);
     const blob = new Blob([`﻿${csv}`], { type: 'text/csv;charset=utf-8' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
@@ -99,8 +105,10 @@ const BomPreviewModal: FC<BomPreviewModalProps> = ({ onClose }) => {
               </tr>
             </thead>
             <tbody>
-              {rows.map((r) => (
-                <tr key={r.type} className="border-b border-neutral-800/40">
+              {rows.map((r, i) => (
+                // Keyed by part too: a kit puts two rows of the same type in the
+                // table (bolt + nut), so type alone collides.
+                <tr key={`${r.type}-${r.part}-${i}`} className="border-b border-neutral-800/40">
                   <td className="py-2 pr-2 text-neutral-200">{r.part}</td>
                   <td className="py-2 pr-2 text-neutral-400">{r.material}</td>
                   <td className="py-2 pr-2 text-neutral-400">{r.profile}</td>
@@ -112,6 +120,17 @@ const BomPreviewModal: FC<BomPreviewModalProps> = ({ onClose }) => {
               ))}
             </tbody>
           </table>
+
+          {ops.length > 0 && (
+            <div className="mt-4 pt-3 border-t border-neutral-800">
+              <p className="text-[10px] uppercase tracking-wider text-neutral-500 font-medium">加工要求</p>
+              <ul className="mt-1 space-y-0.5">
+                {ops.map((op) => (
+                  <li key={op} className="text-[11px] text-amber-500/90">⚙ {op}</li>
+                ))}
+              </ul>
+            </div>
+          )}
         </div>
 
         {/* Footer */}

@@ -81,7 +81,7 @@ const HomePage: React.FC = () => {
                   <MaterialSelector />
                 </div>
               </div>
-              <div className="border-t border-neutral-800 max-h-80 overflow-y-auto">
+              <div className="border-t border-neutral-800 max-h-[30rem] overflow-y-auto">
                 <BracketEditor />
               </div>
             </>

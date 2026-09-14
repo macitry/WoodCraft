@@ -3,21 +3,26 @@ import { useDiyStore } from '../store/diyStore';
 import { PROFILE_DIMS, SCREW_HEAD_DIMS, SCREW_DEFAULT_LENGTH } from '../types/furniture';
 import type { DiyBracket, DiyProfile, DiyScrew, ScrewSize } from '../types/furniture';
 import { CONNECTORS, connectorById } from './connectors';
+import { accessoryKitById, jointFasteners, kitParts } from '../utils/accessoryKits';
+import type { DiyKitInstance } from '../types/furniture';
 
 /** Right-side property panel for DIY: shows selected profile or bracket details. */
 const DiyPropertyPanel: React.FC = () => {
   const selectedProfileId = useDiyStore((s) => s.selectedProfileId);
   const selectedBracketId = useDiyStore((s) => s.selectedBracketId);
   const selectedScrewId = useDiyStore((s) => s.selectedScrewId);
+  const selectedKitId = useDiyStore((s) => s.selectedKitId);
   const profiles = useDiyStore((s) => s.profiles);
   const brackets = useDiyStore((s) => s.brackets);
   const screws = useDiyStore((s) => s.screws);
+  const kitInstances = useDiyStore((s) => s.kitInstances);
   const mode = useDiyStore((s) => s.mode);
   const setMode = useDiyStore((s) => s.setMode);
 
   const profile = profiles.find((p) => p.id === selectedProfileId);
   const bracket = brackets.find((b) => b.id === selectedBracketId);
   const screw = screws.find((s) => s.id === selectedScrewId);
+  const kit = kitInstances.find((k) => k.id === selectedKitId);
 
   return (
     <div className="flex flex-col h-full">
@@ -28,7 +33,7 @@ const DiyPropertyPanel: React.FC = () => {
       </div>
 
       <div className="flex-1 overflow-y-auto p-4">
-        {!profile && !bracket && !screw && (
+        {!profile && !bracket && !screw && !kit && (
           <div className="text-neutral-600 text-xs">
             <p className="mb-3">Click a profile, bracket or screw to edit.</p>
             <p className="mb-1">Mode: <span className="text-neutral-400">{mode}</span></p>
@@ -53,7 +58,98 @@ const DiyPropertyPanel: React.FC = () => {
 
         {/* Screw properties */}
         {screw && <ScrewProps screw={screw} />}
+
+        {/* Accessory-kit properties */}
+        {kit && <KitProps instance={kit} />}
       </div>
+    </div>
+  );
+};
+
+/**
+ * Accessory-kit editor.
+ *
+ * Read-only by design: a kit is a binding record, so there is no per-screw
+ * editing and no quantity field — the listed hardware is DERIVED from the
+ * bracket's connector (see jointFasteners), which is what keeps the count here,
+ * the count drawn in 3D and the count in the BOM in agreement. The only
+ * mutations are the display toggles and deleting the whole kit.
+ */
+const KitProps: React.FC<{ instance: DiyKitInstance }> = ({ instance }) => {
+  const removeKitInstance = useDiyStore((s) => s.removeKitInstance);
+  const showFasteners = useDiyStore((s) => s.showKitFasteners);
+  const showNuts = useDiyStore((s) => s.showKitNuts);
+  const setShowFasteners = useDiyStore((s) => s.setShowKitFasteners);
+  const setShowNuts = useDiyStore((s) => s.setShowKitNuts);
+  const bracket = useDiyStore((s) => s.brackets.find((b) => b.id === instance.bracketId));
+
+  const kit = accessoryKitById(instance.kitId);
+  if (!kit) return <div className="text-xs text-neutral-500">未知组合：{instance.kitId}</div>;
+
+  const cc = connectorById(bracket?.connectorId);
+  const fasteners = jointFasteners(kit, cc.stlUrl, bracket ? bracket.size / cc.extMm : 1);
+  const drawn = fasteners.filter((f) => !f.internal);
+  const internal = fasteners.filter((f) => f.internal);
+
+  return (
+    <div className="space-y-3" data-diy-kit-panel={instance.id}>
+      <Section label="配件组合">
+        <Row label="组合">{kit.name}</Row>
+        <Row label="作用域">{kit.scope === 'frame' ? '整桌' : '每处角码'}</Row>
+        <Row label="约束">≥ {kit.minProfileSize}mm 型材</Row>
+      </Section>
+
+      <Section label="派生零件">
+        {kitParts(kit).map((p) => (
+          <Row key={p.name} label={p.name}>
+            ×{kit.scope === 'frame' ? kit.perFrame ?? 0 : fasteners.filter((f) => f.spec.name === p.name).length}
+          </Row>
+        ))}
+        <p className="text-[10px] text-neutral-600 pt-1">
+          数量由角码孔位自动得出，不单独编辑
+        </p>
+      </Section>
+
+      {kit.ops.length > 0 && (
+        <Section label="加工要求">
+          <ul className="text-[11px] text-amber-500/90 space-y-0.5">
+            {kit.ops.map((op) => (
+              <li key={op}>· {op}</li>
+            ))}
+          </ul>
+        </Section>
+      )}
+
+      <div className="flex items-center gap-3 text-xs">
+        <label className="flex items-center gap-1.5 cursor-pointer">
+          <input
+            type="checkbox"
+            className="accent-wood-500"
+            checked={showFasteners}
+            onChange={(e) => setShowFasteners(e.target.checked)}
+          />
+          <span className="text-neutral-400">显示紧固件（{drawn.length}）</span>
+        </label>
+      </div>
+      <div className="flex items-center gap-3 text-xs">
+        <label className="flex items-center gap-1.5 cursor-pointer">
+          <input
+            type="checkbox"
+            className="accent-wood-500"
+            checked={showNuts}
+            onChange={(e) => setShowNuts(e.target.checked)}
+          />
+          <span className="text-neutral-400">槽内螺母透视（{internal.length}）</span>
+        </label>
+      </div>
+
+      <button
+        onClick={() => removeKitInstance(instance.id)}
+        className="w-full px-3 py-1.5 rounded text-xs border border-red-900/60 text-red-400
+          hover:bg-red-900/20 transition-colors cursor-pointer"
+      >
+        删除组合
+      </button>
     </div>
   );
 };

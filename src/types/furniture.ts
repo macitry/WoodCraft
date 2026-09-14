@@ -277,6 +277,23 @@ export interface DiyBracket {
   size: number;
 }
 
+/**
+ * An accessory kit dropped onto a DIY joint.
+ *
+ * A BINDING RECORD, not a bag of parts: it names the kit and the bracket it
+ * belongs to, and every fastener is derived from that pair (see
+ * utils/accessoryKits). There is deliberately no per-screw array to edit — the
+ * kit is added and removed as a unit, and its hardware follows the bracket.
+ */
+export interface DiyKitInstance {
+  id: string;
+  /** Accessory kit id (see ACCESSORY_KITS). */
+  kitId: string;
+  /** The bracket whose local frame the fasteners are nested in. */
+  bracketId: string;
+  enabled: boolean;
+}
+
 /** Socket-head screw sizes offered in the DIY library. */
 export type ScrewSize = 'M4' | 'M5' | 'M6';
 

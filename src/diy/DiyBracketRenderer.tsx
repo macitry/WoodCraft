@@ -1,9 +1,10 @@
-import { Suspense, useEffect } from 'react';
+import { Suspense, useEffect, useMemo } from 'react';
 import * as THREE from 'three';
 import { useDiyStore } from '../store/diyStore';
 import { ConnectorStl } from './DiyBracketStl';
 import { connectorById } from './connectors';
 import type { DiyConnector } from './connectors';
+import KitGroup from './DiyKitRenderer';
 
 const M = 0.001;
 
@@ -52,6 +53,17 @@ const DiyBracketRenderer: React.FC = () => {
   const selectedBracketId = useDiyStore((s) => s.selectedBracketId);
   const selectBracket = useDiyStore((s) => s.selectBracket);
   const autoRefBracket = useDiyStore((s) => s.autoRefBracket);
+  const kitInstances = useDiyStore((s) => s.kitInstances);
+
+  // bracket id → the accessory kit bound to it. Single-valued by construction:
+  // bindKit enforces one kit per bracket (a joint's seats are shared, so two
+  // kits would bolt the same holes twice). Rendered INSIDE that bracket's
+  // anchor group so the hardware inherits the bracket's transform verbatim.
+  const kitByBracket = useMemo(() => {
+    const m = new Map<string, string>();
+    for (const k of kitInstances) if (k.enabled) m.set(k.bracketId, k.kitId);
+    return m;
+  }, [kitInstances]);
 
   // Log when selected bracket changes
   useEffect(() => {
@@ -96,6 +108,8 @@ const DiyBracketRenderer: React.FC = () => {
                 <Suspense fallback={null}>
                   <ConnectorStl url={cc.stlUrl} size={b.size} color={cc.color} />
                 </Suspense>
+                {/* Accessory-kit hardware — same frame as the STL above. */}
+                {kitByBracket.has(b.id) && <KitGroup bracket={b} kitId={kitByBracket.get(b.id)!} />}
               </group>
             </group>
           );

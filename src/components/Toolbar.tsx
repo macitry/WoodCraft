@@ -6,6 +6,7 @@ import { mockTemplates } from '../mock/exampleModel';
 import { parseTabletopDxf } from '../utils/dxfImport';
 import { generateTabletopDxf, dxfShapeToDxf } from '../utils/dxfExport';
 import BomPreviewModal from './BomPreviewModal';
+import { downloadFile } from '../utils/download';
 import type { ViewPreset } from '../types/furniture';
 import type { ViewMode } from '../app/App';
 
@@ -283,18 +284,5 @@ const Toolbar: React.FC<ToolbarProps> = ({
     </>
   );
 };
-
-/** Trigger a file download in the browser. */
-function downloadFile(filename: string, content: string, mimeType: string) {
-  const blob = new Blob([content], { type: mimeType });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = filename;
-  document.body.appendChild(a);
-  a.click();
-  document.body.removeChild(a);
-  URL.revokeObjectURL(url);
-}
 
 export default Toolbar;

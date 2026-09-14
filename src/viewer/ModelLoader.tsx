@@ -7,6 +7,7 @@ import type { DxfTabletopShape } from '../utils/dxfImport';
 import { buildHolePath } from '../utils/holeGeometry';
 import { TEMPLATE_LAYOUTS, DEFAULT_BRACKET_STL_URL } from '../types/furniture';
 import { useModelStore } from '../store/modelStore';
+import { FastenerSet } from './MainFastenerRenderer';
 
 const { Euler, Quaternion } = THREE;
 
@@ -787,7 +788,10 @@ const UserBracketPart: React.FC<UserBracketPartProps> = ({
     mm(bracket.position.z),
   ];
 
-  // Rotation: degrees → radians (intrinsic ZYX)
+  // Rotation: degrees → radians. NOTE: the stored field is documented as
+  // intrinsic ZYX, but three consumes it as its default XYZ order — the two
+  // agree only for single-axis brackets. Do not "fix" this here, and never
+  // recompute this transform elsewhere: child geometry inherits it instead.
   const rot: [number, number, number] = [
     THREE.MathUtils.degToRad(bracket.rotation.roll),
     THREE.MathUtils.degToRad(bracket.rotation.pitch),
@@ -796,23 +800,27 @@ const UserBracketPart: React.FC<UserBracketPartProps> = ({
 
   return (
     <Suspense fallback={null}>
-      <mesh
-        geometry={cloned}
-        position={pos}
-        rotation={rot}
-        scale={[MM_TO_M, MM_TO_M, MM_TO_M]}
-        castShadow
-        receiveShadow
-        onClick={(e) => { e.stopPropagation(); onClick(); }}
-      >
-        <meshStandardMaterial
-          color="#707070"
-          metalness={0.9}
-          roughness={0.25}
-          emissive={isSelected ? '#ffffff' : '#000000'}
-          emissiveIntensity={isSelected ? 0.15 : 0}
-        />
-      </mesh>
+      {/* The outer group carries the bracket's pose in MILLIMETRES; the STL child
+          scales itself into metres. Fasteners nest in here so they inherit the
+          exact same matrix as the bracket body. */}
+      <group position={pos} rotation={rot} userData={{ wcBracketId: bracket.id }}>
+        <mesh
+          geometry={cloned}
+          scale={[MM_TO_M, MM_TO_M, MM_TO_M]}
+          castShadow
+          receiveShadow
+          onClick={(e) => { e.stopPropagation(); onClick(); }}
+        >
+          <meshStandardMaterial
+            color="#707070"
+            metalness={0.9}
+            roughness={0.25}
+            emissive={isSelected ? '#ffffff' : '#000000'}
+            emissiveIntensity={isSelected ? 0.15 : 0}
+          />
+        </mesh>
+        <FastenerSet bracket={bracket} />
+      </group>
     </Suspense>
   );
 };

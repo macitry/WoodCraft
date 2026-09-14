@@ -1,4 +1,4 @@
-import { useRef, useCallback, useEffect, type DragEvent } from 'react';
+import { useRef, useCallback, useEffect, useState, type DragEvent } from 'react';
 import { Canvas } from '@react-three/fiber';
 import { useDiyStore } from '../store/diyStore';
 import type { ProfileSize, AxisDir, ScrewSize } from '../types/furniture';
@@ -46,6 +46,16 @@ const DiyViewer: React.FC = () => {
   const updateGhostScrew = useDiyStore((s) => s.updateGhostScrew);
   const placeScrew = useDiyStore((s) => s.placeScrew);
   const cancelDraggingScrew = useDiyStore((s) => s.cancelDraggingScrew);
+  const bindKit = useDiyStore((s) => s.bindKit);
+
+  // Transient toast for kit drops that had nowhere valid to land. A kit needs a
+  // real corner, and silently doing nothing looks like a broken drag.
+  const [kitHint, setKitHint] = useState<string | null>(null);
+  useEffect(() => {
+    if (!kitHint) return;
+    const t = setTimeout(() => setKitHint(null), 2600);
+    return () => clearTimeout(t);
+  }, [kitHint]);
 
   const containerRef = useRef<HTMLDivElement>(null);
   const cameraRef = useRef<THREE.PerspectiveCamera | null>(null);
@@ -135,7 +145,11 @@ const DiyViewer: React.FC = () => {
     e.preventDefault();
     e.dataTransfer.dropEffect = 'copy';
 
-    if (e.dataTransfer.types.includes('application/diy-bracket')) {
+    // A kit drop rides the same ghost as a bracket drop: it needs a corner.
+    if (
+      e.dataTransfer.types.includes('application/diy-bracket') ||
+      e.dataTransfer.types.includes('application/diy-kit')
+    ) {
       startDraggingBracket(); // idempotent — safe to call every frame
       const ray = getMouseRay(e);
       if (ray) updateBracketGhost(ray);
@@ -207,6 +221,32 @@ const DiyViewer: React.FC = () => {
   const handleDrop = useCallback((e: DragEvent) => {
     e.preventDefault();
 
+    // ---- accessory-kit drop ----
+    // A kit is hardware bound to a joint, so unlike a bracket it has no
+    // unoriented fallback: refuse anything that is not a real corner rather
+    // than pinning screws to a bracket that was never rotated into place.
+    if (e.dataTransfer.types.includes('application/diy-kit')) {
+      const kitId = e.dataTransfer.getData('application/diy-kit');
+      const ghost = useDiyStore.getState().ghostBracket;
+      const corner = ghost ? findCornerAt(profilesRef.current, ghost.position) : null;
+      if (!corner) {
+        cancelDraggingBracket();
+        setKitHint('组合只能放在型材角点上');
+        return;
+      }
+      void (async () => {
+        await placeBracketAtGhost();
+        // placeBracket sets selectedBracketId to the bracket it just made.
+        const made = useDiyStore.getState().selectedBracketId;
+        if (!made || !bindKit(kitId, made)) {
+          setKitHint('组合放置失败');
+          return;
+        }
+        setKitHint(null);
+      })();
+      return;
+    }
+
     // ---- bracket drop ----
     // dataTransfer.getData is only readable on drop — carry the catalog id
     // (set by DiyProfileLibrary on dragstart) so the placed bracket renders
@@ -242,7 +282,7 @@ const DiyViewer: React.FC = () => {
       const dim = ({ '2020': 20, '3030': 30, '4040': 40 } as Record<string, number>)[size] ?? 30;
       addRootProfile(size, { x: px, y: 50, z: pz }, 'Y' as AxisDir);
     }
-  }, [addRootProfile, placeBracketAtGhost, placeScrew, getMouseRay]);
+  }, [addRootProfile, placeBracketAtGhost, placeScrew, getMouseRay, bindKit, cancelDraggingBracket]);
 
   return (
     <div
@@ -266,6 +306,14 @@ const DiyViewer: React.FC = () => {
           Drag profile or bracket from library here
         </div>
       </div>
+
+      {/* Kit-drop toast */}
+      {kitHint && (
+        <div className="absolute top-3 left-1/2 -translate-x-1/2 z-20 px-3 py-1.5 rounded
+          bg-amber-900/80 border border-amber-700 text-amber-100 text-xs pointer-events-none">
+          {kitHint}
+        </div>
+      )}
     </div>
   );
 };
