@@ -169,3 +169,19 @@ const byId = new Map(CONNECTORS.map((c) => [c.id, c]));
 export function connectorById(id?: string | null): DiyConnector {
   return (id && byId.get(id)) || CAST_CONNECTOR;
 }
+
+// The cast bracket is NOT in CONNECTORS (it is the built-in default rather than
+// a library entry), so the by-STL map has to add it back.
+const byStlUrl = new Map([CAST_CONNECTOR, ...CONNECTORS].map((c) => [c.stlUrl, c]));
+
+/**
+ * Look up a connector by the STL it renders — the form a bracket instance
+ * carries (`BracketInstance.stlUrl`), and the key a kit layout is scoped by.
+ *
+ * Unknown urls fall back to the cast bracket, matching `holePatternFor`'s
+ * fallback: the default hole pattern IS the cast bracket's. Geometry and hole
+ * pattern therefore can never be resolved from two different catalog entries.
+ */
+export function connectorByStlUrl(stlUrl?: string | null): DiyConnector {
+  return (stlUrl && byStlUrl.get(stlUrl)) || CAST_CONNECTOR;
+}

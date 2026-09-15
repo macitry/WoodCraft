@@ -10,6 +10,7 @@ import BracketEditor from '../components/BracketEditor';
 import HolePropertiesPanel from '../components/HolePropertiesPanel';
 import ModelInfo from '../components/ModelInfo';
 import DiyPage from '../diy/DiyPage';
+import KitEditorPage from '../kits/KitEditorPage';
 import { useModelStore } from '../store/modelStore';
 import type { ViewPreset } from '../types/furniture';
 import type { OrbitControls as OrbitControlsImpl } from 'three-stdlib';
@@ -123,6 +124,7 @@ const App: React.FC = () => {
     <Routes>
       <Route path="/" element={<HomePage />} />
       <Route path="/diy" element={<DiyPage />} />
+      <Route path="/kits" element={<KitEditorPage />} />
     </Routes>
   );
 };
