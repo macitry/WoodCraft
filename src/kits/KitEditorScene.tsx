@@ -1,9 +1,11 @@
 import { Suspense, useEffect, useMemo, useRef, type FC } from 'react';
 import { Canvas, useThree, type ThreeEvent } from '@react-three/fiber';
-import { GizmoHelper, GizmoViewport, OrbitControls } from '@react-three/drei';
+import { GizmoHelper, GizmoViewport, Html, OrbitControls } from '@react-three/drei';
 import type { OrbitControls as OrbitControlsImpl } from 'three-stdlib';
 import * as THREE from 'three';
 import { ConnectorStl } from '../diy/DiyBracketStl';
+import { ProfileStl } from '../diy/ProfileStl';
+import ProfileBoundary from './ProfileBoundary';
 import PartDragGizmo from './PartDragGizmo';
 import { buildScrewGroup } from '../diy/DiyScrewGeometry';
 import { buildTNutGroup } from '../diy/DiyNutGeometry';
@@ -103,7 +105,7 @@ const PartMesh: FC<{
 };
 
 /**
- * The two extrusion placeholders the joint is bolted into.
+ * The two extrusions the joint is bolted into.
  *
  * Runner A runs along +X with its slot face on y=0; runner B runs along +Y with
  * its face on x=0 — the two faces the connector's plates bear against. Which
@@ -114,33 +116,55 @@ const PartMesh: FC<{
  * +Y, and that runner necessarily runs along X. Its T-nut lands at (8, −8, 0),
  * i.e. inside that runner's slot rather than buried in solid material.
  *
- * Display only, and knowingly imperfect: `PROFILE_DIMS` has no 21 mm entry, so
- * these are 30 mm 3030 bars while the cast bracket is 21 mm — the same visual
- * mismatch the main configurator has. Left as-is rather than papered over.
+ * Still knowingly imperfect, but no longer mis-sized: `PROFILE_DIMS` has no
+ * 21 mm entry, so these are 30 mm bars while the cast bracket is 21 mm — the
+ * same visual mismatch the main configurator has. The picker can widen them,
+ * which widens the mismatch with it; left as-is rather than papered over.
+ *
+ * Opaque on purpose. The placeholders these replaced were 24%-opacity boxes, and
+ * that trick does not survive contact with a real profile: three.js does not
+ * depth-sort triangles within one geometry, and an ASCII STL arrives as a
+ * non-indexed `BufferGeometry` (3030 is 4128 faces = 12384 vertices), so with
+ * `depthWrite: false` the slot mouths and lips all bleed into each other and the
+ * very detail being shown is erased. The repo's answer for "see inside a solid"
+ * is the ghost mechanism instead — `depthTest/depthWrite = !ghost` plus
+ * `renderOrder`, see `DiyNutGeometry` — and every T-nut here already carries
+ * `ghost: f.internal`, so it draws over these bars regardless of their depth.
+ *
+ * `ProfileStl` centres its mesh on all three axes, extrusion axis included, so
+ * each bar spans ±length/2 and needs a group to put it where the box used to be.
+ * The offsets below reproduce the old spans exactly: A x ∈ [0, run], y ∈ [−size, 0].
  */
-const ProfilePlaceholders: FC<{ size: number; lengthMm: number }> = ({ size, lengthMm }) => {
-  const box = (center: [number, number, number], dims: [number, number, number]) => (
-    <mesh position={[center[0] * M, center[1] * M, center[2] * M]}>
-      <boxGeometry args={[dims[0] * M, dims[1] * M, dims[2] * M]} />
-      <meshStandardMaterial
-        color="#9fb0c0"
-        metalness={0.3}
-        roughness={0.6}
-        transparent
-        opacity={0.24}
-        depthWrite={false}
+const PROFILE_COLOR = '#9fb0c0';
+
+const Extrusions: FC<{ profileSize: string; sizeMm: number; runMm: number }> = ({
+  profileSize,
+  sizeMm,
+  runMm,
+}) => (
+  <>
+    <group position={[(runMm / 2) * M, (-sizeMm / 2) * M, 0]}>
+      <ProfileStl
+        profileSize={profileSize}
+        length={runMm}
+        direction="X"
+        color={PROFILE_COLOR}
+        metalness={0.35}
+        roughness={0.45}
       />
-    </mesh>
-  );
-  return (
-    <>
-      {/* A: x ∈ [0, length], y ∈ [-size, 0] */}
-      {box([lengthMm / 2, -size / 2, 0], [lengthMm, size, size])}
-      {/* B: y ∈ [0, length], x ∈ [-size, 0] */}
-      {box([-size / 2, lengthMm / 2, 0], [size, lengthMm, size])}
-    </>
-  );
-};
+    </group>
+    <group position={[(-sizeMm / 2) * M, (runMm / 2) * M, 0]}>
+      <ProfileStl
+        profileSize={profileSize}
+        length={runMm}
+        direction="Y"
+        color={PROFILE_COLOR}
+        metalness={0.35}
+        roughness={0.45}
+      />
+    </group>
+  </>
+);
 
 /**
  * Dev-only: hands the camera to the page so a headless test can project a part
@@ -164,6 +188,10 @@ export interface KitEditorSceneProps {
   kit: AccessoryKit;
   /** The connector whose hole pattern the edits are keyed on. */
   stlUrl: string;
+  /** Which extrusion to draw the assembly with. PREVIEW ONLY — it must never
+   *  reach `jointFasteners` or the layout key, or the count stops matching the
+   *  schedule. See the page's `?profile=` handling. */
+  profileSize: string;
   layout: KitLayout | null;
   selectedPartKey: string | null;
   onSelect: (partKey: string | null) => void;
@@ -184,6 +212,7 @@ export interface KitEditorSceneProps {
 const KitEditorScene: FC<KitEditorSceneProps> = ({
   kit,
   stlUrl,
+  profileSize,
   layout,
   selectedPartKey,
   onSelect,
@@ -208,9 +237,14 @@ const KitEditorScene: FC<KitEditorSceneProps> = ({
     const w = window as unknown as { __wcKitEditorCount?: number };
     w.__wcKitEditorCount = fasteners.length;
   }, [fasteners.length]);
-  // One profile size for both placeholders; 3030 unless the connector is bigger.
-  const profileMm = PROFILE_DIMS['3030'];
-  const runMm = Math.max(4 * profileMm, 4 * cc.extMm);
+  // The extrusion LENGTH is pinned to the 3030 baseline and deliberately not to
+  // `profileSize`: `runMm` sets how big the assembly is, so letting a preview
+  // setting drive it would turn "switch to 4040" into a 120 → 160 mm rescale of
+  // the whole scene rather than a wider bar. Only the cross-section follows the
+  // picker. `PROFILE_DIMS` has no 21 mm entry, so a small connector still gets
+  // 30 mm bars — the same mismatch the main configurator has.
+  const runMm = Math.max(4 * PROFILE_DIMS['3030'], 4 * cc.extMm);
+  const sizeMm = PROFILE_DIMS[profileSize as keyof typeof PROFILE_DIMS] ?? PROFILE_DIMS['3030'];
 
   return (
     <Canvas
@@ -240,13 +274,24 @@ const KitEditorScene: FC<KitEditorSceneProps> = ({
         <GizmoViewport />
       </GizmoHelper>
 
-      <ProfilePlaceholders size={profileMm} lengthMm={runMm} />
-      <Suspense fallback={null}>
-        {/* Low metalness on purpose: the scene has no environment map, so a
-            0.9-metalness material renders as a black blob and hides the parts
-            this page exists to show. */}
-        <ConnectorStl url={cc.stlUrl} size={cc.extMm} color="#98a2ac" metalness={0.35} roughness={0.45} />
-      </Suspense>
+      {/* Low metalness on purpose, for the extrusions as much as the connector:
+          the scene has no environment map, so a 0.9-metalness material renders
+          as a black blob and hides the parts this page exists to show. This is
+          why `ProfileStl`'s own 0.7 default is overridden here. */}
+      <ProfileBoundary
+        fallback={
+          <Html center>
+            <div className="px-3 py-2 rounded bg-red-950/80 text-red-200 text-xs whitespace-nowrap">
+              型材模型加载失败，装配体只剩五金件
+            </div>
+          </Html>
+        }
+      >
+        <Suspense fallback={null}>
+          <Extrusions profileSize={profileSize} sizeMm={sizeMm} runMm={runMm} />
+          <ConnectorStl url={cc.stlUrl} size={cc.extMm} color="#98a2ac" metalness={0.35} roughness={0.45} />
+        </Suspense>
+      </ProfileBoundary>
       {/* Every part, internal ones included: the two production viewers hide
           T-nuts behind a display toggle, but here the list beside the canvas
           promises the count the scene draws, and a part you cannot see is a part

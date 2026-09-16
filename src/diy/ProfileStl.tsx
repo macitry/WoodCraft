@@ -1,4 +1,4 @@
-import { useMemo } from 'react';
+import { useEffect, useMemo, useRef } from 'react';
 import * as THREE from 'three';
 import { useLoader } from '@react-three/fiber';
 import { STLLoader } from 'three-stdlib';
@@ -68,6 +68,7 @@ export const ProfileStl: React.FC<ProfileStlProps> = ({
 }) => {
   const url = PROFILE_STL_URLS[profileSize] || PROFILE_STL_URLS['3030'];
   const geom = useLoader(STLLoader, url);
+  const meshRef = useRef<THREE.Mesh>(null);
   // The cross-section needs no rescaling: the mesh is modelled in millimetres,
   // so a uniform `M` on x and y already yields the profile's real size. The
   // original also computed `dim = PROFILE_DIMS[profileSize] ?? 30` here without
@@ -116,8 +117,47 @@ export const ProfileStl: React.FC<ProfileStlProps> = ({
     [dirQ],
   );
 
+  // Dev-only, same convention as `__wcFastenerNodes`: reports the URL each bar
+  // actually resolved to, so a test can assert the profile picker switched
+  // meshes without guessing from triangle counts (2020 is 12 faces, 3030 is
+  // 4128 — a count would pass on the wrong file). A list, because the DIY page
+  // mounts one of these per profile.
+  //
+  // The world box is here because everything above depends on this transform
+  // being composed right, and a sign error in the caller's group offset moves a
+  // bar a full 30 mm without changing anything a screenshot makes obvious. Callers
+  // position these bars; asserting the box catches the slip directly.
+  useEffect(() => {
+    if (!import.meta.env.DEV || !meshRef.current) return;
+    const w = window as unknown as {
+      __wcProfileMeshes?: { profileSize: string; url: string; length: number; box: number[][] }[];
+    };
+    // `updateWorldMatrix(true, false)` before measuring, and the `true` matters:
+    // this effect runs on commit, but three only refreshes world matrices inside
+    // its render loop, which is a frame later. Without walking the ancestors here
+    // the box comes back missing the caller's group offset — measured, and it
+    // reports a bar centred on the origin instead of in its quadrant.
+    meshRef.current.updateWorldMatrix(true, false);
+    const b = new THREE.Box3().setFromObject(meshRef.current);
+    const rec = {
+      profileSize,
+      url,
+      length,
+      box: [
+        [b.min.x, b.min.y, b.min.z].map((n) => +n.toFixed(4)),
+        [b.max.x, b.max.y, b.max.z].map((n) => +n.toFixed(4)),
+      ],
+    };
+    (w.__wcProfileMeshes ??= []).push(rec);
+    return () => {
+      const list = w.__wcProfileMeshes ?? [];
+      const i = list.indexOf(rec);
+      if (i >= 0) list.splice(i, 1);
+    };
+  }, [profileSize, url, length, direction]);
+
   return (
-    <mesh geometry={cloned} rotation={[finalE.x, finalE.y, finalE.z]} scale={scale}>
+    <mesh ref={meshRef} geometry={cloned} rotation={[finalE.x, finalE.y, finalE.z]} scale={scale}>
       <meshStandardMaterial
         color={color}
         metalness={metalness}

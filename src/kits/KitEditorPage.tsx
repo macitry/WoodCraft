@@ -37,6 +37,26 @@ const ADDABLE: { kind: HardwareKind; label: string }[] = [
 
 const SIZES: ScrewSize[] = ['M4', 'M5', 'M6'];
 
+/**
+ * Which extrusion the preview may be drawn with.
+ *
+ * `2020` is deliberately absent even though `PROFILE_DIMS` knows it:
+ * `public/profiles/profile_2020.stl` is a 12-face box with no slot at all, so it
+ * would show LESS than the placeholder box it replaced — and `minProfileSize: 30`
+ * on every joint kit means `kitFitReason` rejects a 20 mm profile anyway, so it is
+ * an assembly the app itself says is not allowed. Anything not listed here falls
+ * back to `3030`, hand-typed `?profile=2020` included.
+ *
+ * PREVIEW ONLY. This value must never reach `jointFasteners`, `kitLayoutKey` or
+ * the store — it changes what the bars look like and nothing else. The e2e
+ * asserts that by loading the same page at two sizes and diffing every number.
+ */
+const OFFERED_PROFILES = ['3030', '4040'] as const;
+const DEFAULT_PROFILE = '3030';
+
+const offeredProfile = (raw: string | null): string =>
+  raw && (OFFERED_PROFILES as readonly string[]).includes(raw) ? raw : DEFAULT_PROFILE;
+
 const specFor = (kind: HardwareKind, size: ScrewSize, length: number) =>
   kind === 't_nut'
     ? // A nut's slot series is not a function of its thread size, so it takes
@@ -75,6 +95,17 @@ const KitEditorPage: FC = () => {
   const requestedStl = search.get('stl');
   const stlUrl = requestedStl || DEFAULT_BRACKET_STL_URL;
   const cc = connectorByStlUrl(stlUrl);
+
+  // Preview-only, and validated at the boundary: `KitEditorScene` guards its own
+  // `PROFILE_DIMS` lookup, but `runMm` is anchored on 3030 and a bogus value must
+  // not be able to move it.
+  const profile = offeredProfile(search.get('profile'));
+
+  /** Every in-page move between kits or hole patterns keeps the chosen
+   *  extrusion. Built here rather than spelled out at each `navigate` so a new
+   *  navigation cannot quietly drop it — at the time of writing there are two. */
+  const editorUrl = (kitId: string, connectorStl: string) =>
+    `/kits?kit=${kitId}&stl=${encodeURIComponent(connectorStl)}&profile=${profile}`;
 
   const setEditingKey = useKitLayoutStore((s) => s.setEditingKey);
   const selectPart = useKitLayoutStore((s) => s.selectPart);
@@ -232,7 +263,7 @@ const KitEditorPage: FC = () => {
                 <button
                   key={k.id}
                   data-kit={k.id}
-                  onClick={() => navigate(`/kits?kit=${k.id}&stl=${encodeURIComponent(cc.stlUrl)}`)}
+                  onClick={() => navigate(editorUrl(k.id, cc.stlUrl))}
                   className={`w-full px-2 py-1.5 text-left text-xs rounded border transition-colors cursor-pointer ${
                     k.id === kit.id
                       ? 'border-wood-600 bg-wood-500/15 text-wood-200'
@@ -261,9 +292,7 @@ const KitEditorPage: FC = () => {
                   <button
                     key={g.sig}
                     data-pattern={g.sig}
-                    onClick={() =>
-                      navigate(`/kits?kit=${kit.id}&stl=${encodeURIComponent(g.list[0].stlUrl)}`)
-                    }
+                    onClick={() => navigate(editorUrl(kit.id, g.list[0].stlUrl))}
                     title={g.list.map((c) => `${c.label} (${c.dim})`).join(' / ')}
                     className={`w-full px-2 py-1 text-left text-[10px] rounded border transition-colors cursor-pointer ${
                       on
@@ -286,6 +315,30 @@ const KitEditorPage: FC = () => {
                 );
               })}
             </div>
+          </div>
+
+          <div className="px-3 py-2 border-b border-neutral-800">
+            <p className="text-[10px] uppercase tracking-wider text-neutral-500 font-medium">型材</p>
+            <div className="mt-1.5 flex gap-1">
+              {OFFERED_PROFILES.map((size) => (
+                <button
+                  key={size}
+                  data-profile={size}
+                  onClick={() => navigate(editorUrl(kit.id, cc.stlUrl))}
+                  aria-pressed={size === profile}
+                  className={`px-2 py-1 text-[10px] rounded border transition-colors cursor-pointer tabular-nums ${
+                    size === profile
+                      ? 'border-wood-600 bg-wood-500/15 text-wood-200'
+                      : 'border-neutral-800 text-neutral-400 hover:border-neutral-600'
+                  }`}
+                >
+                  {size}
+                </button>
+              ))}
+            </div>
+            <p className="text-[10px] text-neutral-600 mt-1 leading-snug">
+              只影响这里的预览，不改零件数量与位置。
+            </p>
           </div>
 
           <div className="flex-1 min-h-0 overflow-y-auto p-3">
@@ -403,6 +456,7 @@ const KitEditorPage: FC = () => {
           <KitEditorScene
             kit={kit}
             stlUrl={cc.stlUrl}
+            profileSize={profile}
             layout={layout}
             selectedPartKey={selectedPartKey}
             onSelect={selectPart}
