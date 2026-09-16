@@ -1,7 +1,9 @@
 import { useState, type FC } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { useModelStore } from '../store/modelStore';
 import type { BracketInstance } from '../types/furniture';
 import { DEFAULT_BRACKET_STL_URL } from '../types/furniture';
+import { connectorByStlUrl } from '../diy/connectors';
 import {
   ACCESSORY_KITS,
   accessoryKitById,
@@ -85,6 +87,7 @@ function profileSizeOf(profile: string): number {
  * so the quantities below are what the 3D view and the BOM will both show.
  */
 const AccessoryKitPanel: FC = () => {
+  const navigate = useNavigate();
   const activeKitId = useModelStore((s) => s.activeKitId);
   const setAccessoryKit = useModelStore((s) => s.setAccessoryKit);
   const showFasteners = useModelStore((s) => s.showFasteners);
@@ -121,7 +124,10 @@ const AccessoryKitPanel: FC = () => {
     // amber "no bracket" warning below has something to sit under.
     if (count.size === 0) count.set(DEFAULT_BRACKET_STL_URL, 0);
     return [...count].map(([stl, n]) => ({
+      stl,
       n,
+      cc: connectorByStlUrl(stl),
+      edited: layoutFor(layouts, kit.id, stl) !== null,
       parts: specSummary(kit, stl, layoutFor(layouts, kit.id, stl)),
     }));
   })();
@@ -200,6 +206,29 @@ const AccessoryKitPanel: FC = () => {
             <p className="text-[10px] text-amber-500/80">
               当前没有启用的角码 —— 紧固件也无处可放。
             </p>
+          )}
+
+          {/* Door to the per-part editing page. One button per connector in
+              play, because a tweak belongs to a (kit, hole pattern) pair: a
+              model mixing two connector sizes has two independent sets of
+              tweaks, and a single button would quietly edit only one of them.
+              Frame-scope kits get no button — they derive no geometry at all,
+              so the page would have nothing to place. */}
+          {kit.scope === 'joint' && (
+            <div className="flex flex-wrap gap-1 pt-1">
+              {jointGroups.map((g) => (
+                <button
+                  key={g.stl}
+                  data-kit-edit={g.stl}
+                  onClick={() => navigate(`/kits?kit=${kit.id}&stl=${encodeURIComponent(g.stl)}`)}
+                  title={`逐颗调整：${g.cc.label} · ${g.parts.map((l) => `${l.qty} 颗 ${l.spec.name}`).join(' + ')}`}
+                  className="px-2 py-1 text-[10px] rounded border border-neutral-700 text-neutral-300 hover:border-wood-600 hover:text-wood-200 transition-colors cursor-pointer"
+                >
+                  微调零件…{jointGroups.length > 1 ? ` (${g.cc.dim})` : ''}
+                  {g.edited && <span className="ml-1 text-amber-500/90">已微调</span>}
+                </button>
+              ))}
+            </div>
           )}
           {kit.ops.map((op) => (
             <p key={op} className="text-[10px] text-amber-500/80">⚙ {op}</p>

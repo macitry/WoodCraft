@@ -63,7 +63,10 @@ export function tNutName(size: ScrewSize, series: number): string {
   return `T 型螺母 ${size} · ${series} 系列`;
 }
 
-const SCREW_SERIES = 30;
+/** Profile series the presets' T-nuts fit. Exported because a hand-added nut has
+ *  to pick a series from somewhere, and guessing one from its thread size is the
+ *  mistake `tNutName` exists to prevent. */
+export const SCREW_SERIES = 30;
 
 export function socketScrew(size: ScrewSize, length: number): HardwareSpec {
   return { kind: 'socket_screw', name: socketScrewName(size, length), size, length };

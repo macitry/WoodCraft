@@ -69,6 +69,8 @@ const PartPropertyPanel: FC<PartPropertyPanelProps> = ({
   // `size` does not determine), so it has no size/length fields at all.
   const spec = fastener.spec;
   const resizable = !fastener.internal && spec.kind !== 't_nut';
+  /** A hand-added part: no seat, no preset spec, and no `parts` entry of its own. */
+  const isExtra = extra !== undefined || fastener.added === true;
 
   const commitPos = (i: 0 | 1 | 2, raw: string) => {
     const v = Number(raw);
@@ -217,27 +219,36 @@ const PartPropertyPanel: FC<PartPropertyPanelProps> = ({
       )}
 
       <div className="pt-1 space-y-1.5 border-t border-neutral-800">
-        <button
-          onClick={() => setPartRemoved(setKey, fastener.key, !edit?.removed)}
-          className={`w-full px-3 py-1.5 text-xs rounded transition-colors cursor-pointer ${
-            edit?.removed
-              ? 'bg-amber-600/25 hover:bg-amber-600/40 text-amber-200'
-              : 'bg-neutral-800 hover:bg-neutral-700 text-neutral-300'
-          }`}
-          title="3D、清单与导出同时消失；清单仍留一行可恢复"
-        >
-          {edit?.removed ? '恢复显示' : '隐藏此零件'}
-        </button>
+        {/* Hiding is offered only for a DERIVED part: it has a seat to come back
+            to. An added part has none, so `setPartRemoved` deletes it outright —
+            a button saying 隐藏 while doing that would be a lie, and the label
+            below says what actually happens. */}
+        {!isExtra && (
+          <button
+            onClick={() => setPartRemoved(setKey, fastener.key, !edit?.removed)}
+            className={`w-full px-3 py-1.5 text-xs rounded transition-colors cursor-pointer ${
+              edit?.removed
+                ? 'bg-amber-600/25 hover:bg-amber-600/40 text-amber-200'
+                : 'bg-neutral-800 hover:bg-neutral-700 text-neutral-300'
+            }`}
+            title="3D、清单与导出同时消失；清单仍留一行可恢复"
+          >
+            {edit?.removed ? '恢复显示' : '隐藏此零件'}
+          </button>
+        )}
         <button
           onClick={() => clearPart(setKey, fastener.key)}
-          disabled={!edit}
+          // An added part is held in `extra`, not in `parts`, so it has no
+          // `edit` to test — gating on `edit` alone left this button dead and
+          // a hand-added part impossible to remove.
+          disabled={!edit && !isExtra}
           className={`w-full px-3 py-1.5 text-xs rounded transition-colors ${
-            edit
+            edit || isExtra
               ? 'bg-neutral-800 hover:bg-neutral-700 text-neutral-300 cursor-pointer'
               : 'bg-neutral-900 text-neutral-600 cursor-not-allowed'
           }`}
         >
-          {fastener.added ? '移除这个零件' : '重置此零件'}
+          {isExtra ? '移除这个零件' : '重置此零件'}
         </button>
       </div>
 

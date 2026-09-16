@@ -1,11 +1,22 @@
-import { useEffect, useMemo, type FC } from 'react';
+import { useEffect, useMemo, useState, type FC } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import KitEditorScene from './KitEditorScene';
 import PartPropertyPanel from './PartPropertyPanel';
-import { ACCESSORY_KITS, accessoryKitById, jointFasteners } from '../utils/accessoryKits';
-import type { LocalFastener } from '../utils/accessoryKits';
-import { connectorByStlUrl } from '../diy/connectors';
-import { DEFAULT_BRACKET_STL_URL } from '../types/furniture';
+import {
+  ACCESSORY_KITS,
+  SCREW_SERIES,
+  accessoryKitById,
+  holePatternFor,
+  holePatternSignature,
+  jointFasteners,
+  socketScrewName,
+  tNutName,
+  woodScrewName,
+} from '../utils/accessoryKits';
+import type { HardwareKind, LocalFastener } from '../utils/accessoryKits';
+import { CONNECTORS, connectorByStlUrl } from '../diy/connectors';
+import { DEFAULT_BRACKET_STL_URL, SCREW_DEFAULT_LENGTH } from '../types/furniture';
+import type { ScrewSize } from '../types/furniture';
 import { kitLayoutKey, useKitLayoutStore } from '../store/kitLayoutStore';
 
 /** Kits that produce per-joint geometry, and so have parts to move. */
@@ -14,6 +25,29 @@ const JOINT_KITS = ACCESSORY_KITS.filter((k) => k.scope === 'joint');
 /** `已微调` is per PART, not per kit: only the touched pieces carry a badge. */
 const isEdited = (f: LocalFastener, removed: boolean): boolean =>
   f.added === true || removed;
+
+/** What a hand-added part can be. T-nut included: a joint with a tapped profile
+ *  still needs the bolt, and a tapped hole drilled in the wrong slot is exactly
+ *  the kind of thing this page exists to avoid. */
+const ADDABLE: { kind: HardwareKind; label: string }[] = [
+  { kind: 'socket_screw', label: '内六角螺栓' },
+  { kind: 'wood_screw', label: '木螺钉' },
+  { kind: 't_nut', label: 'T 型螺母' },
+];
+
+const SIZES: ScrewSize[] = ['M4', 'M5', 'M6'];
+
+const specFor = (kind: HardwareKind, size: ScrewSize, length: number) =>
+  kind === 't_nut'
+    ? // A nut's slot series is not a function of its thread size, so it takes
+      // the series the presets use rather than one invented from `size`.
+      { kind, name: tNutName(size, SCREW_SERIES), size }
+    : {
+        kind,
+        name: kind === 'wood_screw' ? woodScrewName(size, length) : socketScrewName(size, length),
+        size,
+        length,
+      };
 
 /**
  * Per-part fine tuning for an accessory kit — a full page rather than a modal,
@@ -49,8 +83,32 @@ const KitEditorPage: FC = () => {
 
   const setKey = kitLayoutKey(kit.id, cc.stlUrl);
   // Subscribed to the stored reference (or the null primitive) — building an
-  // object here would loop React 18's useSyncExternalStore.
+  // object here would loop React 18's useSyncExternalStore. The whole map is
+  // subscribed too, for the per-pattern 「已微调」 badges: it is one stored
+  // object whose identity only changes when an edit lands.
   const layout = useKitLayoutStore((s) => s.layouts[setKey] ?? null);
+  const layouts = useKitLayoutStore((s) => s.layouts);
+
+  // Connectors that hole-to-hole identical share one layout, so the honest unit
+  // to offer is the PATTERN, not the connector: `holePatternFor` reads only
+  // `extMm`, and the catalog has several sizes with matching extents. Editing
+  // the pattern is what actually happens; naming the connector is just how the
+  // user gets there. CONNECTORS already lists the cast bracket first.
+  const cSig = holePatternSignature(holePatternFor(cc.stlUrl));
+  const patternGroups = useMemo(() => {
+    const bySig = new Map<string, typeof CONNECTORS>();
+    for (const c of CONNECTORS) {
+      const sig = holePatternSignature(holePatternFor(c.stlUrl));
+      const list = bySig.get(sig);
+      if (list) list.push(c);
+      else bySig.set(sig, [c]);
+    }
+    return [...bySig].map(([sig, list]) => ({
+      sig,
+      list,
+      edited: layouts[kitLayoutKey(kit.id, list[0].stlUrl)] != null,
+    }));
+  }, [kit.id, layouts]);
 
   useEffect(() => {
     setEditingKey(setKey);
@@ -96,6 +154,35 @@ const KitEditorPage: FC = () => {
   }, [presets, fasteners, drawnByKey]);
   const hiddenCount = listRows.length - fasteners.length;
   const panelPart = listRows.find((f) => f.key === selectedPartKey);
+
+  const [adding, setAdding] = useState(false);
+  const [addKind, setAddKind] = useState<HardwareKind>('socket_screw');
+  const [addSize, setAddSize] = useState<ScrewSize>('M6');
+  const addPart = useKitLayoutStore((s) => s.addPart);
+
+  // A hand-added part lands where the selected one is — "one more of these" is
+  // the common case — and is selected on arrival, so the gizmo is already up and
+  // it can be dragged clear. With nothing selected it lands on the first seat.
+  const handleAdd = () => {
+    const host = panelPart ?? presets[0];
+    const position = host
+      ? ([...host.position] as [number, number, number])
+      : ([cc.extMm / 2, cc.extMm / 2, 0] as [number, number, number]);
+    // The store keeps an added part's rotation in DEGREES (see ExtraPart); the
+    // drawn fastener carries radians, so it converts back the same way the
+    // property panel's rotation fields do.
+    const rotation = host
+      ? (host.rotation.map((r) => (r * 180) / Math.PI) as [number, number, number])
+      : ([0, 0, 0] as [number, number, number]);
+    const key = addPart(
+      setKey,
+      specFor(addKind, addSize, SCREW_DEFAULT_LENGTH[addSize]),
+      position,
+      rotation,
+    );
+    selectPart(key);
+    setAdding(false);
+  };
 
   return (
     <div className="w-screen h-screen flex flex-col bg-neutral-950 overflow-hidden">
@@ -160,13 +247,45 @@ const KitEditorPage: FC = () => {
           </div>
 
           <div className="px-3 py-2 border-b border-neutral-800">
-            <p className="text-[10px] uppercase tracking-wider text-neutral-500 font-medium">连接件</p>
+            <p className="text-[10px] uppercase tracking-wider text-neutral-500 font-medium">孔位表</p>
             <p className="text-[11px] text-neutral-300 mt-1">
               {cc.label} · {cc.dim}
             </p>
             <p className="text-[10px] text-neutral-600 mt-0.5 leading-snug">
-              微调按「孔位表」区分，孔位表由连接件尺寸决定 —— 尺寸相同的连接件共用同一份微调。
+              微调按孔位表区分，孔位表由连接件尺寸决定 —— 尺寸相同就共用一份。
             </p>
+            <div className="mt-1.5 space-y-0.5">
+              {patternGroups.map((g) => {
+                const on = g.sig === cSig;
+                return (
+                  <button
+                    key={g.sig}
+                    data-pattern={g.sig}
+                    onClick={() =>
+                      navigate(`/kits?kit=${kit.id}&stl=${encodeURIComponent(g.list[0].stlUrl)}`)
+                    }
+                    title={g.list.map((c) => `${c.label} (${c.dim})`).join(' / ')}
+                    className={`w-full px-2 py-1 text-left text-[10px] rounded border transition-colors cursor-pointer ${
+                      on
+                        ? 'border-wood-600 bg-wood-500/15 text-wood-200'
+                        : 'border-neutral-800 text-neutral-400 hover:border-neutral-600'
+                    }`}
+                  >
+                    <span className="flex items-center gap-1">
+                      <span className="truncate tabular-nums">
+                        {g.list.map((c) => c.dim).join(' / ')}
+                      </span>
+                      {g.list.length > 1 && (
+                        <span className="flex-shrink-0 text-neutral-600">{g.list.length} 件共用</span>
+                      )}
+                      {g.edited && (
+                        <span className="ml-auto flex-shrink-0 text-amber-500/90">已微调</span>
+                      )}
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
           </div>
 
           <div className="flex-1 min-h-0 overflow-y-auto p-3">
@@ -206,6 +325,75 @@ const KitEditorPage: FC = () => {
                   </button>
                 );
               })}
+            </div>
+
+            {/* Hand-added hardware. It has no seat, so the store keeps its
+                position as an absolute value rather than a delta — see
+                PartPropertyPanel. */}
+            <div className="mt-3 pt-2 border-t border-neutral-800">
+              <button
+                data-add-toggle
+                onClick={() => setAdding((v) => !v)}
+                className="w-full px-2 py-1.5 text-[11px] rounded border border-neutral-700 text-neutral-300 hover:border-wood-600 hover:text-wood-200 transition-colors cursor-pointer"
+              >
+                ＋ 添加零件
+              </button>
+              {adding && (
+                <div className="mt-2 space-y-2">
+                  <div className="flex flex-wrap gap-1">
+                    {ADDABLE.map((a) => (
+                      <button
+                        key={a.kind}
+                        data-add-kind={a.kind}
+                        onClick={() => setAddKind(a.kind)}
+                        className={`px-2 py-1 text-[10px] rounded transition-colors cursor-pointer ${
+                          a.kind === addKind
+                            ? 'bg-wood-600 text-white'
+                            : 'bg-neutral-800 text-neutral-400 hover:text-white'
+                        }`}
+                      >
+                        {a.label}
+                      </button>
+                    ))}
+                  </div>
+                  <div className="flex flex-wrap gap-1">
+                    {SIZES.map((sz) => (
+                      <button
+                        key={sz}
+                        data-add-size={sz}
+                        onClick={() => setAddSize(sz)}
+                        className={`px-2 py-1 text-[10px] rounded transition-colors cursor-pointer ${
+                          sz === addSize
+                            ? 'bg-wood-600 text-white'
+                            : 'bg-neutral-800 text-neutral-400 hover:text-white'
+                        }`}
+                      >
+                        {sz}
+                      </button>
+                    ))}
+                  </div>
+                  <button
+                    data-add-confirm
+                    onClick={handleAdd}
+                    className="w-full px-2 py-1.5 text-[11px] rounded bg-wood-600 hover:bg-wood-500 text-white transition-colors cursor-pointer"
+                  >
+                    {panelPart ? `加在「${panelPart.spec.name}」处` : '加在第一个孔位'}
+                  </button>
+                  <p data-add-preview className="text-[10px] text-neutral-600 leading-snug">
+                    添加后会选中，可直接拖走或改数值。
+                    {specFor(addKind, addSize, SCREW_DEFAULT_LENGTH[addSize]).name} ·
+                    共 {listRows.length + 1} 件
+                  </p>
+                </div>
+              )}
+
+              {/* The scope of a tweak, stated where the tweaks are made. The
+                  parts are positions and quantities — no hole is cut in any
+                  model and the connector's own STL is untouched, so a shop
+                  building from this still drills from the drawing. */}
+              <p className="mt-2 text-[10px] text-neutral-600 leading-snug">
+                微调只改变 3D 位置、清单与导出数量；不修改角码模型，也不在型材上生成真实孔位。
+              </p>
             </div>
           </div>
         </aside>

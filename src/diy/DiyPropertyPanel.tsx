@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { useDiyStore } from '../store/diyStore';
 import { PROFILE_DIMS, SCREW_HEAD_DIMS, SCREW_DEFAULT_LENGTH } from '../types/furniture';
 import type { DiyBracket, DiyProfile, DiyScrew, ScrewSize } from '../types/furniture';
@@ -78,6 +79,7 @@ const DiyPropertyPanel: React.FC = () => {
  * link to the per-part editing page.
  */
 const KitProps: React.FC<{ instance: DiyKitInstance }> = ({ instance }) => {
+  const navigate = useNavigate();
   const removeKitInstance = useDiyStore((s) => s.removeKitInstance);
   const showFasteners = useDiyStore((s) => s.showKitFasteners);
   const showNuts = useDiyStore((s) => s.showKitNuts);
@@ -109,8 +111,23 @@ const KitProps: React.FC<{ instance: DiyKitInstance }> = ({ instance }) => {
           </Row>
         ))}
         <p className="text-[10px] text-neutral-600 pt-1">
-          数量由角码孔位自动得出，可在「微调零件」页逐颗调整
+          数量由角码孔位自动得出
         </p>
+        {/* Frame-scope kits derive no geometry, so there is nothing to tune.
+            No fit check here on purpose: the instance already exists, so the
+            profile it was bound to passed `kitFitReason` — and if the profile
+            has since been resized, the derived parts are still what is drawn
+            and still worth adjusting. */}
+        {kit.scope === 'joint' && (
+          <button
+            data-kit-edit={instance.id}
+            onClick={() => navigate(`/kits?kit=${kit.id}&stl=${encodeURIComponent(cc.stlUrl)}`)}
+            className="mt-1 px-2 py-1 text-[10px] rounded border border-neutral-700 text-neutral-300 hover:border-wood-600 hover:text-wood-200 transition-colors cursor-pointer"
+          >
+            微调零件…
+            {layout !== null && <span className="ml-1 text-amber-500/90">已微调</span>}
+          </button>
+        )}
       </Section>
 
       {kit.ops.length > 0 && (
