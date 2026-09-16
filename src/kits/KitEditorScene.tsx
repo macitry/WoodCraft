@@ -196,6 +196,18 @@ const KitEditorScene: FC<KitEditorSceneProps> = ({
   const draggingRef = useRef(false);
   const cc = connectorByStlUrl(stlUrl);
   const fasteners = useMemo(() => jointFasteners(kit, stlUrl, 1, layout), [kit, stlUrl, layout]);
+
+  // Dev-only, same convention as `__wcFastenerCount` / `__wcDiyFastenerCount`:
+  // this page's whole promise is that the list, the canvas and the export agree,
+  // so a test must be able to count the CANVAS rather than read the list and
+  // assume the two match. Assignment, not accumulation — unlike the production
+  // viewers there is exactly one scene per page, and `fasteners` already has the
+  // layout applied (a removed part is gone from it, not filtered out here).
+  useEffect(() => {
+    if (!import.meta.env.DEV) return;
+    const w = window as unknown as { __wcKitEditorCount?: number };
+    w.__wcKitEditorCount = fasteners.length;
+  }, [fasteners.length]);
   // One profile size for both placeholders; 3030 unless the connector is bigger.
   const profileMm = PROFILE_DIMS['3030'];
   const runMm = Math.max(4 * profileMm, 4 * cc.extMm);
