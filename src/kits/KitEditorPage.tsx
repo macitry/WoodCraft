@@ -1,8 +1,9 @@
 import { useEffect, useMemo, type FC } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import KitEditorScene from './KitEditorScene';
+import PartPropertyPanel from './PartPropertyPanel';
 import { ACCESSORY_KITS, accessoryKitById, jointFasteners } from '../utils/accessoryKits';
-import type { LocalFastener, PartEdit } from '../utils/accessoryKits';
+import type { LocalFastener } from '../utils/accessoryKits';
 import { connectorByStlUrl } from '../diy/connectors';
 import { DEFAULT_BRACKET_STL_URL } from '../types/furniture';
 import { kitLayoutKey, useKitLayoutStore } from '../store/kitLayoutStore';
@@ -70,7 +71,31 @@ const KitEditorPage: FC = () => {
     () => jointFasteners(kit, cc.stlUrl, 1, layout),
     [kit, cc.stlUrl, layout],
   );
+  // The SAME derivation with no layout: where each seat sits and what it carries
+  // before any edit. The panel needs both, because every stored value is a delta
+  // against this — and a hand-added part has no seat here at all, which is
+  // exactly how the panel tells the two kinds apart.
+  const presets = useMemo(() => jointFasteners(kit, cc.stlUrl, 1, null), [kit, cc.stlUrl]);
+  const baseByKey = useMemo(
+    () => new Map(presets.map((f) => [f.key, [...f.position] as [number, number, number]])),
+    [presets],
+  );
+  const baseSpecByKey = useMemo(() => new Map(presets.map((f) => [f.key, f.spec])), [presets]);
   const edits = layout?.parts ?? {};
+
+  // The list and the 3D draw DIFFERENT sets, on purpose. `jointFasteners` drops a
+  // hidden part outright (that is what keeps 3D === CSV), so listing its own
+  // output would make a hidden part unreachable — gone from the list, gone from
+  // the panel, and no way back short of `恢复整套默认`. The list is therefore the
+  // union: every seat that CAN carry a part, plus whatever was added by hand.
+  const drawnByKey = useMemo(() => new Map(fasteners.map((f) => [f.key, f])), [fasteners]);
+  const listRows = useMemo(() => {
+    const rows = presets.map((f) => drawnByKey.get(f.key) ?? f);
+    for (const f of fasteners) if (f.added) rows.push(f);
+    return rows;
+  }, [presets, fasteners, drawnByKey]);
+  const hiddenCount = listRows.length - fasteners.length;
+  const panelPart = listRows.find((f) => f.key === selectedPartKey);
 
   return (
     <div className="w-screen h-screen flex flex-col bg-neutral-950 overflow-hidden">
@@ -88,6 +113,7 @@ const KitEditorPage: FC = () => {
         <div className="flex-1" />
         <span className="text-xs text-neutral-500 tabular-nums">
           共 {fasteners.length} 件 · 3D / 清单 / 导出同源
+          {hiddenCount > 0 && <span className="text-amber-500/80"> · 另有 {hiddenCount} 件已隐藏</span>}
         </span>
         <button
           onClick={() => resetKit(setKey)}
@@ -145,10 +171,10 @@ const KitEditorPage: FC = () => {
 
           <div className="flex-1 min-h-0 overflow-y-auto p-3">
             <p className="text-[10px] uppercase tracking-wider text-neutral-500 font-medium">
-              零件 <span className="text-neutral-600 normal-case">（{fasteners.length}）</span>
+              零件 <span className="text-neutral-600 normal-case">（{listRows.length}）</span>
             </p>
             <div className="mt-2 space-y-0.5">
-              {fasteners.map((f) => {
+              {listRows.map((f) => {
                 const edit = edits[f.key];
                 const removed = edit?.removed === true;
                 const on = f.key === selectedPartKey;
@@ -156,6 +182,7 @@ const KitEditorPage: FC = () => {
                   <button
                     key={f.key}
                     data-part={f.key}
+                    data-hidden={removed ? 'true' : undefined}
                     onClick={() => selectPart(on ? null : f.key)}
                     className={`w-full px-2 py-1 text-left text-[11px] rounded border transition-colors cursor-pointer ${
                       on
@@ -167,8 +194,10 @@ const KitEditorPage: FC = () => {
                   >
                     <span className="flex items-center gap-1">
                       <span className="truncate">{f.spec.name}</span>
-                      {isEdited(f, removed) && (
-                        <span className="ml-auto flex-shrink-0 text-[9px] text-amber-500/90">已微调</span>
+                      {(isEdited(f, removed) || removed) && (
+                        <span className="ml-auto flex-shrink-0 text-[9px] text-amber-500/90">
+                          {removed ? '已隐藏' : '已微调'}
+                        </span>
                       )}
                     </span>
                     <span className="block text-[9px] text-neutral-600 tabular-nums">
@@ -189,6 +218,8 @@ const KitEditorPage: FC = () => {
             layout={layout}
             selectedPartKey={selectedPartKey}
             onSelect={selectPart}
+            baseByKey={baseByKey}
+            setKey={setKey}
           />
           <div className="absolute top-3 left-3 pointer-events-none px-3 py-2 rounded-lg bg-black/55 backdrop-blur-sm text-[10px] text-neutral-400 leading-relaxed">
             <p>拖动旋转 · 滚轮缩放 · 右键平移</p>
@@ -199,64 +230,32 @@ const KitEditorPage: FC = () => {
 
         {/* Right — the selected part */}
         <aside className="w-64 flex-shrink-0 border-l border-neutral-800 overflow-y-auto p-3">
-          <SelectedPart
-            fastener={fasteners.find((f) => f.key === selectedPartKey) ?? null}
-            edit={selectedPartKey ? edits[selectedPartKey] : undefined}
-          />
+          {(() => {
+            const fastener = panelPart;
+            if (!fastener) {
+              return (
+                <p className="text-[11px] text-neutral-600 leading-snug">
+                  未选中零件。点 3D 中的一颗，或左侧清单里的一行。
+                </p>
+              );
+            }
+            const extra = layout?.extra.find((e) => `extra:${e.id}` === fastener.key);
+            return (
+              <PartPropertyPanel
+                // Remounted whenever the part or its drawn value changes, which is
+                // what reseeds the number drafts: typing is unaffected (the store
+                // only moves on blur/Enter), but a DRAG lands in the boxes.
+                key={`${fastener.key}|${fastener.position.join(',')}|${fastener.spec.name}`}
+                setKey={setKey}
+                fastener={fastener}
+                base={baseByKey.get(fastener.key) ?? [0, 0, 0]}
+                baseSpec={baseSpecByKey.get(fastener.key) ?? fastener.spec}
+                edit={edits[fastener.key]}
+                extra={extra}
+              />
+            );
+          })()}
         </aside>
-      </div>
-    </div>
-  );
-};
-
-/**
- * What the user has picked — read-only in this pass.
- *
- * Shows the DERIVED values, not the stored edit: `position` here is what the
- * scene draws and what the BOM counts, so the panel cannot disagree with either.
- * The stored delta is reported alongside, because the delta is what survives a
- * change of connector (the seat moves, the intent does not).
- */
-const SelectedPart: FC<{
-  fastener: LocalFastener | null;
-  edit: PartEdit | undefined;
-}> = ({ fastener, edit }) => {
-  if (!fastener) {
-    return (
-      <p className="text-[11px] text-neutral-600 leading-snug">
-        未选中零件。点 3D 中的一颗，或左侧清单里的一行。
-      </p>
-    );
-  }
-  const row = (label: string, value: string) => (
-    <div className="flex items-baseline justify-between gap-2 text-[11px]">
-      <span className="text-neutral-500">{label}</span>
-      <span className="text-neutral-200 tabular-nums text-right">{value}</span>
-    </div>
-  );
-  const mm = (v: readonly number[]) => v.map((n) => n.toFixed(2)).join(', ');
-  const deg = (v: readonly number[]) => v.map((n) => n.toFixed(1)).join(', ');
-
-  return (
-    <div className="space-y-2">
-      <p className="text-[10px] uppercase tracking-wider text-neutral-500 font-medium">选中零件</p>
-      <p className="text-xs text-neutral-200 leading-snug">{fastener.spec.name}</p>
-      <p className="text-[10px] font-mono text-neutral-600 break-all">{fastener.key}</p>
-
-      <div className="pt-1 space-y-1 border-t border-neutral-800">
-        {row('位置 (mm)', mm(fastener.position))}
-        {row('朝向 (°)', deg(fastener.rotation.map((r) => (r * 180) / Math.PI)))}
-        {row('来源', fastener.added ? '手工添加' : fastener.role === 'bolt' ? '螺栓' : '配合件')}
-        {fastener.internal && row('槽内', '透视显示')}
-      </div>
-
-      <div className="pt-1 space-y-1 border-t border-neutral-800">
-        <p className="text-[10px] text-neutral-500">
-          {edit ? '已微调（相对派生孔位）' : '预设孔位'}
-        </p>
-        {edit?.offset && <p className="text-[11px] text-amber-500/90">偏移 {mm(edit.offset)} mm</p>}
-        {edit?.rotOffset && <p className="text-[11px] text-amber-500/90">旋转 {deg(edit.rotOffset)}° XYZ</p>}
-        {edit?.removed && <p className="text-[11px] text-amber-500/90">已隐藏</p>}
       </div>
     </div>
   );

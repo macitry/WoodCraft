@@ -1,9 +1,10 @@
 import { Suspense, useEffect, useMemo, useRef, type FC } from 'react';
-import { Canvas, type ThreeEvent } from '@react-three/fiber';
+import { Canvas, useThree, type ThreeEvent } from '@react-three/fiber';
 import { GizmoHelper, GizmoViewport, OrbitControls } from '@react-three/drei';
 import type { OrbitControls as OrbitControlsImpl } from 'three-stdlib';
 import * as THREE from 'three';
 import { ConnectorStl } from '../diy/DiyBracketStl';
+import PartDragGizmo from './PartDragGizmo';
 import { buildScrewGroup } from '../diy/DiyScrewGeometry';
 import { buildTNutGroup } from '../diy/DiyNutGeometry';
 import { PROFILE_DIMS } from '../types/furniture';
@@ -105,11 +106,13 @@ const PartMesh: FC<{
  * The two extrusion placeholders the joint is bolted into.
  *
  * Runner A runs along +X with its slot face on y=0; runner B runs along +Y with
- * its face on x=0 — the two faces the connector's plates bear against. The
- * orientation is not arbitrary: the default pattern puts two seats 7 mm apart
- * along x (8 and 15), and two bolts can only share one slot if that slot runs
- * along x. So the runner the leg-x bolts enter must run along x, and its slot
- * mouth must face the bolt — which is exactly where a T-nut ends up.
+ * its face on x=0 — the two faces the connector's plates bear against. Which
+ * runner goes where is fixed by the seats, not by taste: `jointSeats`
+ * interleaves leg-by-leg, so a two-bolt kit puts one bolt on each leg —
+ * `bolt|x|8|0` at [8, 3, 0] driving along −Y, and `bolt|y|8|0` at [3, 8, 0]
+ * driving along −X. A bolt driving −Y enters the runner whose slot mouth faces
+ * +Y, and that runner necessarily runs along X. Its T-nut lands at (8, −8, 0),
+ * i.e. inside that runner's slot rather than buried in solid material.
  *
  * Display only, and knowingly imperfect: `PROFILE_DIMS` has no 21 mm entry, so
  * these are 30 mm 3030 bars while the cast bracket is 21 mm — the same visual
@@ -139,6 +142,24 @@ const ProfilePlaceholders: FC<{ size: number; lengthMm: number }> = ({ size, len
   );
 };
 
+/**
+ * Dev-only: hands the camera to the page so a headless test can project a part
+ * to screen coordinates and drive a real pointer drag, rather than asserting the
+ * drag maths by calling the store itself. Same convention as `__wcFastenerCount`.
+ */
+const DevCameraProbe: FC = () => {
+  const camera = useThree((s) => s.camera);
+  useEffect(() => {
+    if (!import.meta.env.DEV) return;
+    const w = window as unknown as { __wcKitEditorCamera?: unknown };
+    w.__wcKitEditorCamera = camera;
+    return () => {
+      delete w.__wcKitEditorCamera;
+    };
+  }, [camera]);
+  return null;
+};
+
 export interface KitEditorSceneProps {
   kit: AccessoryKit;
   /** The connector whose hole pattern the edits are keyed on. */
@@ -146,6 +167,9 @@ export interface KitEditorSceneProps {
   layout: KitLayout | null;
   selectedPartKey: string | null;
   onSelect: (partKey: string | null) => void;
+  /** Unedited seat positions, so the drag stores a delta against the seat. */
+  baseByKey: Map<string, [number, number, number]>;
+  setKey: string;
 }
 
 /**
@@ -163,8 +187,13 @@ const KitEditorScene: FC<KitEditorSceneProps> = ({
   layout,
   selectedPartKey,
   onSelect,
+  baseByKey,
+  setKey,
 }) => {
   const controlsRef = useRef<OrbitControlsImpl | null>(null);
+  // A drag ends with the pointer over empty space, which R3F reports as a miss —
+  // without this the release would drop the very selection being dragged.
+  const draggingRef = useRef(false);
   const cc = connectorByStlUrl(stlUrl);
   const fasteners = useMemo(() => jointFasteners(kit, stlUrl, 1, layout), [kit, stlUrl, layout]);
   // One profile size for both placeholders; 3030 unless the connector is bigger.
@@ -178,9 +207,12 @@ const KitEditorScene: FC<KitEditorSceneProps> = ({
       style={{ width: '100%', height: '100%' }}
       // A pick that lands on nothing clears the selection — otherwise the panel
       // keeps editing a part the user can no longer see is chosen.
-      onPointerMissed={() => onSelect(null)}
+      onPointerMissed={() => {
+        if (!draggingRef.current) onSelect(null);
+      }}
     >
       <color attach="background" args={['#151a21']} />
+      <DevCameraProbe />
       <ambientLight intensity={0.55} />
       <directionalLight position={[0.15, 0.25, 0.2]} intensity={1.9} color="#fff8ee" />
       <directionalLight position={[-0.2, -0.1, -0.15]} intensity={0.5} color="#dce8ff" />
@@ -215,6 +247,21 @@ const KitEditorScene: FC<KitEditorSceneProps> = ({
           onPick={onSelect}
         />
       ))}
+      {(() => {
+        const picked = fasteners.find((f) => f.key === selectedPartKey);
+        if (!picked || layout?.parts[selectedPartKey ?? '']?.removed) return null;
+        return (
+          <PartDragGizmo
+            fastener={picked}
+            base={baseByKey.get(picked.key) ?? [0, 0, 0]}
+            setKey={setKey}
+            controlsRef={controlsRef}
+            onDragChange={(d) => {
+              draggingRef.current = d;
+            }}
+          />
+        );
+      })()}
     </Canvas>
   );
 };
