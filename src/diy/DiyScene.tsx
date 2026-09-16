@@ -47,6 +47,19 @@ const DiyScene: React.FC<DiySceneProps> = ({ onCameraReady }) => {
     onCameraReady(camera as THREE.PerspectiveCamera);
   }).current?.();
 
+  // Dev-only, same convention as `__wcKitEditorCamera`: face picking reports its
+  // result through `matrixWorld`, so a headless test has to aim at a real point
+  // in the scene rather than poke the store. Without the camera it cannot project
+  // mm → screen and the whole DIY raycast path stays untestable.
+  useEffect(() => {
+    if (!import.meta.env.DEV) return;
+    const w = window as unknown as { __wcDiyCamera?: unknown };
+    w.__wcDiyCamera = camera;
+    return () => {
+      delete w.__wcDiyCamera;
+    };
+  }, [camera]);
+
   // Animate camera toward focus after placing a root profile
   useFrame(() => {
     const ctrl = controlsRef.current;

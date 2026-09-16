@@ -1,7 +1,5 @@
 import { useMemo, Suspense, useState, useEffect, useCallback } from 'react';
 import * as THREE from 'three';
-import { useLoader } from '@react-three/fiber';
-import { STLLoader } from 'three-stdlib';
 import { useDiyStore } from '../store/diyStore';
 import { useModelStore } from '../store/modelStore';
 import { PROFILE_DIMS } from '../types/furniture';
@@ -9,20 +7,9 @@ import type { BracketFacePick } from '../types/furniture';
 import { findCornerAt, eulerFromNormals } from './DiyCornerHints';
 import { fetchBracketRotation } from '../api/modelApi';
 import { logDiyBracket } from './diyLog';
+import { ProfileStl } from './ProfileStl';
 
 const M = 0.001;
-
-const COLORS: Record<string, string> = {
-  '2020': '#8a8a8a',
-  '3030': '#a0a0a0',
-  '4040': '#b8b8b8',
-};
-
-const STL_URLS: Record<string, string> = {
-  '2020': '/profiles/profile_2020.stl',
-  '3030': '/profiles/profile_3030.stl',
-  '4040': '/profiles/profile_4040.stl',
-};
 
 /**
  * Box overlay with per-face hover highlight.
@@ -63,61 +50,6 @@ const FaceBox: React.FC<{
       {materials.map((mat, i) => (
         <primitive key={i} object={mat} attach={`material-${i}`} />
       ))}
-    </mesh>
-  );
-};
-
-/**
- * STL model of the actual aluminum extrusion profile.
- * Loaded from DXF-extruded STL, scaled to match dimensions.
- */
-const ProfileStl: React.FC<{
-  profileSize: string;
-  length: number;
-  direction: string;
-}> = ({ profileSize, length, direction }) => {
-  const url = STL_URLS[profileSize] || STL_URLS['3030'];
-  const geom = useLoader(STLLoader, url);
-  const dim = PROFILE_DIMS[profileSize] ?? 30;
-  const lenM = M * Math.max(10, length);
-
-  const cloned = useMemo(() => {
-    const g = geom.clone();
-    // Center vertices
-    const pos = g.getAttribute('position');
-    let minX = Infinity, minY = Infinity, minZ = Infinity;
-    let maxX = -Infinity, maxY = -Infinity, maxZ = -Infinity;
-    for (let i = 0; i < pos.count; i++) {
-      const x = pos.getX(i), y = pos.getY(i), z = pos.getZ(i);
-      if (x < minX) minX = x; if (x > maxX) maxX = x;
-      if (y < minY) minY = y; if (y > maxY) maxY = y;
-      if (z < minZ) minZ = z; if (z > maxZ) maxZ = z;
-    }
-    const cx = (minX + maxX) / 2, cy = (minY + maxY) / 2, cz = (minZ + maxZ) / 2;
-    for (let i = 0; i < pos.count; i++) {
-      pos.setXYZ(i, pos.getX(i) - cx, pos.getY(i) - cy, pos.getZ(i) - cz);
-    }
-    pos.needsUpdate = true;
-    return g;
-  }, [geom]);
-
-  // Scale: mm→m, and stretch Z axis to match user length (ref=1000mm)
-  const scaleZ = lenM / (1000 * M);
-  const scale: [number, number, number] = [M, M, M * scaleZ];
-
-  // Coordinate conversion Z-up → Y-up, then to direction
-  const coordQ = new THREE.Quaternion().setFromEuler(new THREE.Euler(-Math.PI / 2, 0, 0, 'XYZ'));
-  const dirE = new THREE.Euler(
-    direction === 'Z' ? Math.PI / 2 : 0, 0,
-    direction === 'X' ? -Math.PI / 2 : 0, 'YXZ',
-  );
-  const dirQ = new THREE.Quaternion().setFromEuler(dirE);
-  const finalQ = dirQ.clone().multiply(coordQ);
-  const finalE = new THREE.Euler().setFromQuaternion(finalQ, 'YXZ');
-
-  return (
-    <mesh geometry={cloned} rotation={[finalE.x, finalE.y, finalE.z]} scale={scale}>
-      <meshStandardMaterial color="#a0a0a0" metalness={0.7} roughness={0.35} />
     </mesh>
   );
 };
