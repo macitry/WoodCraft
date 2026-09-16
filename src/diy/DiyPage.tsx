@@ -80,6 +80,18 @@ const DiyPage: React.FC = () => {
           ← Home
         </button>
         <div className="w-px h-5 bg-neutral-700" />
+        {/* This page has its own header rather than the shared Toolbar, so the
+            way into the assembly editor has to be repeated here — otherwise the
+            only route to it is `/`, which is the "dialog hanging off something
+            else" problem this is meant to fix. */}
+        <button
+          data-nav-kits
+          onClick={() => navigate('/kits')}
+          className="px-3 py-1 text-xs rounded bg-neutral-800 hover:bg-neutral-700 text-wood-400 hover:text-wood-300 transition-colors cursor-pointer font-medium"
+        >
+          🧩 组合
+        </button>
+        <div className="w-px h-5 bg-neutral-700" />
         <span className="text-sm font-semibold text-white">
           DIY Builder
         </span>

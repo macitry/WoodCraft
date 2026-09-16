@@ -226,8 +226,8 @@ const KitEditorPage: FC = () => {
           ← Home
         </button>
         <div className="w-px h-5 bg-neutral-700" />
-        <span className="text-sm font-semibold text-white">配件微调</span>
-        <span className="text-xs text-neutral-500">{kit.name}</span>
+        <span className="text-sm font-semibold text-white">组合</span>
+        <span className="text-xs text-neutral-500">· {kit.name}</span>
         <div className="flex-1" />
         <span className="text-xs text-neutral-500 tabular-nums">
           共 {fasteners.length} 件 · 3D / 清单 / 导出同源
@@ -257,23 +257,38 @@ const KitEditorPage: FC = () => {
         {/* Left — kit + parts */}
         <aside className="w-72 flex-shrink-0 flex flex-col border-r border-neutral-800 overflow-hidden">
           <div className="p-3 border-b border-neutral-800">
-            <p className="text-[10px] uppercase tracking-wider text-neutral-500 font-medium">配件组合</p>
+            <p className="text-[10px] uppercase tracking-wider text-neutral-500 font-medium">组合库</p>
             <div className="mt-2 space-y-1">
-              {JOINT_KITS.map((k) => (
-                <button
-                  key={k.id}
-                  data-kit={k.id}
-                  onClick={() => navigate(editorUrl(k.id, cc.stlUrl))}
-                  className={`w-full px-2 py-1.5 text-left text-xs rounded border transition-colors cursor-pointer ${
-                    k.id === kit.id
-                      ? 'border-wood-600 bg-wood-500/15 text-wood-200'
-                      : 'border-neutral-800 text-neutral-400 hover:border-neutral-600'
-                  }`}
-                >
-                  <span className="block font-medium">{k.name}</span>
-                  <span className="block text-[10px] text-neutral-500 mt-0.5">{k.desc}</span>
-                </button>
-              ))}
+              {ACCESSORY_KITS.map((k) => {
+                const editable = k.scope === 'joint';
+                // Listed, but not a destination: a frame-scope kit prices a whole
+                // tabletop and derives no geometry, so there is nothing here to
+                // tune. Making it clickable would produce a false state — the URL
+                // would say `tabletop-fix` while the highlighted kit, the scene
+                // and the parts list all stayed on the fallback. The reason is
+                // written on the row instead, where the question gets asked.
+                return (
+                  <button
+                    key={k.id}
+                    data-kit={k.id}
+                    data-editable={editable ? 'true' : 'false'}
+                    disabled={!editable}
+                    onClick={editable ? () => navigate(editorUrl(k.id, cc.stlUrl)) : undefined}
+                    className={`w-full px-2 py-1.5 text-left text-xs rounded border transition-colors ${
+                      !editable
+                        ? 'border-neutral-800/60 text-neutral-600 cursor-not-allowed'
+                        : k.id === kit.id
+                          ? 'border-wood-600 bg-wood-500/15 text-wood-200 cursor-pointer'
+                          : 'border-neutral-800 text-neutral-400 hover:border-neutral-600 cursor-pointer'
+                    }`}
+                  >
+                    <span className="block font-medium">{k.name}</span>
+                    <span className="block text-[10px] text-neutral-500 mt-0.5">
+                      {editable ? k.desc : '按整块桌板计价，不产生可放置的零件，无装配体可调'}
+                    </span>
+                  </button>
+                );
+              })}
             </div>
           </div>
 

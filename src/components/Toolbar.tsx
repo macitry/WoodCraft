@@ -114,6 +114,16 @@ const Toolbar: React.FC<ToolbarProps> = ({
         🔧 DIY
       </button>
 
+      {/* The assembly editor is a document in its own right, so it gets its own
+          way in — no joint has to exist first. */}
+      <button
+        data-nav-kits
+        onClick={() => navigate('/kits')}
+        className="px-3 py-1 text-xs rounded bg-neutral-800 hover:bg-neutral-700 text-wood-400 hover:text-wood-300 transition-colors cursor-pointer font-medium"
+      >
+        🧩 组合
+      </button>
+
       <div className="w-px h-6 bg-neutral-800" />
 
       {/* Template selector */}
