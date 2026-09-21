@@ -17,6 +17,17 @@ import type { OrbitControls as OrbitControlsImpl } from 'three-stdlib';
 
 export type ViewMode = '3d' | 'plan';
 
+/** Uploaded boards are read from IndexedDB exactly once per session.
+ *
+ *  Module scope, not component state: `HomePage` unmounts on every route change
+ *  (see the guard below) and `StrictMode` double-invokes effects in development,
+ *  so a per-component flag would re-run the read on each of those. Re-running is
+ *  not fatal — `registerBoard` hands back the descriptor it already made for an
+ *  id, which is what keeps the object URLs from being revoked under the store's
+ *  feet — but the read is a megabyte of blobs and there is no reason to do it
+ *  four times. */
+let boardsHydrated = false;
+
 /** Main home page — template-based furniture configurator. */
 const HomePage: React.FC = () => {
   const [viewPreset, setViewPreset] = useState<ViewPreset>('perspective');
@@ -35,6 +46,15 @@ const HomePage: React.FC = () => {
     loadModelFromApi();
   }, [loadModelFromApi]);
 
+  useEffect(() => {
+    if (boardsHydrated) return;
+    boardsHydrated = true;
+    // Never awaited and never able to reject: a browser that will not give us
+    // IndexedDB costs the user their uploads and nothing else — this render
+    // already happened with the built-in four boards.
+    void useModelStore.getState().hydrateCustomBoards();
+  }, []);
+
   const handleViewPreset = useCallback((preset: ViewPreset) => {
     setViewPreset(preset);
   }, []);
@@ -47,6 +67,21 @@ const HomePage: React.FC = () => {
   const handleControlsReady = useCallback((controls: OrbitControlsImpl) => {
     setControls(controls);
   }, []);
+
+  // Dev-only, same convention as `__wcDiyCamera` / `__wcKitEditorCamera`: this is
+  // the third place the kit hardware is mounted, and its camera is the only one
+  // that cannot be reached from a published scene (the other two publish theirs
+  // straight out of `useThree`). Without it a headless test can count what is
+  // mounted here but cannot look at it, and a direct camera write is undone every
+  // frame by the damping controller — the handle is the only way to aim.
+  useEffect(() => {
+    if (!import.meta.env.DEV) return;
+    const w = window as unknown as { __wcMainControls?: unknown };
+    w.__wcMainControls = _controls;
+    return () => {
+      delete w.__wcMainControls;
+    };
+  }, [_controls]);
 
   // When a hole is selected the right sidebar becomes its property editor
   // (selected state lives in the store so it survives plan↔3d switching).

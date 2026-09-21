@@ -1,4 +1,5 @@
-import { useRef, useMemo } from 'react';
+import { useRef, useMemo, useEffect } from 'react';
+import { useThree } from '@react-three/fiber';
 import { useModelStore } from '../store/modelStore';
 import { TEMPLATE_LAYOUTS } from '../types/furniture';
 import type { Component, ViewPreset } from '../types/furniture';
@@ -69,6 +70,22 @@ const Scene: React.FC<SceneProps> = ({ viewPreset, onControlsReady }) => {
   const brackets = useModelStore((s) => s.brackets);
   const cp = useModelStore((s) => s.currentParams);
   const controlsRef = useRef<OrbitControlsImpl | null>(null);
+
+  // Dev-only, same convention as `__wcDiyScene` / `__wcKitEditorScene`: the
+  // tabletop's surface is chosen here and its UVs are authored per vertex, so
+  // checking that a board is drawn at the RIGHT SCALE means measuring the mounted
+  // geometry against the tile sizes the generated table declares. A rendered
+  // pixel cannot tell 17 mm rings from 2 mm rings. `__wcMainControls` publishes
+  // the camera; this publishes what the camera is looking at.
+  const scene = useThree((s) => s.scene);
+  useEffect(() => {
+    if (!import.meta.env.DEV) return;
+    const w = window as unknown as { __wcMainScene?: unknown };
+    w.__wcMainScene = scene;
+    return () => {
+      delete w.__wcMainScene;
+    };
+  }, [scene]);
 
   const handleControlsMounted = (controls: OrbitControlsImpl | null) => {
     if (controls && onControlsReady) {

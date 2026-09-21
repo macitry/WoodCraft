@@ -21,6 +21,23 @@ import { generateModel, fetchDefaultModel, fetchProgress } from '../api/modelApi
 import type { ServerProgress } from '../api/modelApi';
 import { mockModel, delay } from '../mock/exampleModel';
 import { autoGenerateBrackets } from '../diy/mainBracketAuto';
+import { DEFAULT_TABLETOP_TEXTURE, type TabletopTexture } from '../materials/tabletopTextures';
+import {
+  boardById,
+  boardRecord,
+  forgetBoard,
+  registerBoard,
+  retileBoard,
+  type BoardRecord,
+} from '../materials/boardRegistry';
+import { forgetBoardMaps } from '../materials/boardMaterial';
+import {
+  deleteBoard,
+  loadBoards,
+  loadSelectedBoardId,
+  saveBoard,
+  saveSelectedBoardId,
+} from '../materials/boardStorage';
 
 // ============================================================
 // Model Store — manages the current furniture model state
@@ -237,6 +254,33 @@ interface ModelState {
   removeAnnotation: (id: string) => void;
   setAnnotationsVisible: (v: boolean) => void;
   setDxfTabletop: (shape: DxfTabletopShape | null) => void;
+  /** Which board the tabletop is surfaced with — an id from TABLETOP_TEXTURES.
+   *
+   *  Kept OUT of `model.components[].material` on purpose. `updateParameter`
+   *  rebuilds every component from the API response 2 s after any parameter
+   *  change, and `apiPartsToComponents` takes `material` straight from the
+   *  payload — an override parked there would be silently reverted the next
+   *  time the user dragged a slider. This field is the picture of the desk, not
+   *  a property of the desk, so it belongs beside the view state. */
+  tabletopTexture: string;
+  setTabletopTexture: (id: string) => void;
+  /** The boards the user uploaded, in arrival order.
+   *
+   *  Here ONLY so React re-renders the picker. The descriptor the renderer
+   *  resolves comes from `boardRegistry`, which is the single lookup for the
+   *  whole pipeline; both are written by one synchronous block in the actions
+   *  below, and nothing else may touch either. */
+  customBoards: TabletopTexture[];
+  /** Add an uploaded board and select it. `rec` is already converted — the
+   *  decode/crop/derive step is `boardUpload.ts` and happens before this. */
+  addCustomBoard: (rec: BoardRecord) => void;
+  removeCustomBoard: (id: string) => void;
+  /** Re-state how many millimetres an uploaded board's square covers. The single
+   *  input that decides whether its grain comes out at the right size. */
+  setBoardTileMm: (id: string, tileMm: number) => void;
+  /** Read the uploads this browser kept, once per session. Total — it never
+   *  rejects, and degrades to "no uploads" when storage is unavailable. */
+  hydrateCustomBoards: () => Promise<void>;
   /** Toggle solo: hide all other parts, show only this one. */
   soloComponent: (componentId: string) => void;
   // Bracket actions
@@ -317,6 +361,8 @@ export const useModelStore = create<ModelState>((set, get) => ({
   activeKitId: null,
   showFasteners: true,
   showInternalFasteners: false,
+  tabletopTexture: DEFAULT_TABLETOP_TEXTURE,
+  customBoards: [],
   currentParams: {
     templateId: 'basic-desk',
     width: 1200,
@@ -629,6 +675,86 @@ export const useModelStore = create<ModelState>((set, get) => ({
     set((s) => ({ annotations: s.annotations.filter((x) => x.id !== id) })),
 
   setAnnotationsVisible: (v: boolean) => set({ annotationsVisible: v }),
+
+  // Unknown ids fall back rather than being stored, so a typo in a call site
+  // cannot leave the board in a state the table has no entry for.
+  setTabletopTexture: (id) => {
+    const resolved = boardById(id).id;
+    saveSelectedBoardId(resolved);
+    set({ tabletopTexture: resolved });
+  },
+
+  // ------------------------------------------------------------------
+  // Uploaded boards.
+  //
+  // THE ONE RULE: the registry write and the `set()` are one synchronous block,
+  // with no `await` between them. Everything outside React resolves a board id
+  // through the registry, so a render that landed in between would list a board
+  // it could not resolve — and `boardById` answers that with oak, silently and
+  // without an error to notice. All decoding and all IndexedDB work therefore
+  // happens strictly before or strictly after, never inside.
+  // ------------------------------------------------------------------
+
+  addCustomBoard: (rec) => {
+    const desc = registerBoard(rec);
+    set((s) => ({ customBoards: [...s.customBoards, desc] }));
+    // Selecting it is the whole point of having uploaded it. Reuses the one
+    // setter, so the id is normalised and persisted by the same code path as a
+    // click on a baked chip.
+    get().setTabletopTexture(desc.id);
+    void saveBoard(rec);
+  },
+
+  removeCustomBoard: (id) => {
+    const wasSelected = get().tabletopTexture === id;
+    forgetBoard(id);
+    forgetBoardMaps(id);
+    set((s) => ({
+      customBoards: s.customBoards.filter((b) => b.id !== id),
+      // Cleared in the SAME set() as the removal. Left dangling, the id still
+      // resolves to oak, so the desk looks right while no chip is marked
+      // active — a state the picker cannot show and the user cannot leave.
+      tabletopTexture: wasSelected ? DEFAULT_TABLETOP_TEXTURE : s.tabletopTexture,
+    }));
+    if (wasSelected) saveSelectedBoardId(DEFAULT_TABLETOP_TEXTURE);
+    void deleteBoard(id);
+  },
+
+  setBoardTileMm: (id, tileMm) => {
+    const mm = Math.max(1, Math.round(tileMm));
+    // A NEW descriptor object under the SAME id. `ModelLoader` holds it in a
+    // useMemo dependency list, so a fresh identity is what re-authors the UVs —
+    // while `useBoardMaps`'s deps are `[id, anisotropy]`, so the images are not
+    // re-decoded. Nothing about the picture changed; only how much board it
+    // covers.
+    const desc = retileBoard(id, mm);
+    if (!desc) return;
+    set((s) => ({ customBoards: s.customBoards.map((b) => (b.id === id ? desc : b)) }));
+    const rec = boardRecord(id);
+    if (rec) void saveBoard(rec);
+  },
+
+  hydrateCustomBoards: async () => {
+    const recs = await loadBoards();
+    if (recs.length) {
+      const descs = recs.map(registerBoard);
+      set((s) => {
+        // Merged, not replaced: an upload made while the read was in flight is
+        // already in the list, and `registerBoard` handed back the descriptor it
+        // had already made for any id it had seen.
+        const known = new Set(s.customBoards.map((b) => b.id));
+        return { customBoards: [...s.customBoards, ...descs.filter((d) => !known.has(d.id))] };
+      });
+    }
+    // Applied AFTER the boards exist, so an upload that was selected last
+    // session resolves. If it does not — the record was dropped as unreadable,
+    // or deleted in another tab — forget it rather than leave a key that will
+    // never resolve again.
+    const saved = loadSelectedBoardId();
+    if (!saved) return;
+    if (boardById(saved).id === saved) get().setTabletopTexture(saved);
+    else saveSelectedBoardId(DEFAULT_TABLETOP_TEXTURE);
+  },
 
   setDxfTabletop: (shape: DxfTabletopShape | null) => {
     set({ dxfTabletop: shape });

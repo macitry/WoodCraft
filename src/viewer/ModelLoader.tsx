@@ -1,6 +1,6 @@
-import { useMemo, Suspense, useRef } from 'react';
+import { useMemo, useEffect, Suspense, useRef } from 'react';
 import * as THREE from 'three';
-import { useLoader } from '@react-three/fiber';
+import { useLoader, useThree } from '@react-three/fiber';
 import { STLLoader } from 'three-stdlib';
 import type { FurnitureModel, Component, TabletopHole, BracketInstance } from '../types/furniture';
 import type { DxfTabletopShape } from '../utils/dxfImport';
@@ -8,8 +8,36 @@ import { buildHolePath } from '../utils/holeGeometry';
 import { TEMPLATE_LAYOUTS, DEFAULT_BRACKET_STL_URL } from '../types/furniture';
 import { useModelStore } from '../store/modelStore';
 import { FastenerSet } from './MainFastenerRenderer';
+import { applyBoardUVs, buildBoardMaterials, splitStlByFace, useBoardMaps, METRE_FRAME, STL_FRAME } from '../materials/boardMaterial';
+import { boardById } from '../materials/boardRegistry';
+import type { TabletopTexture } from '../materials/tabletopTextures';
 
 const { Euler, Quaternion } = THREE;
+
+/**
+ * The board the tabletop is surfaced with, right now.
+ *
+ * `boardById` alone is not enough. It reads a module-level map, so it is only as
+ * reactive as the id this component subscribes to — and re-tiling an uploaded
+ * board deliberately KEEPS its id and swaps the descriptor (see
+ * `boardRegistry.retileBoard`), so an id-only read would leave the desk showing
+ * the old grain size until something else happened to re-render it.
+ *
+ * Reading the store's own copy as well is what closes that: the swap replaces
+ * the object in `customBoards`, so this re-renders, and the re-render is what
+ * re-authors the UVs — `boardTile` is a dependency of that `useMemo`.
+ *
+ * `find` returns an object that already exists or `undefined`, never a fresh
+ * one. That matters: zustand hands the selector's result to
+ * `useSyncExternalStore`, so a selector that built a new object here would
+ * re-render forever. Baked boards are not in this list, so they fall through to
+ * the registry, and `undefined === undefined` is a stable comparison.
+ */
+function useBoardTile(): TabletopTexture {
+  const id = useModelStore((s) => s.tabletopTexture);
+  const custom = useModelStore((s) => s.customBoards.find((b) => b.id === s.tabletopTexture));
+  return custom ?? boardById(id);
+}
 
 /**
  * Hybrid 3D model loader for furniture.
@@ -188,6 +216,13 @@ const StlPart: React.FC<StlPartProps> = ({
 }) => {
   const geometry = useLoader(STLLoader, url);
 
+  // Only a tabletop is a board. Everything else on the desk is aluminium
+  // extrusion or steel, and passes null here so nothing is loaded for it.
+  const isTabletop = part.partType === 'tabletop';
+  const boardTile = useBoardTile();
+  const maxAnisotropy = useThree((s) => s.gl.capabilities.getMaxAnisotropy());
+  const boardMaps = useBoardMaps(isTabletop ? boardTile.id : null, maxAnisotropy);
+
   // Clone + center + scale (XY for tabletop, Z for extrusions).
   const clonedGeometry = useMemo(() => {
     const g = geometry.clone();
@@ -218,8 +253,43 @@ const StlPart: React.FC<StlPartProps> = ({
     }
     pos.needsUpdate = true;
 
+    if (isTabletop) {
+      // An STL arrives as one flat run of triangles: no UVs, and no groups for a
+      // per-surface material to hang off. Both are supplied here, in the
+      // geometry's OWN frame (Z-up millimetres — the mesh's −90° rotation about X
+      // carries the UVs into place along with everything else).
+      splitStlByFace(g, STL_FRAME);
+      applyBoardUVs(g, boardTile, STL_FRAME);
+    }
+
     return g;
-  }, [geometry, zScale, xyScale]);
+  }, [geometry, zScale, xyScale, isTabletop, boardTile]);
+
+  // The board's two materials, one per group. Null until the PNGs land, and
+  // forever if they never do — the flat colour below still renders the desk.
+  const boardMaterials = useMemo(
+    () => (isTabletop && boardMaps
+      ? buildBoardMaterials(clonedGeometry, boardMaps, {
+        metalness: materialProps.metalness ?? 0,
+        emissive: isSelected ? '#ffffff' : '#000000',
+        emissiveIntensity: isSelected ? 0.15 : 0,
+      }, STL_FRAME)
+      : null),
+    [isTabletop, boardMaps, clonedGeometry, materialProps, isSelected],
+  );
+
+  // The array repeats the same two materials across the groups, so dispose the
+  // set rather than the array.
+  useEffect(() => () => {
+    new Set(boardMaterials).forEach((m) => m?.dispose());
+  }, [boardMaterials]);
+
+  // The CLONE is ours to dispose; `geometry` from the loader is shared by every
+  // instance of this url, so disposing that would pull it out from under the
+  // others. It is rebuilt whenever the board or the scale changes — and since an
+  // uploaded board can be re-tiled from the panel, that is now something the user
+  // can do over and over — so without this every rebuild strands its buffers.
+  useEffect(() => () => clonedGeometry.dispose(), [clonedGeometry]);
 
   const pose = part.pose;
 
@@ -258,11 +328,17 @@ const StlPart: React.FC<StlPartProps> = ({
       }}
       name={part.id}
     >
-      <meshStandardMaterial
-        {...materialProps}
-        emissive={isSelected ? '#ffffff' : '#000000'}
-        emissiveIntensity={isSelected ? 0.15 : 0}
-      />
+      {boardMaterials ? (
+        boardMaterials.map((m, i) => (
+          <primitive key={i} object={m} attach={`material-${i}`} />
+        ))
+      ) : (
+        <meshStandardMaterial
+          {...materialProps}
+          emissive={isSelected ? '#ffffff' : '#000000'}
+          emissiveIntensity={isSelected ? 0.15 : 0}
+        />
+      )}
     </mesh>
   );
 };
@@ -302,13 +378,25 @@ const ProceduralPart: React.FC<ProceduralPartProps> = ({
   const materialProps =
     MATERIALS[part.material || 'wood'] || MATERIALS.wood;
 
+  // The tabletop is the one part surfaced with real wood. Every other part keeps
+  // its flat PBR colour — the frame is aluminium, the brackets are steel, and
+  // neither is improved by a picture of a tree.
+  const isTabletop = part.partType === 'tabletop';
+  const boardTile = useBoardTile();
+  const maxAnisotropy = useThree((s) => s.gl.capabilities.getMaxAnisotropy());
+  const boardMaps = useBoardMaps(isTabletop ? boardTile.id : null, maxAnisotropy);
+
   const geometry = useMemo(() => {
     switch (part.partType) {
-      case 'tabletop':
-        if (holes.length > 0) {
-          return createHoledTabletopGeometry(mm(width), mm(depth), mm(thickness), holes);
-        }
-        return new THREE.BoxGeometry(mm(width), mm(thickness), mm(depth));
+      case 'tabletop': {
+        const g = holes.length > 0
+          ? createHoledTabletopGeometry(mm(width), mm(depth), mm(thickness), holes)
+          : new THREE.BoxGeometry(mm(width), mm(thickness), mm(depth));
+        // Authored, not generated: neither geometry knows how many millimetres
+        // it is, so both would stretch one tile across the whole desk.
+        applyBoardUVs(g, boardTile, METRE_FRAME);
+        return g;
+      }
 
       case 'leg':
         return new THREE.BoxGeometry(ps, mm(height - thickness) - ps, ps);
@@ -330,7 +418,7 @@ const ProceduralPart: React.FC<ProceduralPartProps> = ({
       default:
         return new THREE.BoxGeometry(0.05, 0.05, 0.05);
     }
-  }, [part.partType, part.id, part.material, width, depth, height, thickness, frameW, frameD, ps, holes]);
+  }, [part.partType, part.id, part.material, width, depth, height, thickness, frameW, frameD, ps, holes, boardTile]);
 
   const position = useMemo((): [number, number, number] => {
     const h = mm(height);
@@ -381,6 +469,29 @@ const ProceduralPart: React.FC<ProceduralPartProps> = ({
     }
   }, [part.partType, part.id, width, depth, height, thickness, ps, insetX, insetZ, frameW, layout.crossBeamHeightRatio]);
 
+  // One material per geometry group: the broad faces get the board's face, the
+  // rims get its edge. Until the maps arrive — or forever, if they never do —
+  // this stays null and the part renders with the flat colour below.
+  const boardMaterials = useMemo(
+    () => (isTabletop && boardMaps
+      ? buildBoardMaterials(geometry, boardMaps, {
+        metalness: materialProps.metalness ?? 0,
+        emissive: isSelected ? '#ffffff' : '#000000',
+        emissiveIntensity: isSelected ? 0.15 : 0,
+      }, METRE_FRAME)
+      : null),
+    [isTabletop, boardMaps, geometry, materialProps, isSelected],
+  );
+
+  // The array holds the same two materials once per group, so dispose the set.
+  useEffect(() => () => {
+    new Set(boardMaterials).forEach((m) => m?.dispose());
+  }, [boardMaterials]);
+
+  // Built here rather than loaded, so it belongs to this instance alone. See the
+  // note in `StlPart` — re-tiling an uploaded board rebuilds it.
+  useEffect(() => () => geometry.dispose(), [geometry]);
+
   return (
     <mesh
       geometry={geometry}
@@ -393,11 +504,17 @@ const ProceduralPart: React.FC<ProceduralPartProps> = ({
       }}
       name={part.id}
     >
-      <meshStandardMaterial
-        {...materialProps}
-        emissive={isSelected ? '#ffffff' : '#000000'}
-        emissiveIntensity={isSelected ? 0.15 : 0}
-      />
+      {boardMaterials ? (
+        boardMaterials.map((m, i) => (
+          <primitive key={i} object={m} attach={`material-${i}`} />
+        ))
+      ) : (
+        <meshStandardMaterial
+          {...materialProps}
+          emissive={isSelected ? '#ffffff' : '#000000'}
+          emissiveIntensity={isSelected ? 0.15 : 0}
+        />
+      )}
     </mesh>
   );
 };
@@ -530,10 +647,36 @@ const DxfTabletopPart: React.FC<DxfTabletopPartProps> = ({
 }) => {
   const h = getParam(model, 'height', 750);
   const tt = getParam(model, 'tabletop_thickness', 18);
-  const geometry = useMemo(
-    () => createDxfTabletopGeometry(dxf, mm(tt)),
-    [dxf, tt],
+  const boardTile = useBoardTile();
+  const maxAnisotropy = useThree((s) => s.gl.capabilities.getMaxAnisotropy());
+  const boardMaps = useBoardMaps(boardTile.id, maxAnisotropy);
+
+  const geometry = useMemo(() => {
+    const g = createDxfTabletopGeometry(dxf, mm(tt));
+    // A DXF board is still a board: same Y-up metre frame as the drilled one,
+    // and the same two groups (caps in 0, walls in 1) out of ExtrudeGeometry.
+    applyBoardUVs(g, boardTile, METRE_FRAME);
+    return g;
+  }, [dxf, tt, boardTile]);
+
+  const boardMaterials = useMemo(
+    () => (boardMaps
+      ? buildBoardMaterials(geometry, boardMaps, {
+        metalness: materialProps.metalness ?? 0,
+        emissive: isSelected ? '#ffffff' : '#000000',
+        emissiveIntensity: isSelected ? 0.15 : 0,
+      }, METRE_FRAME)
+      : null),
+    [boardMaps, geometry, materialProps, isSelected],
   );
+  useEffect(() => () => {
+    new Set(boardMaterials).forEach((m) => m?.dispose());
+  }, [boardMaterials]);
+
+  // Built here rather than loaded, so it belongs to this instance alone. See the
+  // note in `StlPart` — re-tiling an uploaded board rebuilds it.
+  useEffect(() => () => geometry.dispose(), [geometry]);
+
   const posY = mm(h - tt / 2);
 
   return (
@@ -544,11 +687,17 @@ const DxfTabletopPart: React.FC<DxfTabletopPartProps> = ({
       receiveShadow
       onClick={(e) => { e.stopPropagation(); onClick(); }}
     >
-      <meshStandardMaterial
-        {...materialProps}
-        emissive={isSelected ? '#ffffff' : '#000000'}
-        emissiveIntensity={isSelected ? 0.15 : 0}
-      />
+      {boardMaterials ? (
+        boardMaterials.map((m, i) => (
+          <primitive key={i} object={m} attach={`material-${i}`} />
+        ))
+      ) : (
+        <meshStandardMaterial
+          {...materialProps}
+          emissive={isSelected ? '#ffffff' : '#000000'}
+          emissiveIntensity={isSelected ? 0.15 : 0}
+        />
+      )}
     </mesh>
   );
 };
