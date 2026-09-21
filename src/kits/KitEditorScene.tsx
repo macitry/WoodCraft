@@ -7,72 +7,26 @@ import { ConnectorStl } from '../diy/DiyBracketStl';
 import { ProfileStl } from '../diy/ProfileStl';
 import ProfileBoundary from './ProfileBoundary';
 import PartDragGizmo from './PartDragGizmo';
-import { buildScrewGroup } from '../diy/DiyScrewGeometry';
-import { buildTNutGroup } from '../diy/DiyNutGeometry';
+import { ScrewMesh, TNutMesh } from '../diy/FastenerStl';
+import { DEFAULT_SCREW_FAMILY } from '../diy/fastenerDims';
 import { PROFILE_DIMS } from '../types/furniture';
 import { connectorByStlUrl } from '../diy/connectors';
 import type { AccessoryKit, HardwareKind, KitLayout, LocalFastener } from '../utils/accessoryKits';
-import { jointFasteners } from '../utils/accessoryKits';
+import { SCREW_SERIES, jointFasteners } from '../utils/accessoryKits';
 
 const M = 0.001;
 
 const TONE: Record<HardwareKind, string> = {
   socket_screw: '#c8c8c8',
-  wood_screw: '#b98a4a',
+  // Steel, as the BOM prints it. The brass tone belongs to the T-nuts, which are
+  // brass — two brass parts in one scene would only be confusable.
+  countersunk_screw: '#c8c8c8',
   t_nut: '#b08d57',
 };
 
-/**
- * One geometry/material set per distinct spec, cloned per part.
- *
- * Unlike the two production viewers this cache does NOT neuter `raycast`:
- * picking a part is the whole point of the editor, so the meshes must stay
- * hittable. `clone()` shares geometry and material by reference, so a selection
- * highlight must CLONE the material too — mutating the shared one would light up
- * every part of that spec in the scene.
- */
-const prototypes = new Map<string, THREE.Object3D>();
-
-function prototypeFor(f: LocalFastener): THREE.Object3D {
-  const { spec } = f;
-  const key = `${spec.kind}|${spec.size ?? ''}|${spec.length ?? ''}|${f.internal ? 'g' : 's'}`;
-  let proto = prototypes.get(key);
-  if (!proto) {
-    const size = spec.size ?? 'M6';
-    proto =
-      spec.kind === 't_nut'
-        ? buildTNutGroup(size, { color: TONE.t_nut, ghost: f.internal })
-        : buildScrewGroup(size, spec.length ?? 18, { color: TONE[spec.kind] });
-    prototypes.set(key, proto);
-  }
-  return proto;
-}
-
-/** Light one part up without touching the shared material. */
-function useHighlight(obj: THREE.Object3D, on: boolean): void {
-  useEffect(() => {
-    if (!on) return;
-    const swapped: [THREE.Mesh, THREE.Material | THREE.Material[]][] = [];
-    obj.traverse((o) => {
-      const mesh = o as THREE.Mesh;
-      if (!mesh.isMesh) return;
-      const mat = (mesh.material as THREE.MeshStandardMaterial).clone();
-      // Cyan, not the amber used for warnings: the T-nuts are brass, and an
-      // amber highlight would read as one of them.
-      mat.emissive = new THREE.Color('#22d3ee');
-      mat.emissiveIntensity = 0.75;
-      swapped.push([mesh, mesh.material]);
-      mesh.material = mat;
-    });
-    return () => {
-      for (const [mesh, original] of swapped) {
-        const owned = mesh.material as THREE.Material;
-        mesh.material = original;
-        owned.dispose();
-      }
-    };
-  }, [obj, on]);
-}
+/** Cyan, not the amber used for warnings: the T-nuts are brass, and an amber
+ *  highlight would read as one of them. */
+const HIGHLIGHT = '#22d3ee';
 
 /**
  * One piece of hardware, positioned in the assembly's own millimetre space.
@@ -80,19 +34,24 @@ function useHighlight(obj: THREE.Object3D, on: boolean): void {
  * The editor previews a connector at `size = extMm`, which makes the catalog
  * scale IDENTITY here: a seat position read from `jointFasteners` is already the
  * number shown in the property panel, and the only conversion is mm → metres.
- * (No `scale` prop, unlike the two production viewers.)
+ *
+ * Unlike the two production viewers, these meshes ARE pickable — picking a part
+ * is the whole point of the editor — so `pickable` is passed explicitly. The
+ * handler sits on the wrapper group, which is also what makes the part light up:
+ * each mesh owns its material, so the highlight is just an `emissive` prop
+ * rather than the material swap the old shared-prototype cache needed.
  */
 const PartMesh: FC<{
   fastener: LocalFastener;
   selected: boolean;
   onPick: (key: string) => void;
 }> = ({ fastener, selected, onPick }) => {
-  const obj = useMemo(() => prototypeFor(fastener).clone(), [fastener]);
-  useHighlight(obj, selected);
+  const { spec } = fastener;
   const [x, y, z] = fastener.position;
+  const size = spec.size ?? 'M6';
+  const emissive = selected ? HIGHLIGHT : '#000000';
   return (
-    <primitive
-      object={obj}
+    <group
       position={[x * M, y * M, z * M]}
       rotation={fastener.rotation as unknown as [number, number, number]}
       scale={M}
@@ -100,7 +59,27 @@ const PartMesh: FC<{
         e.stopPropagation();
         onPick(fastener.key);
       }}
-    />
+    >
+      {spec.kind === 't_nut' ? (
+        <TNutMesh
+          size={size}
+          series={SCREW_SERIES}
+          color={TONE.t_nut}
+          ghost={fastener.internal}
+          emissive={emissive}
+          pickable
+        />
+      ) : (
+        <ScrewMesh
+          family={spec.family ?? DEFAULT_SCREW_FAMILY}
+          size={size}
+          length={spec.length ?? 0}
+          color={TONE[spec.kind]}
+          emissive={emissive}
+          pickable
+        />
+      )}
+    </group>
   );
 };
 
@@ -128,8 +107,9 @@ const PartMesh: FC<{
  * `depthWrite: false` the slot mouths and lips all bleed into each other and the
  * very detail being shown is erased. The repo's answer for "see inside a solid"
  * is the ghost mechanism instead — `depthTest/depthWrite = !ghost` plus
- * `renderOrder`, see `DiyNutGeometry` — and every T-nut here already carries
- * `ghost: f.internal`, so it draws over these bars regardless of their depth.
+ * `renderOrder`, see `TNutMesh` in `diy/FastenerStl.tsx` — and every T-nut here
+ * already carries `ghost: f.internal`, so it draws over these bars regardless of
+ * their depth.
  *
  * `ProfileStl` centres its mesh on all three axes, extrusion axis included, so
  * each bar spans ±length/2 and needs a group to put it where the box used to be.
@@ -173,14 +153,17 @@ const Extrusions: FC<{ profileSize: string; sizeMm: number; runMm: number }> = (
  */
 const DevCameraProbe: FC = () => {
   const camera = useThree((s) => s.camera);
+  const scene = useThree((s) => s.scene);
   useEffect(() => {
     if (!import.meta.env.DEV) return;
-    const w = window as unknown as { __wcKitEditorCamera?: unknown };
+    const w = window as unknown as { __wcKitEditorCamera?: unknown; __wcKitEditorScene?: unknown };
     w.__wcKitEditorCamera = camera;
+    w.__wcKitEditorScene = scene;
     return () => {
       delete w.__wcKitEditorCamera;
+      delete w.__wcKitEditorScene;
     };
-  }, [camera]);
+  }, [camera, scene]);
   return null;
 };
 

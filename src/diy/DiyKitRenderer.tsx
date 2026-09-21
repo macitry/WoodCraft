@@ -1,50 +1,55 @@
 import React, { useEffect, useMemo } from 'react';
-import * as THREE from 'three';
 import { useDiyStore } from '../store/diyStore';
 import { connectorById } from './connectors';
 import type { DiyBracket } from '../types/furniture';
-import { accessoryKitById, jointFasteners } from '../utils/accessoryKits';
+import { SCREW_SERIES, accessoryKitById, jointFasteners } from '../utils/accessoryKits';
 import { useKitLayoutFor } from '../store/kitLayoutStore';
 import type { LocalFastener } from '../utils/accessoryKits';
-import { buildScrewGroup } from './DiyScrewGeometry';
-import { buildTNutGroup } from './DiyNutGeometry';
+import { ScrewMesh, TNutMesh } from './FastenerStl';
+import { DEFAULT_SCREW_FAMILY } from './fastenerDims';
 
 const M = 0.001;
 
-const TONE = { socket_screw: '#c8c8c8', wood_screw: '#b98a4a', t_nut: '#b08d57' } as const;
+const TONE = {
+  socket_screw: '#c8c8c8',
+  // Steel, like the socket screws and like the BOM's material column: the brass
+  // tone this had was the 木螺钉's, and it is now a steel machine screw — one
+  // that would also read as a T-nut, which really is brass.
+  countersunk_screw: '#c8c8c8',
+  t_nut: '#b08d57',
+} as const;
 
-/** Prototype cache — clones share geometry and material. */
-const prototypes = new Map<string, THREE.Object3D>();
-
-function prototypeFor(f: LocalFastener, ghosted: boolean): THREE.Object3D {
-  const spec = f.spec;
-  const key = `${spec.kind}|${spec.size ?? ''}|${spec.length ?? ''}|${ghosted ? 'g' : 's'}`;
-  let proto = prototypes.get(key);
-  if (!proto) {
-    const size = spec.size ?? 'M6';
-    proto =
-      spec.kind === 't_nut'
-        ? buildTNutGroup(size, { color: TONE.t_nut, ghost: ghosted })
-        : buildScrewGroup(size, spec.length ?? 18, { color: TONE[spec.kind] });
-    proto.traverse((o) => {
-      (o as THREE.Mesh).raycast = () => null;
-    });
-    prototypes.set(key, proto);
-  }
-  return proto;
-}
-
-/** One fastener, in the ANCHOR group's millimetre space (see DiyKitGroup). */
+/**
+ * One fastener. Position in mm (the store's own unit), geometry from the baked
+ * catalog STL, and NOT pickable — the bracket is the click target here.
+ *
+ * `scale={M}` is the CALLER's half of the mm→m contract in `FastenerStl.tsx`: the
+ * anchor group this sits in is in scene metres (the connector STL normalises
+ * itself, and the offsets are already ×M), while the baked geometry is in mm. It
+ * is easy to lose — the procedural prototypes this replaced carried their own
+ * scale inside `<primitive>`, so nothing here looked like it needed one.
+ */
 const KitFastener: React.FC<{ fastener: LocalFastener; ghosted: boolean }> = ({ fastener, ghosted }) => {
-  const obj = useMemo(() => prototypeFor(fastener, ghosted).clone(), [fastener, ghosted]);
+  const { spec } = fastener;
   const [x, y, z] = fastener.position;
+  const size = spec.size ?? 'M6';
   return (
-    <primitive
-      object={obj}
+    <group
       position={[x * M, y * M, z * M]}
       rotation={fastener.rotation as unknown as [number, number, number]}
       scale={M}
-    />
+    >
+      {spec.kind === 't_nut' ? (
+        <TNutMesh size={size} series={SCREW_SERIES} color={TONE.t_nut} ghost={ghosted} />
+      ) : (
+        <ScrewMesh
+          family={spec.family ?? DEFAULT_SCREW_FAMILY}
+          size={size}
+          length={spec.length ?? 0}
+          color={TONE[spec.kind]}
+        />
+      )}
+    </group>
   );
 };
 

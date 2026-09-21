@@ -23,38 +23,79 @@
 // ---------------------------------------------------------------------------
 
 import type { ScrewSize } from '../types/furniture';
-import { DEFAULT_BRACKET_STL_URL, SCREW_HEAD_DIMS } from '../types/furniture';
+import { DEFAULT_BRACKET_STL_URL } from '../types/furniture';
 import { CAST_CONNECTOR, CONNECTORS } from '../diy/connectors';
+import { snapScrewLength, DEFAULT_SCREW_FAMILY } from '../diy/fastenerDims';
+import type { SocketFamily } from '../diy/fastenerDims';
+import type { ScrewFamily } from '../diy/fasteners';
 
 // ---------------------------------------------------------------------------
 // Hardware
+//
+// The hardware is now the CATALOG's hardware: a spec names a real MayTec part
+// (see src/diy/fasteners.ts for the baked table and the frames it was measured
+// in) instead of describing a cylinder to be drawn. Two fields carry that —
+// `family` picks which standard, `length` is the catalog's nominal length — and
+// both are part of the spec's identity, which is why `specLineKey` includes them.
 // ---------------------------------------------------------------------------
 
-export type HardwareKind = 'socket_screw' | 't_nut' | 'wood_screw';
+/** What a piece of hardware IS. Decides which renderer draws it, whether it
+ *  lives inside a profile slot, and the material the BOM prints. */
+export type HardwareKind = 'socket_screw' | 'countersunk_screw' | 't_nut';
+
+// `SocketFamily` (the cap-head standards) is declared in fastenerDims, beside the
+// default family it constrains, and imported here as a type — one definition, so
+// a family cannot be a cap head in one module and not in the other.
+export type { SocketFamily };
 
 export interface HardwareSpec {
   kind: HardwareKind;
   /** Display name used verbatim in the BOM and the property panel. */
   name: string;
-  /** Screw size — drives the procedural head geometry (screws only). */
+  /** Screw size — every screw kind has one. */
   size?: ScrewSize;
-  /** Total length, head + shaft (screws only). */
+  /** Which catalog standard the screw is (screws only). Decides both the drawn
+   *  part and which nominal lengths are on offer. */
+  family?: ScrewFamily;
+  /** Catalog NOMINAL length (mm) — the number in the part name: thread length
+   *  for a cap screw, overall length for a countersunk one. The head sits BEHIND
+   *  the mating plane, so this is also the drawn shaft length. */
   length?: number;
 }
 
 /** How deep past the mating plane the T-nut body sits (mm) — display only. */
 export const MATE_DEPTH_MM = 8;
 
+/**
+ * The kind a family belongs to. Derived rather than stored twice so the pair
+ * cannot disagree — a spec saying `kind: 'socket_screw'` with
+ * `family: 'countersunk'` would draw a flat head under a "圆柱头" name.
+ */
+export function kindForFamily(family: ScrewFamily): HardwareKind {
+  return family === 'countersunk' ? 'countersunk_screw' : 'socket_screw';
+}
+
+/**
+ * How each standard is named, in the three lengths the UI needs it.
+ *
+ * Kept here rather than in the generated table because this is copy, not
+ * geometry, and the table is regenerated wholesale: a label that lived there
+ * would be overwritten by the next bake. `std` is the DIN number, for a tooltip —
+ * a workshop buys by that number, not by our label for it.
+ */
+export const SCREW_FAMILIES: Record<ScrewFamily, { label: string; short: string; std: string }> = {
+  din912: { label: '内六角圆柱头螺栓', short: '圆柱头', std: 'DIN 912' },
+  din7984: { label: '内六角薄头螺栓', short: '薄头', std: 'DIN 7984' },
+  countersunk: { label: '内六角沉头螺栓', short: '沉头', std: 'DIN 7991' },
+};
+
 // Display names are BUILT from the spec's own fields, never stored as literals:
-// a user can change a bolt's size/length, and a stored literal would then be
-// left behind describing hardware that is no longer there. Consumers only ever
+// a user can change a bolt's family/size/length, and a stored literal would then
+// be left behind describing hardware that is no longer there. Consumers only ever
 // read `spec.name` (the BOM text, the property panels), so building it here is
 // the one place the name can be wrong-or-right.
-export function socketScrewName(size: ScrewSize, length: number): string {
-  return `内六角圆柱头螺栓 ${size}×${length}`;
-}
-export function woodScrewName(size: ScrewSize, length: number): string {
-  return `十字沉头木螺钉 ${size}×${length}`;
+export function screwName(family: ScrewFamily, size: ScrewSize, length: number): string {
+  return `${SCREW_FAMILIES[family].label} ${size}×${length}`;
 }
 /** `series` is the profile series the nut's slot fits (30 series → 30 mm profile).
  *  It is NOT derivable from `size`: the thread size and the slot it wedges into
@@ -68,39 +109,58 @@ export function tNutName(size: ScrewSize, series: number): string {
  *  mistake `tNutName` exists to prevent. */
 export const SCREW_SERIES = 30;
 
-export function socketScrew(size: ScrewSize, length: number): HardwareSpec {
-  return { kind: 'socket_screw', name: socketScrewName(size, length), size, length };
+/** A cap-head screw: DIN 912 (圆柱头) or DIN 7984 (薄头). */
+export function socketScrew(family: SocketFamily, size: ScrewSize, length: number): HardwareSpec {
+  return { kind: 'socket_screw', name: screwName(family, size, length), size, family, length };
 }
-export function woodScrew(size: ScrewSize, length: number): HardwareSpec {
-  return { kind: 'wood_screw', name: woodScrewName(size, length), size, length };
+/** A countersunk (沉头) screw — its head sinks below the surface it sits in. */
+export function countersunkScrew(size: ScrewSize, length: number): HardwareSpec {
+  return {
+    kind: 'countersunk_screw',
+    name: screwName('countersunk', size, length),
+    size,
+    family: 'countersunk',
+    length,
+  };
 }
 export function tNut(size: ScrewSize, series = SCREW_SERIES): HardwareSpec {
   return { kind: 't_nut', name: tNutName(size, series), size };
 }
 
-/** Shortest screw that still has a shaft: below this `buildScrewGroup` clamps
- *  `shaftLen` to 0 and draws a head with nothing behind it. */
-export function minScrewLength(size: ScrewSize): number {
-  return SCREW_HEAD_DIMS[size].headH + 1;
-}
-
 /**
- * Re-spec a SCREW at a new size/length, keeping its kind (and so its display-name
- * prefix). T-nuts are rejected: their name carries a profile series that `size`
- * does not determine, so rebuilding one from `size` would print a lying name.
+ * Re-spec a SCREW at a new family/size/length, keeping its kind (and so its
+ * display-name prefix). T-nuts are rejected: their name carries a profile series
+ * that `size` does not determine, so rebuilding one from `size` would print a
+ * lying name.
+ *
+ * The length is SNAPPED to a nominal the catalog holds (see snapScrewLength): a
+ * spec is what the BOM and the CSV print, and 17 mm is not a part. Changing
+ * family without changing length therefore moves to the nearest length that
+ * family offers — DIN 912's M6 skips 14, so a 14 mm 薄头 becomes a 12 mm 圆柱头
+ * (mid-gap, and a tie goes to the shorter) rather than a nonexistent 14 mm one.
  */
-export function resizeScrew(spec: HardwareSpec, size: ScrewSize, length: number): HardwareSpec {
+export function resizeScrew(
+  spec: HardwareSpec,
+  size: ScrewSize,
+  length: number,
+  family?: ScrewFamily,
+): HardwareSpec {
   // Rejected here, where the type says it should be, and not only at the call
   // site: falling through to socketScrew would silently turn a T-nut into a bolt.
   if (spec.kind === 't_nut') return spec;
-  const len = Math.max(minScrewLength(size), Math.round(length));
-  return spec.kind === 'wood_screw' ? woodScrew(size, len) : socketScrew(size, len);
+  const fam = family ?? spec.family ?? DEFAULT_SCREW_FAMILY;
+  const len = snapScrewLength(fam, size, length);
+  return fam === 'countersunk' ? countersunkScrew(size, len) : socketScrew(fam, size, len);
 }
 
-const M6_SOCKET_18 = socketScrew('M6', 18);
-const M6_SOCKET_20 = socketScrew('M6', 20);
+// The presets' family is DIN 7984 for a reason that is not cosmetic: the
+// 端面攻丝 preset taps its profile end face 15 mm deep, so its bolt has to be a
+// 14 — and 7984's M6 stocks one while DIN 912's M6 jumps 12 → 16 and would
+// bottom out in the hole it was tapped into.
+const M6_THIN_12 = socketScrew('din7984', 'M6', 12);
+const M6_THIN_14 = socketScrew('din7984', 'M6', 14);
 const M6_TNUT = tNut('M6');
-const M5_WOOD_16 = woodScrew('M5', 16);
+const M5_CSK_16 = countersunkScrew('M5', 16);
 
 // ---------------------------------------------------------------------------
 // Hole patterns — where a given connector can take a fastener
@@ -358,6 +418,7 @@ export interface PartEdit {
   rotOffset?: [number, number, number];
   /** Screw spec override; ignored for t_nut (see resizeScrew). */
   size?: ScrewSize;
+  family?: ScrewFamily;
   length?: number;
   /** Soft delete: out of the 3D AND out of the BOM at once. There is deliberately
    *  no "hidden but still counted" state — that would break the
@@ -450,10 +511,10 @@ export const ACCESSORY_KITS: AccessoryKit[] = [
   {
     id: 'corner-standard',
     name: '角码标准连接',
-    desc: '每处角码 2 颗 M6 内六角螺栓 + 2 颗 T 型螺母（压入型材槽内）',
+    desc: '每处角码 2 颗 M6×12 内六角薄头螺栓 + 2 颗 T 型螺母（压入型材槽内）',
     scope: 'joint',
     boltsPerJoint: 2,
-    bolt: M6_SOCKET_18,
+    bolt: M6_THIN_12,
     mate: M6_TNUT,
     ops: [],
     minProfileSize: 30,
@@ -461,10 +522,10 @@ export const ACCESSORY_KITS: AccessoryKit[] = [
   {
     id: 'corner-heavy',
     name: '角码加强连接',
-    desc: '每处角码 4 颗 M6 螺栓 + 4 颗 T 型螺母，用于承重横梁',
+    desc: '每处角码 4 颗 M6×12 内六角薄头螺栓 + 4 颗 T 型螺母，用于承重横梁',
     scope: 'joint',
     boltsPerJoint: 4,
-    bolt: M6_SOCKET_18,
+    bolt: M6_THIN_12,
     mate: M6_TNUT,
     ops: [],
     minProfileSize: 30,
@@ -472,22 +533,27 @@ export const ACCESSORY_KITS: AccessoryKit[] = [
   {
     id: 'corner-tapped',
     name: '端面攻丝连接',
-    desc: '每处角码 2 颗 M6 螺栓，不配螺母 —— 型材端面攻丝代替',
+    desc: '每处角码 2 颗 M6×14 内六角薄头螺栓，不配螺母 —— 型材端面攻丝代替',
     scope: 'joint',
     boltsPerJoint: 2,
-    bolt: M6_SOCKET_20,
+    bolt: M6_THIN_14,
     ops: ['型材端面攻丝 M6 · 深 15（代替 T 型螺母）'],
     minProfileSize: 30,
   },
   {
     id: 'tabletop-fix',
+    // Was a 十字沉头木螺钉, which the catalog has no such thing as. The nearest
+    // real part is a countersunk MACHINE screw (0.63.D07991.05016), and the swap
+    // is not cosmetic: a machine screw threads into something, so the board needs
+    // a nut or an insert — hence the third op line. The alternative (keeping the
+    // wood screw) would mean shipping a BOM line for a part nobody stocks.
     name: '桌板固定',
-    desc: '每张桌板 4 颗 M5 沉头木螺钉 —— 只进清单与工序，不在 3D 中显示',
+    desc: '每张桌板 4 颗 M5×16 内六角沉头螺栓（配预埋螺母）—— 只进清单与工序，不在 3D 中显示',
     scope: 'frame',
     boltsPerJoint: 0,
     perFrame: 4,
-    bolt: M5_WOOD_16,
-    ops: ['桌板钻孔 Ø5', '孔口沉头 Ø10'],
+    bolt: M5_CSK_16,
+    ops: ['桌板钻孔 Ø5', '孔口沉头 Ø10', '桌板侧预埋 M5 螺母 / 螺纹嵌件'],
     minProfileSize: 30,
   },
 ];
@@ -542,8 +608,8 @@ export function jointFasteners(
     // asserts `spec` by reference between calls, and KitLine.spec identity with
     // kit.bolt is what the panels' text hangs off.
     const finalSpec =
-      edit && (edit.size || edit.length) && spec.kind !== 't_nut'
-        ? resizeScrew(spec, edit.size ?? spec.size!, edit.length ?? spec.length ?? 0)
+      edit && (edit.size || edit.length || edit.family) && spec.kind !== 't_nut'
+        ? resizeScrew(spec, edit.size ?? spec.size!, edit.length ?? spec.length ?? 0, edit.family)
         : spec;
 
     const rotation = applyRotOffset(seat.rotation, edit?.rotOffset);
@@ -598,7 +664,7 @@ const RANK: Record<PartRole, number> = { bolt: 0, mate: 1, extra: 2 };
  * — producing a row that corresponds to nothing actually drawn.
  */
 function specLineKey(spec: HardwareSpec): string {
-  return `${spec.kind}|${spec.size ?? ''}|${spec.length ?? ''}|${spec.name}`;
+  return `${spec.kind}|${spec.family ?? ''}|${spec.size ?? ''}|${spec.length ?? ''}|${spec.name}`;
 }
 
 /**

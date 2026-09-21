@@ -22,20 +22,19 @@ import {
   kitParts,
   kitSchedule,
   kitScheduleFor,
-  minScrewLength,
   offsetFromAbsolute,
   partKey,
   patternKeyFor,
   perJointCount,
   resizeScrew,
+  screwName,
   socketAxis,
   socketScrew,
-  socketScrewName,
   specSummary,
   tNut,
-  woodScrewName,
 } from './accessoryKits';
 import type { HardwareSpec, KitLayout, KitLayoutMap, LocalFastener, PartRole } from './accessoryKits';
+import { DEFAULT_SCREW_FAMILY, minScrewLength, snapScrewLength } from '../diy/fastenerDims';
 import { DEFAULT_BRACKET_STL_URL } from '../types/furniture';
 
 function assert(cond: boolean, msg: string): void {
@@ -316,11 +315,9 @@ function jointScheduleStable(kit: (typeof ACCESSORY_KITS)[number]): boolean {
   // The BOM prints `spec.name` verbatim, so a stored literal would go on
   // describing hardware that is no longer there the moment a size override lands.
   const rebuiltName = (s: HardwareSpec) =>
-    s.kind === 'socket_screw'
-      ? socketScrewName(s.size!, s.length!)
-      : s.kind === 'wood_screw'
-        ? woodScrewName(s.size!, s.length!)
-        : tNut(s.size!).name; // the catalog's series is tNut's own default
+    s.kind === 't_nut'
+      ? tNut(s.size!).name // the catalog's series is tNut's own default
+      : screwName(s.family ?? DEFAULT_SCREW_FAMILY, s.size!, s.length!);
 
   for (const kit of ACCESSORY_KITS) {
     for (const spec of kitParts(kit)) {
@@ -333,16 +330,34 @@ function jointScheduleStable(kit: (typeof ACCESSORY_KITS)[number]): boolean {
     }
   }
 
-  // A shorter screw would lose its shaft entirely — buildScrewGroup clamps
-  // shaftLen to 0 and draws a bare head — so the floor belongs here, not in the UI.
+  // A spec's length has to BE a length the catalog stocks: that number is what
+  // the part name, the panels and the CSV print, so a free-form one would name a
+  // part nobody sells while the renderer drew the nearest real one — the export
+  // describing something other than the 3D. `resizeScrew` is the only door into a
+  // spec, so the snap belongs there rather than in each caller.
   const bolt = accessoryKitById('corner-standard')!.bolt;
-  const wood = accessoryKitById('tabletop-fix')!.bolt;
-  assert(resizeScrew(bolt, 'M6', 1).length === minScrewLength('M6'), 'a too-short override must clamp to the shortest usable screw');
-  assert(resizeScrew(bolt, 'M6', 18.4).length === 18, 'lengths must round to whole mm');
-  assert(resizeScrew(bolt, 'M5', 30).name === socketScrewName('M5', 30), 'a re-specced bolt must rename itself');
+  const csk = accessoryKitById('tabletop-fix')!.bolt;
+  const boltFamily = bolt.family!;
+  assert(resizeScrew(bolt, 'M6', 1).length === minScrewLength(boltFamily, 'M6'), 'an out-of-catalog length must snap to the shortest one stocked');
+  assert(resizeScrew(bolt, 'M6', 1).length === snapScrewLength(boltFamily, 'M6', 1), '...and snapping must be the nearest, not a clamp');
+  // 18 is stocked by neither family the presets use, so this is the interesting
+  // case: the length MOVES to a real one (20) rather than being rounded to a
+  // whole 18 nobody can buy.
+  assert(resizeScrew(bolt, 'M6', 18.4).length === 20, 'a non-catalog length must snap to the nearest real one');
+  assert(resizeScrew(bolt, 'M5', 30).name === screwName(boltFamily, 'M5', 30), 'a re-specced bolt must rename itself');
   assert(resizeScrew(bolt, 'M5', 30).kind === 'socket_screw', 'a re-specced bolt must stay a bolt');
-  assert(resizeScrew(wood, 'M5', 20).kind === 'wood_screw', 'a wood screw must stay a wood screw');
-  assert(resizeScrew(wood, 'M5', 20).name === woodScrewName('M5', 20), 'and keep its own name prefix');
+  assert(resizeScrew(bolt, 'M5', 30).family === boltFamily, 'changing only the size must keep the standard');
+  // ...and a standard swap moves the length onto one THAT standard holds. DIN
+  // 912's M6 skips 14 (12, then 16), so this is the tie case: both are 2 mm away,
+  // and the SHORTER must win — a bolt that came up short still tightens, while
+  // one that is too long bottoms out and leaves the head off the bracket.
+  const swapped = resizeScrew(bolt, 'M6', 14, 'din912');
+  assert(swapped.family === 'din912', 'a family override must take');
+  assert(swapped.length === 12, `14 is not a DIN 912 M6 length — a tie must resolve to the shorter (got ${swapped.length})`);
+  assert(swapped.name === screwName('din912', 'M6', 12), 'and rename itself after the standard it moved to');
+  assert(resizeScrew(bolt, 'M6', 17, 'din912').length === 16, 'an unambiguous length must still snap to the nearest');
+  assert(resizeScrew(csk, 'M5', 20).kind === 'countersunk_screw', 'a countersunk screw must stay countersunk');
+  assert(resizeScrew(csk, 'M5', 20).name === screwName('countersunk', 'M5', 20), 'and keep its own name prefix');
   // A T-nut's name carries a profile series that `size` does not determine, so
   // rebuilding one from a size would print a lying name — it is passed through.
   const nut = accessoryKitById('corner-standard')!.mate!;
@@ -422,7 +437,11 @@ function jointScheduleStable(kit: (typeof ACCESSORY_KITS)[number]): boolean {
   const EDIT_KEY = 'bolt|x|8|0';
   const MATE_KEY = 'mate|x|8|0';
 
-  const specKey = (s: HardwareSpec) => `${s.kind}|${s.size ?? ''}|${s.length ?? ''}|${s.name}`;
+  // Mirrors accessoryKits' own `specLineKey`, which is what actually decides
+  // whether two parts share a line. `family` is in it because two standards can
+  // offer the same size and length — they are different parts and must not merge.
+  const specKey = (s: HardwareSpec) =>
+    `${s.kind}|${s.family ?? ''}|${s.size ?? ''}|${s.length ?? ''}|${s.name}`;
   const drawnCount = (parts: LocalFastener[], spec: HardwareSpec) =>
     parts.filter((f) => specKey(f.spec) === specKey(spec)).length;
   const find = (parts: LocalFastener[], key: string) => parts.find((f) => f.key === key);
@@ -480,7 +499,8 @@ function jointScheduleStable(kit: (typeof ACCESSORY_KITS)[number]): boolean {
   const mixed: KitLayout = { parts: { [EDIT_KEY]: { size: 'M5', length: 30 } }, extra: [] };
   const mixedParts = jointFasteners(KIT, STL, 1, mixed);
   assert(mixedParts.length === base.length, 'a spec swap must not change the piece count');
-  assert(find(mixedParts, EDIT_KEY)!.spec.name === socketScrewName('M5', 30), 'the edited bolt takes the new spec');
+  assert(find(mixedParts, EDIT_KEY)!.spec.name === resizeScrew(KIT.bolt, 'M5', 30).name, 'the edited bolt takes the new spec');
+  assert(find(mixedParts, EDIT_KEY)!.spec.family === KIT.bolt.family, 'a size-only edit must not move the standard');
   assert(find(mixedParts, MATE_KEY)!.spec === baseMate.spec, 'its T-nut keeps the preset spec object');
   const mixedLines = kitSchedule(KIT, 4, STL, mapOf(mixed));
   assert(mixedLines.length === 3, `two specs + one mate must be three lines (got ${mixedLines.length})`);
@@ -503,7 +523,7 @@ function jointScheduleStable(kit: (typeof ACCESSORY_KITS)[number]): boolean {
   assert(cutLines[1].qty === 6, 'its mate line is untouched');
 
   // ---- extra: hand-added hardware joins the drawn AND the counted set ----
-  const ADDED_SPEC = socketScrew('M6', 30);
+  const ADDED_SPEC = socketScrew('din7984', 'M6', 30);
   const extras: KitLayout = {
     parts: {},
     extra: [
@@ -547,7 +567,7 @@ function jointScheduleStable(kit: (typeof ACCESSORY_KITS)[number]): boolean {
       assert(line.qty === drawnCount(parts, line.spec) * 3, `${label}: ${line.spec.name} — BOM ${line.qty} must be drawn × 3 joints (${drawnCount(parts, line.spec)})`);
     }
     assert(lines.length === new Set(parts.map((f) => specKey(f.spec))).size, `${label}: every distinct drawn spec needs exactly one line`);
-    assert(lines[0].spec.kind === 'socket_screw' || lines[0].spec.kind === 'wood_screw', `${label}: line [0] must stay the bolt line`);
+    assert(lines[0].spec.kind === 'socket_screw' || lines[0].spec.kind === 'countersunk_screw', `${label}: line [0] must stay the bolt line`);
     // The panels show the one-joint schedule, so it must be exactly that.
     assert(JSON.stringify(specSummary(KIT, STL, lay)) === JSON.stringify(kitSchedule(KIT, 1, STL, lay ? mapOf(lay) : null)), `${label}: specSummary must be the one-joint schedule`);
   }
@@ -583,7 +603,9 @@ function jointScheduleStable(kit: (typeof ACCESSORY_KITS)[number]): boolean {
     [kitLayoutKey(KIT.id, STL)]: { parts: { [EDIT_KEY]: { removed: true } }, extra: [] },
     [kitLayoutKey(KIT.id, BIG)]: {
       parts: { [bigKey]: { removed: true } },
-      extra: [{ id: 'g', spec: socketScrew('M6', 30), position: [1, 2, 3], rotation: [0, 0, 0], internal: false }],
+      extra: [
+        { id: 'g', spec: socketScrew('din7984', 'M6', 30), position: [1, 2, 3], rotation: [0, 0, 0], internal: false },
+      ],
     },
   };
   const mixedEdits = kitScheduleFor(KIT, [STL, BIG], perJoint);

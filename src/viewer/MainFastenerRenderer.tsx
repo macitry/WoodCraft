@@ -1,55 +1,52 @@
-import React, { useEffect, useMemo } from 'react';
+import React, { useEffect, useMemo, useRef } from 'react';
 import * as THREE from 'three';
 import type { BracketInstance } from '../types/furniture';
 import { useModelStore } from '../store/modelStore';
-import { accessoryKitById, jointFasteners } from '../utils/accessoryKits';
+import { SCREW_SERIES, accessoryKitById, jointFasteners } from '../utils/accessoryKits';
 import { useKitLayoutFor } from '../store/kitLayoutStore';
 import type { HardwareKind, LocalFastener } from '../utils/accessoryKits';
-import { buildScrewGroup } from '../diy/DiyScrewGeometry';
-import { buildTNutGroup } from '../diy/DiyNutGeometry';
+import { ScrewMesh, TNutMesh } from '../diy/FastenerStl';
+import { DEFAULT_SCREW_FAMILY } from '../diy/fastenerDims';
 
 const MM_TO_M = 0.001;
 
-/** Base colour per hardware kind — bolts read as steel, T-nuts as brass. */
+/** Base colour per hardware kind — every screw reads as steel, T-nuts as brass,
+ *  matching the material the BOM prints for each. A countersunk machine screw
+ *  drawn brass would also be hard to tell from a T-nut, which IS brass. */
 const TONE: Record<HardwareKind, string> = {
   socket_screw: '#c8c8c8',
-  wood_screw: '#b98a4a',
+  countersunk_screw: '#c8c8c8',
   t_nut: '#b08d57',
 };
 
-/**
- * Prototype cache: one geometry/material set per distinct hardware spec, cloned
- * per instance. `Object3D.clone()` shares geometry + material by reference, so
- * 16 brackets x 4 pieces costs 4 material sets, not 64.
- */
-const prototypes = new Map<string, THREE.Object3D>();
-
-function prototypeFor(f: LocalFastener, ghosted: boolean): THREE.Object3D {
-  const key = `${f.spec.kind}|${f.spec.size ?? ''}|${f.spec.length ?? ''}|${ghosted ? 'g' : 's'}`;
-  let proto = prototypes.get(key);
-  if (!proto) {
-    const spec = f.spec;
-    const size = spec.size ?? 'M6';
-    proto =
-      spec.kind === 't_nut'
-        ? buildTNutGroup(size, { color: TONE.t_nut, ghost: ghosted })
-        : buildScrewGroup(size, spec.length ?? 18, { color: TONE[spec.kind] });
-    // Fasteners must never steal the bracket's click — the bracket itself is
-    // what the user selects and drags.
-    proto.traverse((o) => {
-      (o as THREE.Mesh).raycast = () => null;
-    });
-    prototypes.set(key, proto);
-  }
-  return proto;
-}
+/** The catalog part for a fastener. Geometry comes from the baked STL (shared by
+ *  `useLoader` per URL), so there is no prototype cache any more — but the parts
+ *  are still NOT pickable: the bracket itself is what the user selects and drags,
+ *  and a fastener that swallowed that click would be a hole in its hit area. */
+const FastenerStl: React.FC<{ fastener: LocalFastener; ghosted: boolean }> = ({
+  fastener,
+  ghosted,
+}) => {
+  const { spec } = fastener;
+  const size = spec.size ?? 'M6';
+  return spec.kind === 't_nut' ? (
+    <TNutMesh size={size} series={SCREW_SERIES} color={TONE.t_nut} ghost={ghosted} />
+  ) : (
+    <ScrewMesh
+      family={spec.family ?? DEFAULT_SCREW_FAMILY}
+      size={size}
+      length={spec.length ?? 0}
+      color={TONE[spec.kind]}
+    />
+  );
+};
 
 const FastenerMesh: React.FC<{ fastener: LocalFastener; ghosted: boolean; bracketId: string }> = ({
   fastener,
   ghosted,
   bracketId,
 }) => {
-  const obj = useMemo(() => prototypeFor(fastener, ghosted).clone(), [fastener, ghosted]);
+  const groupRef = useRef<THREE.Group>(null);
   const { position, rotation } = fastener;
 
   // Dev-only: expose the mounted node so a headless check can prove the fastener
@@ -58,6 +55,8 @@ const FastenerMesh: React.FC<{ fastener: LocalFastener; ghosted: boolean; bracke
   // way to actually test the nesting this design depends on.
   useEffect(() => {
     if (!import.meta.env.DEV) return;
+    const obj = groupRef.current;
+    if (!obj) return;
     const w = window as unknown as { __wcFastenerNodes?: unknown[] };
     const rec = {
       bracketId,
@@ -79,18 +78,20 @@ const FastenerMesh: React.FC<{ fastener: LocalFastener; ghosted: boolean; bracke
       const i = list.indexOf(rec);
       if (i >= 0) list.splice(i, 1);
     };
-  }, [obj, bracketId, position]);
+  }, [bracketId, position]);
 
   return (
-    <primitive
-      object={obj}
+    <group
+      ref={groupRef}
       // The bracket group's space is METRES (its STL child carries the mm→m
       // scale), so a local offset authored in mm must be converted here — the
       // fastener's own mm-sized geometry is then sized by the same MM_TO_M.
       position={[position[0] * MM_TO_M, position[1] * MM_TO_M, position[2] * MM_TO_M]}
       rotation={rotation as unknown as [number, number, number]}
       scale={MM_TO_M}
-    />
+    >
+      <FastenerStl fastener={fastener} ghosted={ghosted} />
+    </group>
   );
 };
 

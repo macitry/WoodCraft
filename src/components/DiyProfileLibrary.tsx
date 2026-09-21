@@ -4,14 +4,15 @@ import { STLLoader } from 'three-stdlib';
 import * as THREE from 'three';
 import { useDiyStore } from '../store/diyStore';
 import ProfileStlPreview from './ProfileStlPreview';
-import { buildScrewGroup } from '../diy/DiyScrewGeometry';
-import { buildTNutGroup } from '../diy/DiyNutGeometry';
+import { ScrewMesh, TNutMesh } from '../diy/FastenerStl';
+import { DEFAULT_SCREW_FAMILY, defaultScrewLength } from '../diy/fastenerDims';
 import { CONNECTORS, connectorById } from '../diy/connectors';
 import type { DiyConnector } from '../diy/connectors';
 import type { ProfileSize, ScrewSize } from '../types/furniture';
-import { DEFAULT_BRACKET_STL_URL, PROFILE_DIMS, SCREW_DEFAULT_LENGTH } from '../types/furniture';
+import { DEFAULT_BRACKET_STL_URL, PROFILE_DIMS } from '../types/furniture';
 import {
   ACCESSORY_KITS,
+  SCREW_SERIES,
   accessoryKitById,
   jointFasteners,
   kitFitReason,
@@ -39,10 +40,14 @@ const KIND_ICON: Record<DiyConnector['kind'], string> = {
   steel: '⌐',
 };
 
+/** One card per thread size. The drag payload is a size, so a dropped screw
+ *  starts on the default standard (DIN 7984 薄头) — its family and length are
+ *  then editable in the property panel, which is where the full catalog of
+ *  lengths is on offer. */
 const SCREW_SIZES: { id: ScrewSize; label: string; desc: string }[] = [
-  { id: 'M4', label: 'M4', desc: 'Ø4 · 内六角杯头' },
-  { id: 'M5', label: 'M5', desc: 'Ø5 · 内六角杯头' },
-  { id: 'M6', label: 'M6', desc: 'Ø6 · 内六角杯头' },
+  { id: 'M4', label: 'M4', desc: 'Ø4 · 内六角薄头' },
+  { id: 'M5', label: 'M5', desc: 'Ø5 · 内六角薄头' },
+  { id: 'M6', label: 'M6', desc: 'Ø6 · 内六角薄头' },
 ];
 
 type TabId = 'profiles' | 'connectors' | 'screws' | 'kits';
@@ -144,10 +149,6 @@ const Bracket3DPreview: React.FC<{ connector: DiyConnector }> = ({ connector }) 
 /** Auto-rotating screw mesh — rendered INSIDE the preview Canvas. */
 const RotatingScrewMesh: React.FC<{ size: ScrewSize }> = ({ size }) => {
   const groupRef = useRef<THREE.Group>(null);
-  const group = useMemo(
-    () => buildScrewGroup(size, SCREW_DEFAULT_LENGTH[size]),
-    [size],
-  );
 
   useFrame((_, delta) => {
     if (!groupRef.current) return;
@@ -156,7 +157,11 @@ const RotatingScrewMesh: React.FC<{ size: ScrewSize }> = ({ size }) => {
 
   return (
     <group ref={groupRef} scale={0.001}>
-      <primitive object={group} />
+      <ScrewMesh
+        family={DEFAULT_SCREW_FAMILY}
+        size={size}
+        length={defaultScrewLength(DEFAULT_SCREW_FAMILY, size)}
+      />
     </group>
   );
 };
@@ -187,12 +192,21 @@ const KIT_ORBIT_CX = 9.5;
 const KIT_ORBIT_CY = 9.5;
 
 /** Hardware mesh for one spec, in the bracket-local mm frame. */
-function hardwareMesh(spec: HardwareSpec, ghosted: boolean): THREE.Object3D {
+const HardwareMesh: React.FC<{ spec: HardwareSpec; ghosted: boolean }> = ({ spec, ghosted }) => {
   const size = spec.size ?? 'M6';
-  return spec.kind === 't_nut'
-    ? buildTNutGroup(size, { color: '#b08d57', ghost: ghosted })
-    : buildScrewGroup(size, spec.length ?? 18, { color: spec.kind === 'wood_screw' ? '#b98a4a' : '#c8c8c8' });
-}
+  return spec.kind === 't_nut' ? (
+    <TNutMesh size={size} series={SCREW_SERIES} color="#b08d57" ghost={ghosted} />
+  ) : (
+    <ScrewMesh
+      family={spec.family ?? DEFAULT_SCREW_FAMILY}
+      size={size}
+      length={spec.length ?? 0}
+      // Steel for every screw, as the BOM's material column says: the brass tone
+      // belonged to the 木螺钉 this replaced.
+      color="#c8c8c8"
+    />
+  );
+};
 
 /**
  * The kit's hardware on a ghosted cast bracket, auto-rotating. Fasteners are
@@ -206,11 +220,7 @@ const RotatingKitMesh: React.FC<{ kit: AccessoryKit }> = ({ kit }) => {
   // PRESET here would promise parts the user would not get after editing.
   const layout = useKitLayoutFor(kit.id, DEFAULT_BRACKET_STL_URL);
   const items = useMemo(
-    () =>
-      jointFasteners(kit, DEFAULT_BRACKET_STL_URL, 1, layout).map((f) => ({
-        f,
-        obj: hardwareMesh(f.spec, f.internal),
-      })),
+    () => jointFasteners(kit, DEFAULT_BRACKET_STL_URL, 1, layout),
     [kit, layout],
   );
 
@@ -228,13 +238,14 @@ const RotatingKitMesh: React.FC<{ kit: AccessoryKit }> = ({ kit }) => {
           <boxGeometry args={[21, 21, 17]} />
           <meshStandardMaterial color="#707070" wireframe transparent opacity={0.22} />
         </mesh>
-        {items.map(({ f, obj }, i) => (
-          <primitive
+        {items.map((f, i) => (
+          <group
             key={`${f.spec.kind}-${i}`}
-            object={obj}
             position={f.position}
             rotation={f.rotation as unknown as [number, number, number]}
-          />
+          >
+            <HardwareMesh spec={f.spec} ghosted={f.internal} />
+          </group>
         ))}
       </group>
     </group>

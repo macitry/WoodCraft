@@ -22,7 +22,8 @@ import { connectorById } from '../diy/connectors';
 const HARDWARE_MATERIAL: Record<HardwareKind, string> = {
   socket_screw: 'steel',
   t_nut: 'brass',
-  wood_screw: 'steel',
+  // See the note in bomExport: this key was the tabletop's 木螺钉.
+  countersunk_screw: 'steel',
 };
 
 /** Accumulate rows by key, summing quantities and preserving first-seen order. */

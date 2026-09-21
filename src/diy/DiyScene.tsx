@@ -24,6 +24,7 @@ interface DiySceneProps {
 
 const DiyScene: React.FC<DiySceneProps> = ({ onCameraReady }) => {
   const camera = useThree((s) => s.camera);
+  const scene = useThree((s) => s.scene);
   const controlsRef = useRef<OrbitControlsImpl | null>(null);
   const setControlsRef = useDiyStore((s) => s.setControlsRef);
   const isDraggingBracket = useDiyStore((s) => s.isDraggingBracket);
@@ -51,14 +52,22 @@ const DiyScene: React.FC<DiySceneProps> = ({ onCameraReady }) => {
   // result through `matrixWorld`, so a headless test has to aim at a real point
   // in the scene rather than poke the store. Without the camera it cannot project
   // mm → screen and the whole DIY raycast path stays untestable.
+  //
+  // The SCENE comes along for the same reason the camera does: the hardware here
+  // is a catalog mesh reached through two of this app's own transforms
+  // (`DiyKitRenderer` / `DiyScrewRenderer`), and the only way to check that what
+  // was drawn is the part the spec names — rather than any screw-shaped thing —
+  // is to measure the mounted geometry. Counting pieces cannot tell them apart.
   useEffect(() => {
     if (!import.meta.env.DEV) return;
-    const w = window as unknown as { __wcDiyCamera?: unknown };
+    const w = window as unknown as { __wcDiyCamera?: unknown; __wcDiyScene?: unknown };
     w.__wcDiyCamera = camera;
+    w.__wcDiyScene = scene;
     return () => {
       delete w.__wcDiyCamera;
+      delete w.__wcDiyScene;
     };
-  }, [camera]);
+  }, [camera, scene]);
 
   // Animate camera toward focus after placing a root profile
   useFrame(() => {

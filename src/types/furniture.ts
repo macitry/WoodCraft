@@ -2,6 +2,10 @@
 // WoodCraft — Core Furniture Data Types
 // ============================================================
 
+// Type-only, so no runtime edge: the baked fastener table is a generated leaf
+// module and this file stays importable from anywhere without pulling it in.
+import type { ScrewFamily } from '../diy/fasteners';
+
 /** A user-adjustable parameter for a furniture template. */
 export interface Parameter {
   id: string;
@@ -294,7 +298,7 @@ export interface DiyKitInstance {
   enabled: boolean;
 }
 
-/** Socket-head screw sizes offered in the DIY library. */
+/** Screw sizes offered in the DIY library. */
 export type ScrewSize = 'M4' | 'M5' | 'M6';
 
 /** A screw mounted on a DIY profile face (head flush on the face, shaft in). */
@@ -305,28 +309,17 @@ export interface DiyScrew {
   /** World rotation (degrees, XYZ Euler — same convention as brackets). */
   rotation: { roll: number; pitch: number; yaw: number };
   size: ScrewSize;
-  /** Total screw length (mm, head + shaft). */
+  /** Which catalog standard — see src/diy/fasteners.ts. Optional so a screw saved
+   *  before the catalog existed still loads; the renderer falls back to
+   *  DEFAULT_SCREW_FAMILY, which draws the shaft those screws already had. */
+  family?: ScrewFamily;
+  /** Catalog NOMINAL length (mm) — thread length, the number in the part name. */
   length: number;
   /** The profile face this screw is mounted on (removal cascades). */
   profileId: string;
   enabled: boolean;
-  /** Optional STL override — entry point for real screw models later. */
-  stlUrl?: string;
 }
 
-/** Head diameter / head height per screw size (mm, DIN912 socket head). */
-export const SCREW_HEAD_DIMS: Record<ScrewSize, { headD: number; headH: number }> = {
-  M4: { headD: 7, headH: 4 },
-  M5: { headD: 8.5, headH: 5 },
-  M6: { headD: 10, headH: 6 },
-};
-
-/** Default total length per screw size (mm). */
-export const SCREW_DEFAULT_LENGTH: Record<ScrewSize, number> = {
-  M4: 14,
-  M5: 16,
-  M6: 18,
-};
 
 /** Ghost screw shown while dragging a screw over the 3D viewport. */
 export interface DiyScrewGhost {

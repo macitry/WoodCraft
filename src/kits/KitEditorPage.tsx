@@ -6,17 +6,18 @@ import {
   ACCESSORY_KITS,
   SCREW_SERIES,
   accessoryKitById,
+  countersunkScrew,
   holePatternFor,
   holePatternSignature,
   jointFasteners,
-  socketScrewName,
+  socketScrew,
   tNutName,
-  woodScrewName,
 } from '../utils/accessoryKits';
 import type { HardwareKind, LocalFastener } from '../utils/accessoryKits';
 import { CONNECTORS, connectorByStlUrl } from '../diy/connectors';
-import { DEFAULT_BRACKET_STL_URL, SCREW_DEFAULT_LENGTH } from '../types/furniture';
+import { DEFAULT_BRACKET_STL_URL } from '../types/furniture';
 import type { ScrewSize } from '../types/furniture';
+import { DEFAULT_SCREW_FAMILY, defaultScrewLength } from '../diy/fastenerDims';
 import { kitLayoutKey, useKitLayoutStore } from '../store/kitLayoutStore';
 
 /** Kits that produce per-joint geometry, and so have parts to move. */
@@ -28,10 +29,14 @@ const isEdited = (f: LocalFastener, removed: boolean): boolean =>
 
 /** What a hand-added part can be. T-nut included: a joint with a tapped profile
  *  still needs the bolt, and a tapped hole drilled in the wrong slot is exactly
- *  the kind of thing this page exists to avoid. */
+ *  the kind of thing this page exists to avoid.
+ *
+ * One entry per KIND, not per screw family: an added screw starts on the app's
+ * default standard and its family is picked in the panel like any other part —
+ * a second row of near-identical buttons here would only duplicate that. */
 const ADDABLE: { kind: HardwareKind; label: string }[] = [
   { kind: 'socket_screw', label: '内六角螺栓' },
-  { kind: 'wood_screw', label: '木螺钉' },
+  { kind: 'countersunk_screw', label: '沉头螺钉' },
   { kind: 't_nut', label: 'T 型螺母' },
 ];
 
@@ -57,17 +62,17 @@ const DEFAULT_PROFILE = '3030';
 const offeredProfile = (raw: string | null): string =>
   raw && (OFFERED_PROFILES as readonly string[]).includes(raw) ? raw : DEFAULT_PROFILE;
 
-const specFor = (kind: HardwareKind, size: ScrewSize, length: number) =>
+/** The spec a hand-added part is created with: the catalog's default part for the
+ *  chosen kind and size, so the new part is real hardware from the first frame
+ *  and only ever gets re-specced to another real one in the panel. */
+const specFor = (kind: HardwareKind, size: ScrewSize) =>
   kind === 't_nut'
     ? // A nut's slot series is not a function of its thread size, so it takes
       // the series the presets use rather than one invented from `size`.
       { kind, name: tNutName(size, SCREW_SERIES), size }
-    : {
-        kind,
-        name: kind === 'wood_screw' ? woodScrewName(size, length) : socketScrewName(size, length),
-        size,
-        length,
-      };
+    : kind === 'countersunk_screw'
+      ? countersunkScrew(size, defaultScrewLength('countersunk', size))
+      : socketScrew(DEFAULT_SCREW_FAMILY, size, defaultScrewLength(DEFAULT_SCREW_FAMILY, size));
 
 /**
  * Per-part fine tuning for an accessory kit — a full page rather than a modal,
@@ -205,12 +210,7 @@ const KitEditorPage: FC = () => {
     const rotation = host
       ? (host.rotation.map((r) => (r * 180) / Math.PI) as [number, number, number])
       : ([0, 0, 0] as [number, number, number]);
-    const key = addPart(
-      setKey,
-      specFor(addKind, addSize, SCREW_DEFAULT_LENGTH[addSize]),
-      position,
-      rotation,
-    );
+    const key = addPart(setKey, specFor(addKind, addSize), position, rotation);
     selectPart(key);
     setAdding(false);
   };
@@ -449,7 +449,7 @@ const KitEditorPage: FC = () => {
                   </button>
                   <p data-add-preview className="text-[10px] text-neutral-600 leading-snug">
                     添加后会选中，可直接拖走或改数值。
-                    {specFor(addKind, addSize, SCREW_DEFAULT_LENGTH[addSize]).name} ·
+                    {specFor(addKind, addSize).name} ·
                     共 {listRows.length + 1} 件
                   </p>
                 </div>

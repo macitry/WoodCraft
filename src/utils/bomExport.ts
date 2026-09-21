@@ -180,7 +180,9 @@ function keepsInExport(r: BomRow): boolean {
 const HARDWARE_MATERIAL: Record<HardwareKind, string> = {
   socket_screw: 'steel',
   t_nut: 'brass',
-  wood_screw: 'steel',
+  // Steel, not brass: this used to be the tabletop's 木螺钉 and is now the
+  // countersunk machine screw the catalog actually holds.
+  countersunk_screw: 'steel',
 };
 
 /** Machining lines a kit calls for. Deduped, order-stable. */

@@ -14,7 +14,8 @@ import type {
   BracketFacePick,
   DiyKitInstance,
 } from '../types/furniture';
-import { PROFILE_DIMS, SCREW_DEFAULT_LENGTH } from '../types/furniture';
+import { PROFILE_DIMS } from '../types/furniture';
+import { DEFAULT_SCREW_FAMILY, defaultScrewLength } from '../diy/fastenerDims';
 import { jointFitInfo, cornerBracketFits } from '../diy/diyJointGeometry';
 import { accessoryKitById } from '../utils/accessoryKits';
 
@@ -672,7 +673,11 @@ export const useDiyStore = create<DiyState>((set, get) => ({
       position: ghostScrew.position,
       rotation: ghostScrew.rotation,
       size: ghostScrew.size,
-      length: patch?.length ?? SCREW_DEFAULT_LENGTH[ghostScrew.size],
+      // The drag payload carries a size only, so the screw lands on the app's
+      // default standard at the catalog's default length for it — the same pair
+      // the placement ghost draws.
+      family: DEFAULT_SCREW_FAMILY,
+      length: patch?.length ?? defaultScrewLength(DEFAULT_SCREW_FAMILY, ghostScrew.size),
       profileId: ghostScrew.profileId,
       enabled: true,
     };

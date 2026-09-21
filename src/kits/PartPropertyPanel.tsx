@@ -1,8 +1,9 @@
 import { useState, type FC, type ReactNode } from 'react';
-import { SCREW_HEAD_DIMS } from '../types/furniture';
 import type { ScrewSize } from '../types/furniture';
 import type { ExtraPart, HardwareSpec, LocalFastener, PartEdit } from '../utils/accessoryKits';
-import { minScrewLength } from '../utils/accessoryKits';
+import { SCREW_FAMILIES } from '../utils/accessoryKits';
+import { DEFAULT_SCREW_FAMILY, headText, screwDims } from '../diy/fastenerDims';
+import { screwFamiliesFor, screwLengths } from '../diy/fasteners';
 import { useKitLayoutStore } from '../store/kitLayoutStore';
 
 const SIZES: ScrewSize[] = ['M4', 'M5', 'M6'];
@@ -71,6 +72,15 @@ const PartPropertyPanel: FC<PartPropertyPanelProps> = ({
   const resizable = !fastener.internal && spec.kind !== 't_nut';
   /** A hand-added part: no seat, no preset spec, and no `parts` entry of its own. */
   const isExtra = extra !== undefined || fastener.added === true;
+
+  // The screw the panel is editing, in the three fields that name a catalog
+  // part. `family` is what the spec was built with (or the app's default for one
+  // saved before families existed); the length list follows it, so switching
+  // family to one that lacks the current length is handled by the store's snap.
+  const family = spec.family ?? DEFAULT_SCREW_FAMILY;
+  const choice = { size: spec.size ?? 'M6', family, length: spec.length ?? 0 };
+  const lengths = screwLengths(family, choice.size);
+  const dims = screwDims(family, choice.size, choice.length);
 
   const commitPos = (i: 0 | 1 | 2, raw: string) => {
     const v = Number(raw);
@@ -177,7 +187,7 @@ const PartPropertyPanel: FC<PartPropertyPanelProps> = ({
             {SIZES.map((sz) => (
               <button
                 key={sz}
-                onClick={() => setPartSpec(setKey, fastener.key, sz, spec.length ?? 18, baseSpec)}
+                onClick={() => setPartSpec(setKey, fastener.key, { ...choice, size: sz }, baseSpec)}
                 disabled={spec.size === sz}
                 className={`flex-1 px-2 py-1 text-xs rounded transition-colors ${
                   spec.size === sz
@@ -189,24 +199,49 @@ const PartPropertyPanel: FC<PartPropertyPanelProps> = ({
               </button>
             ))}
           </div>
-          <Row label="总长 (mm)">
-            <input
-              type="number"
+          {/* The catalog's families, per size — DIN 912 covers M6 only, so this
+              row is built from the table rather than from a fixed list. Keyed on
+              the SIZE, not the current family: it has to offer the standards this
+              size comes in, and a family is what you pick from them. */}
+          <div className="flex gap-1">
+            {screwFamiliesFor(choice.size).map((f) => (
+              <button
+                key={f}
+                title={SCREW_FAMILIES[f].std}
+                onClick={() => setPartSpec(setKey, fastener.key, { ...choice, family: f }, baseSpec)}
+                disabled={family === f}
+                className={`flex-1 px-2 py-1 text-xs rounded transition-colors ${
+                  family === f
+                    ? 'bg-wood-600 text-white'
+                    : 'bg-neutral-800 text-neutral-400 hover:text-white cursor-pointer'
+                }`}
+              >
+                {SCREW_FAMILIES[f].short}
+              </button>
+            ))}
+          </div>
+          <Row label="杆长 (mm)">
+            {/* A SELECT, not a number box: `length` names a catalog part and the
+                BOM prints it verbatim, so a hand-typed 17 would export a part
+                nobody sells while the 3D drew whatever it snapped to. */}
+            <select
               data-field="len"
-              step={1}
-              min={spec.size ? minScrewLength(spec.size) : 6}
-              value={spec.length ?? 0}
-              onChange={(e) => {
-                if (!spec.size) return;
-                setPartSpec(setKey, fastener.key, spec.size, Number(e.target.value) || 0, baseSpec);
-              }}
-              className={cls}
-            />
+              value={choice.length}
+              onChange={(e) =>
+                setPartSpec(setKey, fastener.key, { ...choice, length: Number(e.target.value) }, baseSpec)
+              }
+              className={`${cls} cursor-pointer`}
+            >
+              {!lengths.includes(choice.length) && (
+                <option value={choice.length}>{choice.length} · 目录无此长度</option>
+              )}
+              {lengths.map((l) => (
+                <option key={l} value={l}>{l}</option>
+              ))}
+            </select>
           </Row>
           <p className="text-[10px] text-neutral-600">
-            头径 {SCREW_HEAD_DIMS[spec.size ?? 'M6'].headD}mm · 头高{' '}
-            {SCREW_HEAD_DIMS[spec.size ?? 'M6'].headH}mm · 最短{' '}
-            {minScrewLength(spec.size ?? 'M6')}mm（头高 + 1）
+            {headText(dims)} · 目录内 {lengths[0]}–{lengths[lengths.length - 1]}mm
           </p>
         </Section>
       ) : (

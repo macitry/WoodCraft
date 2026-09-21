@@ -1,57 +1,27 @@
-import { Suspense, useMemo } from 'react';
+import { useMemo } from 'react';
 import * as THREE from 'three';
-import { useLoader } from '@react-three/fiber';
-import { STLLoader } from 'three-stdlib';
 import { useDiyStore } from '../store/diyStore';
-import { buildScrewGroup } from './DiyScrewGeometry';
-import { SCREW_HEAD_DIMS } from '../types/furniture';
+import { DEFAULT_SCREW_FAMILY, screwDims } from './fastenerDims';
+import { ScrewMesh as ScrewStlMesh } from './FastenerStl';
 import type { DiyScrew } from '../types/furniture';
 
 const M = 0.001;
 
-/** STL screw model (entry point for real models) — centred, scaled to ~8mm. */
-const ScrewStl: React.FC<{ url: string }> = ({ url }) => {
-  const geom = useLoader(STLLoader, url);
-
-  const cloned = useMemo(() => {
-    const g = geom.clone();
-    const pos = g.getAttribute('position');
-    let minX = Infinity, minY = Infinity, minZ = Infinity;
-    let maxX = -Infinity, maxY = -Infinity, maxZ = -Infinity;
-    for (let i = 0; i < pos.count; i++) {
-      const x = pos.getX(i), y = pos.getY(i), z = pos.getZ(i);
-      if (x < minX) minX = x; if (x > maxX) maxX = x;
-      if (y < minY) minY = y; if (y > maxY) maxY = y;
-      if (z < minZ) minZ = z; if (z > maxZ) maxZ = z;
-    }
-    const ext = Math.max(maxX - minX, maxY - minY, maxZ - minZ);
-    const s = ext > 0 ? M * 8 / ext : M;
-    const cx = (minX + maxX) / 2, cy = (minY + maxY) / 2, cz = (minZ + maxZ) / 2;
-    for (let i = 0; i < pos.count; i++) {
-      pos.setXYZ(i, (pos.getX(i) - cx) * s, (pos.getY(i) - cy) * s, (pos.getZ(i) - cz) * s);
-    }
-    pos.needsUpdate = true;
-    return g;
-  }, [geom]);
-
-  return (
-    <mesh geometry={cloned}>
-      <meshStandardMaterial color="#c8c8c8" metalness={0.85} roughness={0.32} />
-    </mesh>
-  );
-};
-
-/** One screw instance: procedural geometry (or stlUrl override) + selection box. */
+/** One screw instance: the catalog part, plus a wireframe selection box. */
 const ScrewMesh: React.FC<{ screw: DiyScrew; isSelected: boolean }> = ({ screw, isSelected }) => {
   const selectScrew = useDiyStore((s) => s.selectScrew);
-  const group = useMemo(
-    () => buildScrewGroup(screw.size, screw.length),
-    [screw.size, screw.length],
+  const family = screw.family ?? DEFAULT_SCREW_FAMILY;
+  // Sized from the BAKED part, not from a declared table: the box has to frame
+  // what is actually drawn, including a length that snapped to another nominal.
+  const { part, headD, headH } = useMemo(
+    () => screwDims(family, screw.size, screw.length),
+    [family, screw.size, screw.length],
   );
-  const { headD, headH } = SCREW_HEAD_DIMS[screw.size];
-  // Wireframe box around the whole screw (head + shaft).
-  const boxCenterZ = (screw.length - 2 * headH) / 2;
-  const boxW = Math.max(headD, 7);
+  // Wireframe box around the whole screw: head at z < 0, shaft out to `length`.
+  const boxMin = Math.min(part.boxMm.min[2], 0);
+  const boxCenterZ = (boxMin + part.boxMm.max[2]) / 2;
+  const boxLen = part.boxMm.max[2] - boxMin;
+  const boxW = Math.max(headD, 7, 2 * headH);
 
   return (
     <group
@@ -61,22 +31,17 @@ const ScrewMesh: React.FC<{ screw: DiyScrew; isSelected: boolean }> = ({ screw, 
         THREE.MathUtils.degToRad(screw.rotation.pitch),
         THREE.MathUtils.degToRad(screw.rotation.yaw),
       ]}
+      scale={M}
       onClick={(e) => {
         e.stopPropagation();
         selectScrew(isSelected ? null : screw.id);
       }}
     >
-      {screw.stlUrl ? (
-        <Suspense fallback={null}>
-          <ScrewStl url={screw.stlUrl} />
-        </Suspense>
-      ) : (
-        <primitive object={group} scale={M} />
-      )}
+      <ScrewStlMesh family={family} size={screw.size} length={screw.length} />
 
       {isSelected && (
-        <mesh position={[0, 0, M * boxCenterZ]} renderOrder={2}>
-          <boxGeometry args={[M * boxW, M * boxW, M * Math.max(10, screw.length)]} />
+        <mesh position={[0, 0, boxCenterZ]} renderOrder={2}>
+          <boxGeometry args={[boxW, boxW, Math.max(10, boxLen)]} />
           <meshBasicMaterial color="#88ccff" wireframe transparent opacity={0.5} depthTest />
         </mesh>
       )}

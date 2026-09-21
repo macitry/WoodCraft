@@ -1,10 +1,17 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useDiyStore } from '../store/diyStore';
-import { PROFILE_DIMS, SCREW_HEAD_DIMS, SCREW_DEFAULT_LENGTH } from '../types/furniture';
+import { PROFILE_DIMS } from '../types/furniture';
 import type { DiyBracket, DiyProfile, DiyScrew, ScrewSize } from '../types/furniture';
 import { CONNECTORS, connectorById } from './connectors';
-import { accessoryKitById, jointFasteners, specSummary } from '../utils/accessoryKits';
+import {
+  DEFAULT_SCREW_FAMILY,
+  headText,
+  screwDims,
+  snapScrewLength,
+} from './fastenerDims';
+import { screwFamiliesFor, screwLengths } from './fasteners';
+import { SCREW_FAMILIES, accessoryKitById, jointFasteners, specSummary } from '../utils/accessoryKits';
 import { useKitLayoutFor } from '../store/kitLayoutStore';
 import type { DiyKitInstance } from '../types/furniture';
 
@@ -347,7 +354,9 @@ const ScrewProps: React.FC<{ screw: DiyScrew }> = ({ screw }) => {
     updateScrew(screw.id, { position: local.pos, rotation: local.rot });
   };
 
-  const { headD, headH } = SCREW_HEAD_DIMS[screw.size];
+  const family = screw.family ?? DEFAULT_SCREW_FAMILY;
+  const dims = screwDims(family, screw.size, screw.length);
+  const lengths = screwLengths(family, screw.size);
   const cls = "w-20 px-1.5 py-0.5 text-xs bg-neutral-900 border border-neutral-700 rounded text-neutral-200 text-right tabular-nums focus:border-wood-600 focus:outline-none";
 
   return (
@@ -362,12 +371,10 @@ const ScrewProps: React.FC<{ screw: DiyScrew }> = ({ screw }) => {
               onClick={() =>
                 updateScrew(screw.id, {
                   size: sz,
-                  // Keep the default total length aligned with the new size when
-                  // the user hasn't customized it yet.
-                  length:
-                    screw.length === SCREW_DEFAULT_LENGTH[screw.size]
-                      ? SCREW_DEFAULT_LENGTH[sz]
-                      : screw.length,
+                  // The length has to survive the change: keep it when the new
+                  // size holds it, otherwise take the nearest one it does (see
+                  // snapScrewLength) rather than naming a part that isn't sold.
+                  length: snapScrewLength(family, sz, screw.length),
                 })
               }
               className={`flex-1 px-2 py-1 text-xs rounded transition-colors cursor-pointer ${
@@ -380,23 +387,53 @@ const ScrewProps: React.FC<{ screw: DiyScrew }> = ({ screw }) => {
             </button>
           ))}
         </div>
-        <p className="text-[10px] text-neutral-500">
-          头径 {headD}mm · 头高 {headH}mm
-        </p>
       </Section>
 
-      <Section label="总长 Length (mm)">
+      {/* Which standard the screw is. The catalog's own families, per size: DIN
+          912 covers M6 only, so the row is built from the table rather than from
+          a fixed list of three. */}
+      <Section label="标准 Family">
+        <div className="flex gap-1">
+          {screwFamiliesFor(screw.size).map((f) => (
+            <button
+              key={f}
+              title={SCREW_FAMILIES[f].std}
+              onClick={() =>
+                updateScrew(screw.id, {
+                  family: f,
+                  length: snapScrewLength(f, screw.size, screw.length),
+                })
+              }
+              className={`flex-1 px-2 py-1 text-xs rounded transition-colors cursor-pointer ${
+                family === f
+                  ? 'bg-wood-600 text-white'
+                  : 'bg-neutral-800 text-neutral-400 hover:text-white'
+              }`}
+            >
+              {SCREW_FAMILIES[f].short}
+            </button>
+          ))}
+        </div>
+        <p className="text-[10px] text-neutral-500">{headText(dims)}</p>
+      </Section>
+
+      <Section label="杆长 Length (mm)">
         <Row label="Length">
-          <input
-            type="number"
+          {/* A SELECT, not a number box: `length` names a catalog part, and the
+              BOM prints it verbatim. A hand-typed 17 would print a part that
+              does not exist and draw the 18 the renderer snapped to. */}
+          <select
             value={screw.length}
-            min={6}
-            step={1}
-            onChange={(e) =>
-              updateScrew(screw.id, { length: Math.max(6, Number(e.target.value) || 6) })
-            }
-            className={cls}
-          />
+            onChange={(e) => updateScrew(screw.id, { length: Number(e.target.value) })}
+            className={`${cls} cursor-pointer`}
+          >
+            {!lengths.includes(screw.length) && (
+              <option value={screw.length}>{screw.length} · 目录无此长度</option>
+            )}
+            {lengths.map((l) => (
+              <option key={l} value={l}>{l}</option>
+            ))}
+          </select>
         </Row>
       </Section>
 
@@ -430,17 +467,6 @@ const ScrewProps: React.FC<{ screw: DiyScrew }> = ({ screw }) => {
             />
           </Row>
         ))}
-      </Section>
-
-      <Section label="STL 模型 (入口)">
-        <input
-          type="text"
-          value={screw.stlUrl ?? ''}
-          placeholder="/screw.stl (可选)"
-          onChange={(e) => updateScrew(screw.id, { stlUrl: e.target.value.trim() || undefined })}
-          className="w-full px-1.5 py-0.5 text-[10px] bg-neutral-900 border border-neutral-700 rounded text-neutral-300 focus:border-wood-600 focus:outline-none"
-        />
-        <p className="text-[10px] text-neutral-500">留空用程序化几何,填写则加载 STL 模型</p>
       </Section>
 
       <button
