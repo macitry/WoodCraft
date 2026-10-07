@@ -2,9 +2,13 @@ import { useMemo } from 'react';
 import { useLoader } from '@react-three/fiber';
 import { STLLoader } from 'three-stdlib';
 import type * as THREE from 'three';
+import { DEFAULT_BRACKET_STL_URL } from '../types/furniture';
 
 const M = 0.001;
-export const BRACKET_STL = '/Cast_Corner_Bracket.stl';
+/** The bracket the corner hints ghost in, i.e. what a click on one places: the
+ *  same default the main configurator mounts (`DEFAULT_BRACKET_STL_URL`, and the
+ *  same part `DEFAULT_CONNECTOR_ID` names in the connector catalog). */
+export const BRACKET_STL = DEFAULT_BRACKET_STL_URL;
 
 /**
  * Normalise a (loaded, un-scaled) STL geometry into scene metres so that its

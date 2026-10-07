@@ -23,6 +23,7 @@ import {
   TABLETOP_TEXTURES,
   type TabletopTexture,
 } from './tabletopTextures';
+import { t } from '../i18n';
 
 /** What an uploaded board IS, before it becomes a descriptor.
  *
@@ -67,7 +68,7 @@ function buildDescriptor(rec: BoardRecord, faceUrl: string, roughUrl: string): T
     label: rec.label,
     // Built from the record, never stored: a stored string would be left
     // describing a tile size the user has since changed.
-    note: `上传 · 裁出的正方形代表 ${rec.tileMm} mm`,
+    note: t('name.uploadedBoardNote', { mm: rec.tileMm }),
     color: rec.color,
     faceUrl,
     faceRoughUrl: roughUrl,

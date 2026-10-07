@@ -8,6 +8,8 @@ import { useDiyStore } from '../store/diyStore';
 import type { DiyBracket } from '../types/furniture';
 import { useConnectorGeometry } from './DiyBracketStl';
 import { CONNECTORS, connectorById } from './connectors';
+import { useT } from '../i18n';
+import { connectorLabel } from '../i18n/names';
 
 const M = 0.001;
 
@@ -16,6 +18,7 @@ const M = 0.001;
  * Shows the STL model, wireframe boundary, and coordinate axes.
  */
 const BracketEditModal: React.FC = () => {
+  const t = useT();
   const editingBracketId = useDiyStore((s) => s.editingBracketId);
   const brackets = useDiyStore((s) => s.brackets);
   const updateBracket = useDiyStore((s) => s.updateBracket);
@@ -29,12 +32,12 @@ const BracketEditModal: React.FC = () => {
     <div className="fixed inset-0 z-50 bg-neutral-950/95 backdrop-blur-sm flex flex-col">
       {/* Header */}
       <div className="h-12 px-4 flex items-center gap-3 border-b border-neutral-800 flex-shrink-0">
-        <span className="text-sm text-white font-medium">Edit {connectorById(bracket.connectorId).label}</span>
+        <span className="text-sm text-white font-medium">{t('diy.editConnector', { label: connectorLabel(connectorById(bracket.connectorId)) })}</span>
         <span className="text-xs text-neutral-500">
           {connectorById(bracket.connectorId).dim} · {bracket.size}×{bracket.size}×{bracket.size}mm
         </span>
         <div className="flex-1" />
-        <button onClick={close} className="px-3 py-1 text-xs rounded bg-neutral-800 hover:bg-neutral-700 text-neutral-300 transition-colors cursor-pointer">✕ Close</button>
+        <button onClick={close} className="px-3 py-1 text-xs rounded bg-neutral-800 hover:bg-neutral-700 text-neutral-300 transition-colors cursor-pointer">✕ {t('common.close')}</button>
       </div>
 
       <div className="flex-1 flex">
@@ -124,6 +127,7 @@ const BracketEditor: React.FC<{
   bracket: DiyBracket;
   onUpdate: (patch: Partial<DiyBracket>) => void;
 }> = ({ bracket, onUpdate }) => {
+  const t = useT();
   const [local, setLocal] = useState({
     pos: { ...bracket.position },
     rot: { ...bracket.rotation },
@@ -142,9 +146,9 @@ const BracketEditor: React.FC<{
 
   return (
     <div className="space-y-4 text-xs">
-      <Section label="Model">
+      <Section label={t('diy.model')}>
         <div className="flex justify-between items-center">
-          <span className="text-neutral-400">Connector</span>
+          <span className="text-neutral-400">{t('diy.connector')}</span>
           <select
             value={bracket.connectorId}
             onChange={(e) => onUpdate({ connectorId: e.target.value })}
@@ -152,14 +156,14 @@ const BracketEditor: React.FC<{
           >
             {CONNECTORS.map((c) => (
               <option key={c.id} value={c.id}>
-                {c.label} · {c.dim}
+                {connectorLabel(c)} · {c.dim}
               </option>
             ))}
           </select>
         </div>
       </Section>
 
-      <Section label="World Position (mm)">
+      <Section label={t('diy.worldPosMm')}>
         {(['x','y','z'] as const).map((ax) => (
           <Row key={ax} label={ax.toUpperCase()}>
             <input type="number" value={Math.round(local.pos[ax])} onChange={(e) => setLocal({ ...local, pos: { ...local.pos, [ax]: Number(e.target.value) || 0 } })} onBlur={commit} onKeyDown={(e) => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur(); }} className={cls} step={1} />
@@ -167,7 +171,7 @@ const BracketEditor: React.FC<{
         ))}
       </Section>
 
-      <Section label="World Rotation (°)">
+      <Section label={t('diy.worldRotDeg')}>
         {(['roll','pitch','yaw'] as const).map((r) => (
           <Row key={r} label={r}>
             <input type="number" value={Math.round(local.rot[r])} onChange={(e) => setLocal({ ...local, rot: { ...local.rot, [r]: Number(e.target.value) || 0 } })} onBlur={commit} onKeyDown={(e) => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur(); }} className={cls} step={1} />
@@ -175,7 +179,7 @@ const BracketEditor: React.FC<{
         ))}
       </Section>
 
-      <Section label="Anchor Offset (mm)">
+      <Section label={t('diy.anchorOffsetMm')}>
         {(['x','y','z'] as const).map((ax) => (
           <Row key={ax} label={ax.toUpperCase()}>
             <input type="number" value={Math.round(local.aPos[ax])} onChange={(e) => setLocal({ ...local, aPos: { ...local.aPos, [ax]: Number(e.target.value) || 0 } })} onBlur={commit} onKeyDown={(e) => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur(); }} className={cls} step={1} />
@@ -183,7 +187,7 @@ const BracketEditor: React.FC<{
         ))}
       </Section>
 
-      <Section label="Anchor Rotation (°)">
+      <Section label={t('diy.anchorRotDeg')}>
         {(['roll','pitch','yaw'] as const).map((r) => (
           <Row key={r} label={r}>
             <input type="number" value={Math.round(local.aRot[r])} onChange={(e) => setLocal({ ...local, aRot: { ...local.aRot, [r]: Number(e.target.value) || 0 } })} onBlur={commit} onKeyDown={(e) => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur(); }} className={cls} step={1} />

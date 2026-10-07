@@ -5,6 +5,8 @@ import {
   type FC,
 } from 'react';
 import { useModelStore } from '../store/modelStore';
+import { useT } from '../i18n';
+import { materialName, partName, partTypeName, templateName } from '../i18n/names';
 import type { Component } from '../types/furniture';
 import MiniPartPreview from './MiniPartPreview';
 
@@ -16,12 +18,14 @@ import MiniPartPreview from './MiniPartPreview';
  *   - Leg/Beam → 2D aluminum extrusion cross-section
  */
 const FurnitureTree: FC = () => {
+  const t = useT();
   const model = useModelStore((s) => s.model);
   const selectedComponentId = useModelStore((s) => s.selectedComponentId);
   const selectComponent = useModelStore((s) => s.selectComponent);
   const setComponentVisibility = useModelStore((s) => s.setComponentVisibility);
   const soloComponent = useModelStore((s) => s.soloComponent);
   const isSolo = useModelStore((s) => s._preSoloVisibility !== null);
+  const templateId = useModelStore((s) => s.currentParams.templateId);
   const [collapsedGroups, setCollapsedGroups] = useState<Record<string, boolean>>({});
 
   // ---- Hover preview state ----
@@ -48,9 +52,9 @@ const FurnitureTree: FC = () => {
     return (
       <div className="p-4 text-neutral-500 text-sm">
         <p className="text-xs uppercase tracking-wider text-neutral-600 mb-3">
-          Components
+          {t('nav.components')}
         </p>
-        <p>No model loaded.</p>
+        <p>{t('common.noModel')}</p>
       </div>
     );
   }
@@ -70,13 +74,6 @@ const FurnitureTree: FC = () => {
     }));
   };
 
-  const groupLabels: Record<string, string> = {
-    tabletop: '桌面 (Tabletop)',
-    leg: '桌腿 (Legs)',
-    beam: '横梁 (Beams)',
-    shelf: '搁板 (Shelves)',
-  };
-
   const typeIcons: Record<string, string> = {
     tabletop: '▣',
     leg: '▯',
@@ -89,10 +86,13 @@ const FurnitureTree: FC = () => {
       {/* Header */}
       <div className="px-4 py-3 border-b border-neutral-800">
         <p className="text-xs uppercase tracking-wider text-neutral-500 font-medium">
-          Components
+          {t('nav.components')}
         </p>
         <h3 className="text-sm font-medium text-white mt-0.5 truncate">
-          {model.name}
+          {/* The name the API sent is the fallback, not the source: the same
+              template is named by the dictionary, so the tree header and the
+              toolbar's template picker cannot disagree. */}
+          {templateName(templateId, model.name)}
         </h3>
       </div>
 
@@ -116,7 +116,7 @@ const FurnitureTree: FC = () => {
                 </span>
                 <span className="text-xs">{typeIcons[groupType] || '●'}</span>
                 <span className="text-neutral-300">
-                  {groupLabels[groupType] || groupType}
+                  {partTypeName(groupType, groupType)}
                 </span>
                 <span className="text-neutral-600 text-xs ml-auto">
                   {parts.length}
@@ -152,7 +152,7 @@ const FurnitureTree: FC = () => {
                           e.stopPropagation();
                           setComponentVisibility(part.id, !part.visible);
                         }}
-                        title={part.visible ? 'Hide' : 'Show'}
+                        title={part.visible ? t('common.hide') : t('common.show')}
                       >
                         {part.visible ? '👁' : '👁‍🗨'}
                       </span>
@@ -164,16 +164,16 @@ const FurnitureTree: FC = () => {
                           e.stopPropagation();
                           soloComponent(part.id);
                         }}
-                        title={isSolo && part.visible ? 'Restore all' : 'Show only this'}
+                        title={isSolo && part.visible ? t('common.restoreAll') : t('common.showOnlyThis')}
                       >
                         {isSolo && part.visible ? '◉' : '◎'}
                       </span>
 
-                      <span className="truncate">{part.name}</span>
+                      <span className="truncate">{partName(part.id, part.name)}</span>
 
                       {part.material && (
                         <span className="text-[10px] text-neutral-600 ml-auto">
-                          {part.material}
+                          {materialName(part.material, part.material)}
                         </span>
                       )}
                     </button>

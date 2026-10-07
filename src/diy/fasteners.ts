@@ -8,8 +8,9 @@
 // APP FRAME (all extents mm): the part's MATING PLANE is z=0 and its axis is
 // +Z, pointing INTO the material — the frame the seats use, since a fastener is
 // placed by its bearing surface and grows inward.
-//   · din912 / din7984 (圆柱头 / 薄头): the catalog's origin already sits on the
-//     shoulder, so z=0 is the bearing face and the head hangs at z < 0.
+//   · din912 / din7984 (圆柱头 / 薄头) and wn7381 (圆头法兰): the catalog's
+//     origin already sits on the shoulder, so z=0 is the bearing face and the
+//     head hangs at z < 0.
 //   · countersunk (沉头): the origin is the head's OUTER face, so the whole
 //     screw is z >= 0 and the head is BELOW the surface it is sunk into.
 //   · T-nut: the block is centred on z=0 (the mesh has no datum for the lips).
@@ -20,7 +21,18 @@
 import type { ScrewSize } from '../types/furniture';
 
 /** Head/standard families the catalog actually holds. */
-export type ScrewFamily = 'din912' | 'din7984' | 'countersunk';
+export type ScrewFamily = 'din912' | 'din7984' | 'countersunk' | 'wn7381';
+
+/**
+ * T-nut families, which are about how the nut HOLDS, not what it threads onto.
+ *  · t_slot — a plain block that slides into the slot (1.34.10E).
+ *  · spring — a block with a spring plate that grips the slot (1.32.4F, "w/spring").
+ *
+ * Independent of the size AND of the series: the catalog holds an M6 in both
+ * families for the same 30-series slot, so (size, series) alone does not name a
+ * part.  That is why findTNut takes all three.
+ */
+export type TNutFamily = 't_slot' | 'spring';
 
 export interface BakedScrew {
   /** Catalog part id (MayCad uid). */
@@ -36,6 +48,7 @@ export interface BakedScrew {
 
 export interface BakedTNut {
   uid: string;
+  family: TNutFamily;
   size: ScrewSize;
   /** Profile series whose slot the block fits (see tNutName). */
   series: number;
@@ -501,12 +514,101 @@ export const SCREWS: BakedScrew[] = [
     stlUrl: '/fasteners/0.63.D00912.06085.stl',
     boxMm: { min: [-4.87, -5, -6], max: [4.87, 5, 85] },
   },
+  {
+    uid: '0.63.WN7381.05006',
+    family: 'wn7381',
+    size: 'M5',
+    length: 6,
+    stlUrl: '/fasteners/0.63.WN7381.05006.stl',
+    boxMm: { min: [-6.65, -6.65, -2.76], max: [6.65, 6.65, 5.99] },
+  },
+  {
+    uid: '0.63.WN7381.05008',
+    family: 'wn7381',
+    size: 'M5',
+    length: 8,
+    stlUrl: '/fasteners/0.63.WN7381.05008.stl',
+    boxMm: { min: [-6.65, -6.65, -2.76], max: [6.65, 6.65, 7.99] },
+  },
+  {
+    uid: '0.63.WN7381.05012',
+    family: 'wn7381',
+    size: 'M5',
+    length: 12,
+    stlUrl: '/fasteners/0.63.WN7381.05012.stl',
+    boxMm: { min: [-6.61, -6.65, -2.76], max: [6.61, 6.5, 11.99] },
+  },
+  {
+    uid: '0.63.WN7381.05025',
+    family: 'wn7381',
+    size: 'M5',
+    length: 25,
+    stlUrl: '/fasteners/0.63.WN7381.05025.stl',
+    boxMm: { min: [-6.6, -6.65, -2.76], max: [6.6, 6.46, 24.99] },
+  },
+  {
+    uid: '0.63.WN7381.06010',
+    family: 'wn7381',
+    size: 'M6',
+    length: 10,
+    stlUrl: '/fasteners/0.63.WN7381.06010.stl',
+    boxMm: { min: [-7.35, -7.35, -3.31], max: [7.35, 7.35, 9.99] },
+  },
+  {
+    uid: '0.63.WN7381.06012',
+    family: 'wn7381',
+    size: 'M6',
+    length: 12,
+    stlUrl: '/fasteners/0.63.WN7381.06012.stl',
+    boxMm: { min: [-7.31, -7.35, -3.31], max: [7.31, 7.19, 11.99] },
+  },
+  {
+    uid: '0.63.WN7381.06016',
+    family: 'wn7381',
+    size: 'M6',
+    length: 16,
+    stlUrl: '/fasteners/0.63.WN7381.06016.stl',
+    boxMm: { min: [-7.31, -7.35, -3.31], max: [7.31, 7.19, 15.99] },
+  },
+  {
+    uid: '0.63.WN7381.06020',
+    family: 'wn7381',
+    size: 'M6',
+    length: 20,
+    stlUrl: '/fasteners/0.63.WN7381.06020.stl',
+    boxMm: { min: [-7.17, -7.35, -3.31], max: [7.17, 7.35, 19.99] },
+  },
 ];
 
-/** Every baked T-nut (one per thread size; the 30-series block). */
+/** Every baked T-nut — one entry per (family, size); the 30-series block. */
 export const T_NUTS: BakedTNut[] = [
   {
+    uid: '1.32.4FM4',
+    family: 'spring',
+    size: 'M4',
+    series: 30,
+    stlUrl: '/fasteners/1.32.4FM4.stl',
+    boxMm: { min: [-5.5, -10, -2.05], max: [5.5, 10, 2.05] },
+  },
+  {
+    uid: '1.32.4FM5',
+    family: 'spring',
+    size: 'M5',
+    series: 30,
+    stlUrl: '/fasteners/1.32.4FM5.stl',
+    boxMm: { min: [-5.5, -10, -2.05], max: [5.5, 10, 2.05] },
+  },
+  {
+    uid: '1.32.4FM6',
+    family: 'spring',
+    size: 'M6',
+    series: 30,
+    stlUrl: '/fasteners/1.32.4FM6.stl',
+    boxMm: { min: [-5.5, -10, -2.05], max: [5.5, 10, 2.05] },
+  },
+  {
     uid: '1.34.10EM4',
+    family: 't_slot',
     size: 'M4',
     series: 30,
     stlUrl: '/fasteners/1.34.10EM4.stl',
@@ -514,6 +616,7 @@ export const T_NUTS: BakedTNut[] = [
   },
   {
     uid: '1.34.10EM5',
+    family: 't_slot',
     size: 'M5',
     series: 30,
     stlUrl: '/fasteners/1.34.10EM5.stl',
@@ -521,6 +624,7 @@ export const T_NUTS: BakedTNut[] = [
   },
   {
     uid: '1.34.10EM6',
+    family: 't_slot',
     size: 'M6',
     series: 30,
     stlUrl: '/fasteners/1.34.10EM6.stl',
@@ -529,11 +633,11 @@ export const T_NUTS: BakedTNut[] = [
 ];
 
 const screwIndex = new Map(SCREWS.map((s) => [`${s.family}|${s.size}|${s.length}`, s]));
-const tnutIndex = new Map(T_NUTS.map((t) => [`${t.size}|${t.series}`, t]));
+const tnutIndex = new Map(T_NUTS.map((t) => [`${t.family}|${t.size}|${t.series}`, t]));
 
 /** The families that hold `size`, in the catalog's own order. */
 export function screwFamiliesFor(size: ScrewSize): ScrewFamily[] {
-  const order: ScrewFamily[] = ['din912', 'din7984', 'countersunk'];
+  const order: ScrewFamily[] = ['din912', 'din7984', 'countersunk', 'wn7381'];
   return order.filter((f) => SCREWS.some((s) => s.family === f && s.size === size));
 }
 
@@ -560,14 +664,23 @@ export function findScrew(family: ScrewFamily, size: ScrewSize, length: number):
     Math.abs(s.length - length) < Math.abs(best.length - length) ? s : best, seed[0]);
 }
 
-/** The T-nut for (size, series); an unbaked series falls back to the nearest one. */
-export function findTNut(size: ScrewSize, series: number): BakedTNut {
-  const exact = tnutIndex.get(`${size}|${series}`);
+/**
+ * The T-nut for (family, size, series); an unbaked series falls back to the
+ * nearest one WITHIN the family.
+ *
+ * `family` is defaulted rather than required so the plain block stays the
+ * answer for a caller that only ever meant "a T-nut": the catalog holds an M6
+ * in both families for the same slot, so a bare (size, series) lookup would
+ * otherwise be free to return the spring nut to a kit that never asked for it.
+ */
+export function findTNut(size: ScrewSize, series: number, family: TNutFamily = 't_slot'): BakedTNut {
+  const exact = tnutIndex.get(`${family}|${size}|${series}`);
   if (exact) return exact;
-  const pool = T_NUTS.filter((t) => t.size === size);
-  const seed = pool.length ? pool : T_NUTS;
-  return seed.reduce((best, t) =>
-    Math.abs(t.series - series) < Math.abs(best.series - series) ? t : best, seed[0]);
+  const pool = T_NUTS.filter((t) => t.family === family && t.size === size);
+  const seed = pool.length ? pool : T_NUTS.filter((t) => t.family === family);
+  const fallback = seed.length ? seed : T_NUTS;
+  return fallback.reduce((best, t) =>
+    Math.abs(t.series - series) < Math.abs(best.series - series) ? t : best, fallback[0]);
 }
 
 /**

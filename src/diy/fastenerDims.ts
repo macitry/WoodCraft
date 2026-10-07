@@ -13,6 +13,7 @@
 
 import type { ScrewSize } from '../types/furniture';
 import { findScrew, screwLengths, type BakedScrew, type ScrewFamily } from './fasteners';
+import { t } from '../i18n';
 
 /** The catalog default length for (family, size) — re-exported so the panels and
  *  the stores import their table lookups from one place. */
@@ -31,12 +32,17 @@ export { defaultScrewLength } from './fasteners';
 export const DEFAULT_SCREW_FAMILY: SocketFamily = 'din7984';
 
 /**
- * Screw families whose head stands PROUD of the mating plane — every catalog
- * family but countersunk. The default below is one of these: a countersunk head
- * sinks BELOW the surface, so it is a different kind of part rather than a
- * fallback for a cap screw.
+ * Screw families a SOCKET (内六角) key drives — the ones whose head stands proud
+ * of the mating plane. The default below is one of these.
+ *
+ * wn7381 is excluded for the same reason countersunk is, and not as a technicality:
+ * its head is a flange pan head, so a panel that labelled it 圆柱头 or 薄头 would
+ * be naming a socket standard under a picture of a pan head, and a key would not
+ * fit it. It still stands proud — it is the DRIVE that differs, not the geometry —
+ * so the two exclusions are not the same exclusion; see kindForFamily, which is
+ * what actually decides the name and the BOM material.
  */
-export type SocketFamily = Exclude<ScrewFamily, 'countersunk'>;
+export type SocketFamily = Exclude<ScrewFamily, 'countersunk' | 'wn7381'>;
 
 export interface ScrewDims {
   /** The catalog part these numbers describe. */
@@ -66,8 +72,11 @@ const mm1 = (v: number) => Number(v.toFixed(1));
  * while what it actually means is that the head ends up below the surface.
  */
 export function headText(d: ScrewDims): string {
-  if (d.headH <= 0.05) return `头径 ${mm1(d.headD)}mm · 沉头（头部低于安装面）`;
-  return `头径 ${mm1(d.headD)}mm · 头高 ${mm1(d.headH)}mm`;
+  // Chinese is in the dictionary now, not in the format string: the panels that
+  // print this (DiyPropertyPanel, PartPropertyPanel) are the components that
+  // subscribe to the language, and they already did before this was translated.
+  if (d.headH <= 0.05) return t('head.countersunk', { d: mm1(d.headD) });
+  return t('head.plain', { d: mm1(d.headD), h: mm1(d.headH) });
 }
 
 /** Shortest / longest nominal length the catalog holds for (family, size). */

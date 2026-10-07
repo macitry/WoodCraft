@@ -2,6 +2,10 @@ import { useEffect, useMemo, useState, type FC } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import KitEditorScene from './KitEditorScene';
 import PartPropertyPanel from './PartPropertyPanel';
+import AppHeader from '../components/AppHeader';
+import { useT } from '../i18n';
+import { connectorLabel, hardwareName, kitDesc, kitName } from '../i18n/names';
+import type { KitKey } from '../i18n/dict/kit';
 import {
   ACCESSORY_KITS,
   SCREW_SERIES,
@@ -34,10 +38,10 @@ const isEdited = (f: LocalFastener, removed: boolean): boolean =>
  * One entry per KIND, not per screw family: an added screw starts on the app's
  * default standard and its family is picked in the panel like any other part —
  * a second row of near-identical buttons here would only duplicate that. */
-const ADDABLE: { kind: HardwareKind; label: string }[] = [
-  { kind: 'socket_screw', label: '内六角螺栓' },
-  { kind: 'countersunk_screw', label: '沉头螺钉' },
-  { kind: 't_nut', label: 'T 型螺母' },
+const ADDABLE: { kind: HardwareKind; labelKey: KitKey }[] = [
+  { kind: 'socket_screw', labelKey: 'kit.addSocketScrew' },
+  { kind: 'countersunk_screw', labelKey: 'kit.addCountersunkScrew' },
+  { kind: 't_nut', labelKey: 'kit.addTNut' },
 ];
 
 const SIZES: ScrewSize[] = ['M4', 'M5', 'M6'];
@@ -45,12 +49,12 @@ const SIZES: ScrewSize[] = ['M4', 'M5', 'M6'];
 /**
  * Which extrusion the preview may be drawn with.
  *
- * `2020` is deliberately absent even though `PROFILE_DIMS` knows it:
- * `public/profiles/profile_2020.stl` is a 12-face box with no slot at all, so it
- * would show LESS than the placeholder box it replaced — and `minProfileSize: 30`
- * on every joint kit means `kitFitReason` rejects a 20 mm profile anyway, so it is
- * an assembly the app itself says is not allowed. Anything not listed here falls
- * back to `3030`, hand-typed `?profile=2020` included.
+ * `2020` is deliberately absent even though `PROFILE_DIMS` knows it, and it is
+ * NOT a mesh limitation any more — `public/profiles/profile_2020.stl` is a real
+ * 4-slot extrusion like the other two. It is `minProfileSize: 30` on every joint
+ * kit: `kitFitReason` rejects a 20 mm profile, so previewing one would draw an
+ * assembly the app itself says is not allowed. Anything not listed here falls back
+ * to `3030`, hand-typed `?profile=2020` included.
  *
  * PREVIEW ONLY. This value must never reach `jointFasteners`, `kitLayoutKey` or
  * the store — it changes what the bars look like and nothing else. The e2e
@@ -87,6 +91,7 @@ const specFor = (kind: HardwareKind, size: ScrewSize) =>
  * layout is being edited.
  */
 const KitEditorPage: FC = () => {
+  const t = useT();
   const navigate = useNavigate();
   const [search] = useSearchParams();
 
@@ -217,47 +222,45 @@ const KitEditorPage: FC = () => {
 
   return (
     <div className="w-screen h-screen flex flex-col bg-neutral-950 overflow-hidden">
-      {/* Header */}
-      <div className="h-12 px-4 flex items-center gap-3 border-b border-neutral-800 flex-shrink-0">
-        <button
-          onClick={() => navigate('/')}
-          className="px-2 py-1 text-xs rounded text-neutral-400 hover:text-white hover:bg-neutral-800 transition-colors cursor-pointer"
-        >
-          ← Home
-        </button>
-        <div className="w-px h-5 bg-neutral-700" />
-        <span className="text-sm font-semibold text-white">组合</span>
-        <span className="text-xs text-neutral-500">· {kit.name}</span>
-        <div className="flex-1" />
-        <span className="text-xs text-neutral-500 tabular-nums">
-          共 {fasteners.length} 件 · 3D / 清单 / 导出同源
-          {hiddenCount > 0 && <span className="text-amber-500/80"> · 另有 {hiddenCount} 件已隐藏</span>}
-        </span>
-        <button
-          onClick={() => resetKit(setKey)}
-          disabled={layout === null}
-          className={`px-3 py-1 text-xs rounded transition-colors ${
-            layout === null
-              ? 'bg-neutral-900 text-neutral-600 cursor-not-allowed'
-              : 'bg-neutral-800 text-neutral-300 hover:text-white cursor-pointer'
-          }`}
-          title={layout === null ? '这套组合尚未改动' : '清除本组合的全部微调，回到预设'}
-        >
-          恢复整套默认
-        </button>
-      </div>
-
-      {refusedFrame && (
-        <div className="px-4 py-2 bg-amber-500/15 border-b border-amber-600/40 text-[11px] text-amber-300">
-          「{requested?.name}」按整块桌板计价，不产生可放置的零件 —— 已切换到可微调的组合。
-        </div>
-      )}
+      <AppHeader
+        active="kits"
+        left={<span className="text-sm font-semibold text-white">{kitName(kit)}</span>}
+        right={
+          <>
+            <span className="text-xs text-neutral-500 tabular-nums">
+              {t('kit.count', { n: fasteners.length })}
+              {hiddenCount > 0 && (
+                <span className="text-amber-500/80"> {t('kit.hiddenCount', { n: hiddenCount })}</span>
+              )}
+            </span>
+            <button
+              onClick={() => resetKit(setKey)}
+              disabled={layout === null}
+              className={`px-3 py-1 text-xs rounded transition-colors ${
+                layout === null
+                  ? 'bg-neutral-900 text-neutral-600 cursor-not-allowed'
+                  : 'bg-neutral-800 text-neutral-300 hover:text-white cursor-pointer'
+              }`}
+              title={layout === null ? t('kit.resetAllNone') : t('kit.resetAllHint')}
+            >
+              {t('kit.resetAll')}
+            </button>
+          </>
+        }
+        banner={
+          refusedFrame && (
+            <div className="px-4 py-2 bg-amber-500/15 border-b border-amber-600/40 text-[11px] text-amber-300">
+              {t('kit.frameRefused', { name: kitName(requested ?? kit) })}
+            </div>
+          )
+        }
+      />
 
       <div className="flex-1 flex overflow-hidden">
         {/* Left — kit + parts */}
         <aside className="w-72 flex-shrink-0 flex flex-col border-r border-neutral-800 overflow-hidden">
           <div className="p-3 border-b border-neutral-800">
-            <p className="text-[10px] uppercase tracking-wider text-neutral-500 font-medium">组合库</p>
+            <p className="text-[10px] uppercase tracking-wider text-neutral-500 font-medium">{t('kit.library')}</p>
             <div className="mt-2 space-y-1">
               {ACCESSORY_KITS.map((k) => {
                 const editable = k.scope === 'joint';
@@ -282,9 +285,9 @@ const KitEditorPage: FC = () => {
                           : 'border-neutral-800 text-neutral-400 hover:border-neutral-600 cursor-pointer'
                     }`}
                   >
-                    <span className="block font-medium">{k.name}</span>
+                    <span className="block font-medium">{kitName(k)}</span>
                     <span className="block text-[10px] text-neutral-500 mt-0.5">
-                      {editable ? k.desc : '按整块桌板计价，不产生可放置的零件，无装配体可调'}
+                      {editable ? kitDesc(k) : t('kit.frameNotEditable')}
                     </span>
                   </button>
                 );
@@ -293,12 +296,12 @@ const KitEditorPage: FC = () => {
           </div>
 
           <div className="px-3 py-2 border-b border-neutral-800">
-            <p className="text-[10px] uppercase tracking-wider text-neutral-500 font-medium">孔位表</p>
+            <p className="text-[10px] uppercase tracking-wider text-neutral-500 font-medium">{t('kit.holeTable')}</p>
             <p className="text-[11px] text-neutral-300 mt-1">
-              {cc.label} · {cc.dim}
+              {connectorLabel(cc)} · {cc.dim}
             </p>
             <p className="text-[10px] text-neutral-600 mt-0.5 leading-snug">
-              微调按孔位表区分，孔位表由连接件尺寸决定 —— 尺寸相同就共用一份。
+              {t('kit.holeTableNote')}
             </p>
             <div className="mt-1.5 space-y-0.5">
               {patternGroups.map((g) => {
@@ -308,7 +311,7 @@ const KitEditorPage: FC = () => {
                     key={g.sig}
                     data-pattern={g.sig}
                     onClick={() => navigate(editorUrl(kit.id, g.list[0].stlUrl))}
-                    title={g.list.map((c) => `${c.label} (${c.dim})`).join(' / ')}
+                    title={g.list.map((c) => `${connectorLabel(c)} (${c.dim})`).join(' / ')}
                     className={`w-full px-2 py-1 text-left text-[10px] rounded border transition-colors cursor-pointer ${
                       on
                         ? 'border-wood-600 bg-wood-500/15 text-wood-200'
@@ -320,10 +323,10 @@ const KitEditorPage: FC = () => {
                         {g.list.map((c) => c.dim).join(' / ')}
                       </span>
                       {g.list.length > 1 && (
-                        <span className="flex-shrink-0 text-neutral-600">{g.list.length} 件共用</span>
+                        <span className="flex-shrink-0 text-neutral-600">{t('kit.sharedCount', { n: g.list.length })}</span>
                       )}
                       {g.edited && (
-                        <span className="ml-auto flex-shrink-0 text-amber-500/90">已微调</span>
+                        <span className="ml-auto flex-shrink-0 text-amber-500/90">{t('common.tweaked')}</span>
                       )}
                     </span>
                   </button>
@@ -333,7 +336,7 @@ const KitEditorPage: FC = () => {
           </div>
 
           <div className="px-3 py-2 border-b border-neutral-800">
-            <p className="text-[10px] uppercase tracking-wider text-neutral-500 font-medium">型材</p>
+            <p className="text-[10px] uppercase tracking-wider text-neutral-500 font-medium">{t('kit.profile')}</p>
             <div className="mt-1.5 flex gap-1">
               {OFFERED_PROFILES.map((size) => (
                 <button
@@ -352,13 +355,13 @@ const KitEditorPage: FC = () => {
               ))}
             </div>
             <p className="text-[10px] text-neutral-600 mt-1 leading-snug">
-              只影响这里的预览，不改零件数量与位置。
+              {t('kit.profileNote')}
             </p>
           </div>
 
           <div className="flex-1 min-h-0 overflow-y-auto p-3">
             <p className="text-[10px] uppercase tracking-wider text-neutral-500 font-medium">
-              零件 <span className="text-neutral-600 normal-case">（{listRows.length}）</span>
+              {t('kit.parts')} <span className="text-neutral-600 normal-case">{t('kit.partsCount', { n: listRows.length })}</span>
             </p>
             <div className="mt-2 space-y-0.5">
               {listRows.map((f) => {
@@ -380,10 +383,10 @@ const KitEditorPage: FC = () => {
                     }`}
                   >
                     <span className="flex items-center gap-1">
-                      <span className="truncate">{f.spec.name}</span>
+                      <span className="truncate">{hardwareName(f.spec)}</span>
                       {(isEdited(f, removed) || removed) && (
                         <span className="ml-auto flex-shrink-0 text-[9px] text-amber-500/90">
-                          {removed ? '已隐藏' : '已微调'}
+                          {removed ? t('common.hidden') : t('common.tweaked')}
                         </span>
                       )}
                     </span>
@@ -404,7 +407,7 @@ const KitEditorPage: FC = () => {
                 onClick={() => setAdding((v) => !v)}
                 className="w-full px-2 py-1.5 text-[11px] rounded border border-neutral-700 text-neutral-300 hover:border-wood-600 hover:text-wood-200 transition-colors cursor-pointer"
               >
-                ＋ 添加零件
+                {t('kit.addPart')}
               </button>
               {adding && (
                 <div className="mt-2 space-y-2">
@@ -420,7 +423,7 @@ const KitEditorPage: FC = () => {
                             : 'bg-neutral-800 text-neutral-400 hover:text-white'
                         }`}
                       >
-                        {a.label}
+                        {t(a.labelKey)}
                       </button>
                     ))}
                   </div>
@@ -445,12 +448,11 @@ const KitEditorPage: FC = () => {
                     onClick={handleAdd}
                     className="w-full px-2 py-1.5 text-[11px] rounded bg-wood-600 hover:bg-wood-500 text-white transition-colors cursor-pointer"
                   >
-                    {panelPart ? `加在「${panelPart.spec.name}」处` : '加在第一个孔位'}
+                    {panelPart ? t('kit.addAtPart', { name: hardwareName(panelPart.spec) }) : t('kit.addAtFirst')}
                   </button>
                   <p data-add-preview className="text-[10px] text-neutral-600 leading-snug">
-                    添加后会选中，可直接拖走或改数值。
-                    {specFor(addKind, addSize).name} ·
-                    共 {listRows.length + 1} 件
+                    {t('kit.addHint')}
+                    {hardwareName(specFor(addKind, addSize))} · {t('kit.addTotal', { n: listRows.length + 1 })}
                   </p>
                 </div>
               )}
@@ -460,7 +462,7 @@ const KitEditorPage: FC = () => {
                   model and the connector's own STL is untouched, so a shop
                   building from this still drills from the drawing. */}
               <p className="mt-2 text-[10px] text-neutral-600 leading-snug">
-                微调只改变 3D 位置、清单与导出数量；不修改角码模型，也不在型材上生成真实孔位。
+                {t('kit.tweakScopeNote')}
               </p>
             </div>
           </div>
@@ -479,9 +481,9 @@ const KitEditorPage: FC = () => {
             setKey={setKey}
           />
           <div className="absolute top-3 left-3 pointer-events-none px-3 py-2 rounded-lg bg-black/55 backdrop-blur-sm text-[10px] text-neutral-400 leading-relaxed">
-            <p>拖动旋转 · 滚轮缩放 · 右键平移</p>
-            <p>点选零件可在右侧查看</p>
-            <p className="text-neutral-500 mt-0.5">Esc 取消选中，再按返回</p>
+            <p>{t('view.orbitHint')}</p>
+            <p>{t('kit.pickHint')}</p>
+            <p className="text-neutral-500 mt-0.5">{t('kit.escHint')}</p>
           </div>
         </main>
 
@@ -492,7 +494,7 @@ const KitEditorPage: FC = () => {
             if (!fastener) {
               return (
                 <p className="text-[11px] text-neutral-600 leading-snug">
-                  未选中零件。点 3D 中的一颗，或左侧清单里的一行。
+                  {t('kit.nothingSelected')}
                 </p>
               );
             }

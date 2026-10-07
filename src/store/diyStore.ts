@@ -14,9 +14,12 @@ import type {
   BracketFacePick,
   DiyKitInstance,
 } from '../types/furniture';
-import { PROFILE_DIMS } from '../types/furniture';
+import { DEFAULT_BRACKET_STL_URL, PROFILE_DIMS } from '../types/furniture';
+import { CAST_CONNECTOR, CONNECTORS } from '../diy/connectors';
 import { DEFAULT_SCREW_FAMILY, defaultScrewLength } from '../diy/fastenerDims';
 import { jointFitInfo, cornerBracketFits } from '../diy/diyJointGeometry';
+import { bracketAtHint, eulerFromNormals } from '../diy/diyCornerGeometry';
+import type { CornerHint } from '../diy/diyCornerGeometry';
 import { accessoryKitById } from '../utils/accessoryKits';
 
 let _nextId = 1;
@@ -25,6 +28,106 @@ function uid(): string {
 }
 /** Stable per-profile creation sequence (structure-tree numbering). */
 let _seq = 0;
+
+/**
+ * The connector a newly placed bracket gets — the same part the main
+ * configurator's brackets default to (`DEFAULT_BRACKET_STL_URL`) and the same one
+ * `DiyCornerHints` ghosts in, since a hint that previewed one part and placed
+ * another would be a lie about the thing it is inviting you to click.
+ *
+ * Resolved through the STL url rather than written as a connector id so the two
+ * editors cannot end up naming different parts; the cast bracket is still in
+ * `CONNECTORS` and still selectable from the connector library.
+ */
+export const DEFAULT_BRACKET_CONNECTOR_ID =
+  CONNECTORS.find((c) => c.stlUrl === DEFAULT_BRACKET_STL_URL)?.id ?? CAST_CONNECTOR.id;
+
+/**
+ * A corner bracket for a pair of mounting faces — the ONE builder behind every
+ * way a bracket gets placed at a joint: a dropped drag, a manual two-face pick,
+ * and a click on a corner hint.
+ *
+ * `pickBracketFace` used to inline this rotation/rounding block. Copying it a
+ * third time for the corner-click path is how the three entrances drift into
+ * placing subtly different parts at subtly different poses, which is the exact
+ * complaint that started this rewrite.
+ */
+function jointBracket(opts: {
+  idA: string;
+  idB: string;
+  faceA: { x: number; y: number; z: number };
+  faceB: { x: number; y: number; z: number };
+  size: number;
+  position: { x: number; y: number; z: number };
+  connectorId?: string;
+}): DiyBracket {
+  // Rotation: R·(1,0,0)=n1, R·(0,1,0)=n2 — the convention that puts the two
+  // mounting plates flush on the two extrusion faces. The basis math lives in
+  // `eulerFromNormals` so this and the corner-hint preview can never drift.
+  const eul = eulerFromNormals(opts.faceA, opts.faceB);
+
+  return {
+    id: uid(),
+    connectorId: opts.connectorId ?? DEFAULT_BRACKET_CONNECTOR_ID,
+    // 0.01 mm precision keeps the mounting faces flush without float noise.
+    position: {
+      x: Math.round(opts.position.x * 100) / 100,
+      y: Math.round(opts.position.y * 100) / 100,
+      z: Math.round(opts.position.z * 100) / 100,
+    },
+    rotation: {
+      roll: THREE.MathUtils.radToDeg(eul.x),
+      pitch: THREE.MathUtils.radToDeg(eul.y),
+      yaw: THREE.MathUtils.radToDeg(eul.z),
+    },
+    anchorPosition: { x: 0, y: 0, z: 0 },
+    anchorRotation: { roll: 0, pitch: 0, yaw: 0 },
+    connectedProfiles: [opts.idA, opts.idB],
+    enabled: true,
+    size: opts.size,
+    auto: true,
+  };
+}
+
+/**
+ * Snap a recovered face normal back onto the nearest axis unit vector.
+ *
+ * A normal read out of a rotation matrix carries float noise (a 90° Euler can
+ * come back as 0.99999994), and `jointFitInfo` matches faces by exact axis —
+ * `faceRect` compares the normal's components against ±1. Snapping is what makes
+ * the round-trip through a stored Euler exact rather than merely close.
+ */
+function snapAxis(n: { x: number; y: number; z: number }): { x: number; y: number; z: number } {
+  const a = [n.x, n.y, n.z];
+  let i = 0;
+  for (let k = 1; k < 3; k++) if (Math.abs(a[k]) > Math.abs(a[i])) i = k;
+  const s = a[i] >= 0 ? 1 : -1;
+  return { x: i === 0 ? s : 0, y: i === 1 ? s : 0, z: i === 2 ? s : 0 };
+}
+
+/**
+ * The two mounting-face normals a joint bracket was placed with, recovered from
+ * its stored rotation.
+ *
+ * `jointBracket` builds the pose as `eulerFromNormals(faceA, faceB)`, which is
+ * `makeBasis(faceA, faceB, faceA×faceB)` — so columns 0 and 1 of the rotation
+ * matrix ARE faceA and faceB, in the same order as `connectedProfiles`. That
+ * makes the pose reversible without storing the normals a second time, which is
+ * what lets `updateProfileSize` re-fit a bracket against resized profiles.
+ */
+function bracketFaces(b: DiyBracket): [{ x: number; y: number; z: number }, { x: number; y: number; z: number }] {
+  const eul = new THREE.Euler(
+    THREE.MathUtils.degToRad(b.rotation.roll),
+    THREE.MathUtils.degToRad(b.rotation.pitch),
+    THREE.MathUtils.degToRad(b.rotation.yaw),
+    'XYZ',
+  );
+  const m = new THREE.Matrix4().makeRotationFromEuler(eul);
+  return [
+    snapAxis(new THREE.Vector3().setFromMatrixColumn(m, 0)),
+    snapAxis(new THREE.Vector3().setFromMatrixColumn(m, 1)),
+  ];
+}
 
 interface DiyState {
   profiles: DiyProfile[];
@@ -54,6 +157,16 @@ interface DiyState {
   selectProfile: (id: string | null) => void;
   setStretchProfile: (id: string | null, end: 'start' | 'end' | null) => void;
   updateProfileLength: (id: string, length: number) => void;
+  /**
+   * Change one profile's cross-section (2020/3030/4040).
+   *
+   * Only the named profile is resized — children keep the size they were given.
+   * But children standing on a LATERAL face ride outward with it (see the
+   * implementation), and `auto` brackets standing on the moved geometry are
+   * re-fitted, because a bracket drawn at the old cross-section is out of scale
+   * with the profile it is bolted to.
+   */
+  updateProfileSize: (id: string, size: ProfileSize) => void;
   /** Update length and reposition so the fixed end stays in place. */
   updateProfilePosition: (id: string, newLen: number, axIdx: number, fixedEnd: { x: number; y: number; z: number }) => void;
   setMode: (mode: DiyMode) => void;
@@ -69,13 +182,17 @@ interface DiyState {
   startDraggingBracket: () => void;
   /** Update ghost position (mouse move during drag). Null = no valid snap target. */
   updateGhostBracket: (data: { position: { x: number; y: number; z: number }; size: number; profileId: string } | null) => void;
-  /** Drop: place the bracket at the ghost position, optionally with computed rotation/connections/position. */
+  /**
+   * Drop: place an UNORIENTED bracket at the ghost position.
+   *
+   * This is the fallback for a drop with no joint under it. Anything that lands
+   * on a real joint goes through `placeBracketAtHint` instead — it takes the
+   * corner's own faces and size, so position, rotation and size all agree by
+   * construction. There is deliberately no way to pass those in here: a second
+   * route to a joint-accurate bracket is how the two used to disagree.
+   */
   placeBracket: (patch?: {
-    rotation?: DiyBracket['rotation'];
-    connectedProfiles?: string[];
-    /** Override the placement position (mm) — used to land exactly on a joint corner. */
-    position?: { x: number; y: number; z: number };
-    /** Connector catalog id to stamp on the new bracket (default 'corner_bracket'). */
+    /** Connector catalog id to stamp on the new bracket. */
     connectorId?: string;
   }) => void;
   /** Cancel the drag (left viewport / Escape). */
@@ -121,6 +238,31 @@ interface DiyState {
    */
   autoRefBracket: DiyBracket | null;
   setAutoRefBracket: (b: DiyBracket | null) => void;
+
+  // ---- Corner-hint click placement ----
+  /**
+   * The connector the next corner-hint click will place, or null for the
+   * default bracket. Arming is NOT a mode: it changes nothing about what the
+   * pointer does, only which part the orange hints would drop if clicked.
+   */
+  armedConnectorId: string | null;
+  /**
+   * Arm a connector. Passing the already-armed id disarms it (clicking the
+   * card twice is how you put it back down); passing null always clears.
+   */
+  armConnector: (id: string | null) => void;
+  /**
+   * Place a bracket at a computed corner hint, using the LOCAL euler solution
+   * (`eulerFromNormals`) rather than the backend.
+   *
+   * The hint already carries the two mounting faces and the joint centre, which
+   * is everything `jointBracket` needs, so this is synchronous. The backend
+   * round-trip the drag path makes exists only because a drag can land on a
+   * joint it has to *identify* first; a hint IS that identification. Skipping
+   * the call also removes the "request failed → place an unrotated bracket"
+   * fallback, which is a bracket nobody asked for.
+   */
+  placeBracketAtHint: (hint: CornerHint, connectorId?: string) => string | null;
 
   // ---- Click-to-place child profile (方案 B) ----
   /** Ghost shown while placing a child profile on a face (mm). */
@@ -331,6 +473,80 @@ export const useDiyStore = create<DiyState>((set, get) => ({
       }),
     })),
 
+  updateProfileSize: (id, size) =>
+    set((s) => {
+      const target = s.profiles.find((p) => p.id === id);
+      if (!target || target.profileSize === size) return {};
+      const delta = PROFILE_DIMS[size] - PROFILE_DIMS[target.profileSize];
+
+      let profiles = s.profiles.map((p) => (p.id === id ? { ...p, profileSize: size } : p));
+
+      // Re-seat the children standing on a LATERAL face. A face along the
+      // parent's own axis is an END face, and its plane sits at ±length/2 — the
+      // cross-section does not move it. A lateral face sits at ±dim/2, so it
+      // slides out by half the growth and everything attached to it rides along
+      // (a child's own cross-section is unchanged, so its subtree translates
+      // rigidly with it). Without this a 30→40 growth buries the children 5 mm
+      // inside the parent, and a shrink pulls them 5 mm clear of it.
+      //
+      // `parentFace` is written by every creation path and read nowhere else —
+      // this is the first and only consumer.
+      const shifts = new Map<string, { axis: 'x' | 'y' | 'z'; amount: number }>();
+      if (delta !== 0) {
+        const childAxis = target.direction.toLowerCase();
+        for (const c of s.profiles) {
+          if (c.parentId !== id || !c.parentFace) continue;
+          const axis = c.parentFace[1].toLowerCase() as 'x' | 'y' | 'z';
+          if (axis === childAxis) continue; // end face — stays put
+          const amount = (c.parentFace.startsWith('+') ? 1 : -1) * (delta / 2);
+          // A profile has at most one parent, so no two shifts can collide.
+          for (const pid of [c.id, ...get().getDescendantIds(c.id)]) shifts.set(pid, { axis, amount });
+        }
+        if (shifts.size > 0) {
+          profiles = profiles.map((p) => {
+            const sh = shifts.get(p.id);
+            if (!sh) return p;
+            // 20/30/40 are all even, so `delta/2` is a whole millimetre.
+            return { ...p, position: { ...p.position, [sh.axis]: p.position[sh.axis] + sh.amount } };
+          });
+        }
+      }
+
+      // Re-fit the brackets standing on the geometry we just moved. Brackets
+      // anywhere else are left untouched: re-deriving a pose that did not change
+      // would round a hint's integer position again and drift the bracket by
+      // fractions of a millimetre for no reason.
+      const touched = new Set<string>([id, ...shifts.keys()]);
+      const dimOf = (pid: string) => {
+        const p = profiles.find((q) => q.id === pid);
+        return p ? PROFILE_DIMS[p.profileSize] : PROFILE_DIMS[size];
+      };
+      const brackets = s.brackets.map((b) => {
+        if (!b.auto || b.connectedProfiles.length !== 2) return b;
+        if (!b.connectedProfiles.some((pid) => touched.has(pid))) return b;
+        const pa = profiles.find((p) => p.id === b.connectedProfiles[0]);
+        const pb = profiles.find((p) => p.id === b.connectedProfiles[1]);
+        if (!pa || !pb) return b;
+        const [nA, nB] = bracketFaces(b);
+        const fit = jointFitInfo(pa, nA, pb, nB);
+        // No longer a joint (the bars no longer overlap). Keep the bracket
+        // exactly where the user last saw it — a resize is not a reason to
+        // delete their hardware.
+        if (!fit) return b;
+        return {
+          ...b,
+          position: {
+            x: Math.round(fit.position.x),
+            y: Math.round(fit.position.y),
+            z: Math.round(fit.position.z),
+          },
+          size: Math.max(dimOf(pa.id), dimOf(pb.id)),
+        };
+      });
+
+      return { profiles, brackets };
+    }),
+
   growFromFace: (parentId, face, hitPos) => {
     const { profiles } = get();
     const parent = profiles.find((p) => p.id === parentId);
@@ -395,26 +611,25 @@ export const useDiyStore = create<DiyState>((set, get) => ({
 
   updateGhostBracket: (data) => set({ ghostBracket: data }),
 
-  placeBracket: (patch?: {
-    rotation?: DiyBracket['rotation'];
-    connectedProfiles?: string[];
-    position?: { x: number; y: number; z: number };
-    connectorId?: string;
-  }) => {
+  placeBracket: (patch?: { connectorId?: string }) => {
     const { ghostBracket, profiles } = get();
     if (!ghostBracket) return;
     const parent = profiles.find((p) => p.id === ghostBracket.profileId);
     const size = ghostBracket.size;
     const bracket: DiyBracket = {
       id: uid(),
-      connectorId: patch?.connectorId ?? 'corner_bracket',
-      position: patch?.position ?? ghostBracket.position,
-      rotation: patch?.rotation ?? { roll: 0, pitch: 0, yaw: 0 },
+      connectorId: patch?.connectorId ?? DEFAULT_BRACKET_CONNECTOR_ID,
+      position: ghostBracket.position,
+      rotation: { roll: 0, pitch: 0, yaw: 0 },
       anchorPosition: { x: 0, y: 0, z: 0 },
       anchorRotation: { roll: 0, pitch: 0, yaw: 0 },
-      connectedProfiles: patch?.connectedProfiles ?? (parent ? [parent.id] : []),
+      connectedProfiles: parent ? [parent.id] : [],
       enabled: true,
       size,
+      // `auto` too, though with one connected profile and no rotation there is
+      // nothing for a resize to re-fit. The flag means "the app chose this", and
+      // the user typing over it still has to take it away.
+      auto: true,
     };
     set((s) => ({
       brackets: [...s.brackets, bracket],
@@ -437,6 +652,69 @@ export const useDiyStore = create<DiyState>((set, get) => ({
   cancelBracketFacePicking: () =>
     set({ mode: 'idle', bracketFaceA: null, autoRefBracket: null }),
   setAutoRefBracket: (b) => set({ autoRefBracket: b }),
+
+  armedConnectorId: null,
+  armConnector: (id) =>
+    set((s) => ({
+      // Same id again = put it down. `id === null` must clear unconditionally
+      // (Escape), so it cannot go through the same comparison.
+      armedConnectorId: id !== null && s.armedConnectorId === id ? null : id,
+    })),
+
+  placeBracketAtHint: (hint, connectorId) => {
+    // ONE JOINT, ONE BRACKET. The drop path reaches here through `findCornerAt`,
+    // which reads profile geometry only and knows nothing about placed brackets,
+    // so without this a connector dropped on an occupied corner appended a second
+    // bracket at the same millimetre — the new one drawn over the old, and no
+    // obvious way to get rid of either. Swapping the part in place is also what
+    // the property panel's Model menu does, so the two entrances agree: the same
+    // bracket keeps its id, pose, size and `auto`, and only the part changes.
+    //
+    // The click path cannot reach this branch: `DiyCornerHints` filters its
+    // previews by the same `SAME_CORNER_MM`, so a click is only ever offered on a
+    // free corner.
+    const sitting = bracketAtHint(get().brackets, hint);
+    if (sitting) {
+      set((s) => ({
+        brackets: s.brackets.map((b) =>
+          b.id === sitting.id ? { ...b, connectorId: connectorId ?? DEFAULT_BRACKET_CONNECTOR_ID } : b,
+        ),
+        selectedBracketId: sitting.id,
+        selectedProfileId: null,
+        selectedScrewId: null,
+        selectedKitId: null,
+        isDraggingBracket: false,
+        ghostBracket: null,
+        autoRefBracket: null,
+      }));
+      return sitting.id;
+    }
+
+    const bracket = jointBracket({
+      idA: hint.profileIdA,
+      idB: hint.profileIdB,
+      faceA: hint.faceA,
+      faceB: hint.faceB,
+      size: hint.size,
+      position: hint.position,
+      connectorId: connectorId ?? DEFAULT_BRACKET_CONNECTOR_ID,
+    });
+    set((s) => ({
+      brackets: [...s.brackets, bracket],
+      selectedBracketId: bracket.id,
+      // Mutual selection: placing a bracket deselects any profile/screw/kit.
+      selectedProfileId: null,
+      selectedScrewId: null,
+      selectedKitId: null,
+      // The drag path routes its drop through here when it lands on a joint, so
+      // this has to finish the drag the way `placeBracket` does. A click has no
+      // drag to finish and these are already at rest.
+      isDraggingBracket: false,
+      ghostBracket: null,
+      autoRefBracket: null,
+    }));
+    return bracket.id;
+  },
 
   pickBracketFace: (info) => {
     const s = get();
@@ -473,37 +751,17 @@ export const useDiyStore = create<DiyState>((set, get) => ({
     // bracket would visibly stick out past the profile.
     if (!cornerBracketFits(fit, size)) return 'no_fit';
 
-    const pos = fit.position;
-
-    // Rotation: R·(1,0,0)=n1, R·(0,1,0)=n2 — the same convention the backend
-    // uses for a placed bracket, so the flush corner bracket matches.
-    const nx = new THREE.Vector3(a.normal.x, a.normal.y, a.normal.z);
-    const ny = new THREE.Vector3(info.normal.x, info.normal.y, info.normal.z);
-    const nz = new THREE.Vector3().crossVectors(nx, ny);
-    const rotM = new THREE.Matrix4().makeBasis(nx, ny, nz);
-    const eul = new THREE.Euler().setFromRotationMatrix(rotM, 'XYZ');
-
-    const bracket: DiyBracket = {
-      id: uid(),
-      // Manual two-face placement always drops the built-in cast bracket.
-      connectorId: 'corner_bracket',
-      // 0.01 mm precision keeps the mounting faces flush without float noise.
-      position: {
-        x: Math.round(pos.x * 100) / 100,
-        y: Math.round(pos.y * 100) / 100,
-        z: Math.round(pos.z * 100) / 100,
-      },
-      rotation: {
-        roll: THREE.MathUtils.radToDeg(eul.x),
-        pitch: THREE.MathUtils.radToDeg(eul.y),
-        yaw: THREE.MathUtils.radToDeg(eul.z),
-      },
-      anchorPosition: { x: 0, y: 0, z: 0 },
-      anchorRotation: { roll: 0, pitch: 0, yaw: 0 },
-      connectedProfiles: [a.profileId, info.profileId],
-      enabled: true,
+    // Manual two-face placement drops the same default bracket a corner hint
+    // does — the two ways in must not place different parts. Both go through
+    // `jointBracket`, so they cannot even if someone edits one of them later.
+    const bracket = jointBracket({
+      idA: a.profileId,
+      idB: info.profileId,
+      faceA: a.normal,
+      faceB: info.normal,
       size,
-    };
+      position: fit.position,
+    });
 
     set((st) => ({
       brackets: [...st.brackets, bracket],
@@ -606,10 +864,13 @@ export const useDiyStore = create<DiyState>((set, get) => ({
   bindKit: (kitId, bracketId) => {
     // A kit is only meaningful on a real corner joint: its fasteners are seated
     // in the bracket's local frame, so the bracket must already exist and be
-    // oriented. DiyViewer places the bracket (through the backend rotation
-    // solve) first and then binds — this action never places anything itself,
-    // which is what keeps an unrotated fallback bracket from ever carrying
-    // hardware in a meaningless pose.
+    // oriented. Both entrances place the bracket first and bind second — this
+    // action never places anything itself, which is what keeps hardware from
+    // ever hanging off a bracket that isn't there yet.
+    //
+    // Whether the kit FITS the bracket is the callers' gate (`kitFitReason`
+    // against `bracket.size`), not this one: the refusal names the sizes, so it
+    // belongs where it can be shown to the user.
     if (!accessoryKitById(kitId)) return false;
     if (!get().brackets.some((b) => b.id === bracketId)) return false;
     const existing = get().kitInstances.find((k) => k.bracketId === bracketId);

@@ -7,7 +7,7 @@
 // ============================================================
 
 import { PROFILE_DIMS } from '../types/furniture';
-import type { DiyProfile } from '../types/furniture';
+import type { DiyBracket, DiyProfile } from '../types/furniture';
 import * as THREE from 'three';
 import { jointFitInfo, cornerBracketFits } from './diyJointGeometry';
 
@@ -298,6 +298,32 @@ export function findCornerAt(
     }
   }
   return best;
+}
+
+/**
+ * Distance (mm) within which a bracket counts as bolted to the same joint.
+ *
+ * A hint's position and the bracket placed from it are rounded independently, so
+ * an exact match cannot be relied on. This is the ONE definition of "occupied":
+ * the preview filter and the placement guard both read it, because the two must
+ * agree — the filter is what makes an occupied corner select-instead-of-place,
+ * and if the guard were looser the click could place a second bracket on a corner
+ * the user sees as taken.
+ */
+export const SAME_CORNER_MM = 2;
+
+/** The enabled bracket already bolted to `hint`'s corner, or null. */
+export function bracketAtHint(brackets: DiyBracket[], hint: CornerHint): DiyBracket | null {
+  for (const b of brackets) {
+    if (!b.enabled) continue;
+    const d = Math.hypot(
+      b.position.x - hint.position.x,
+      b.position.y - hint.position.y,
+      b.position.z - hint.position.z,
+    );
+    if (d <= SAME_CORNER_MM) return b;
+  }
+  return null;
 }
 
 /**

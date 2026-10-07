@@ -7,22 +7,15 @@ import { ConnectorStl } from '../diy/DiyBracketStl';
 import { ProfileStl } from '../diy/ProfileStl';
 import ProfileBoundary from './ProfileBoundary';
 import PartDragGizmo from './PartDragGizmo';
-import { ScrewMesh, TNutMesh } from '../diy/FastenerStl';
+import { CoverMesh, ScrewMesh, TNutMesh } from '../diy/FastenerStl';
 import { DEFAULT_SCREW_FAMILY } from '../diy/fastenerDims';
 import { PROFILE_DIMS } from '../types/furniture';
 import { connectorByStlUrl } from '../diy/connectors';
-import type { AccessoryKit, HardwareKind, KitLayout, LocalFastener } from '../utils/accessoryKits';
-import { SCREW_SERIES, jointFasteners } from '../utils/accessoryKits';
+import type { AccessoryKit, KitLayout, LocalFastener } from '../utils/accessoryKits';
+import { HARDWARE_TONE, SCREW_SERIES, jointFasteners } from '../utils/accessoryKits';
+import { useT } from '../i18n';
 
 const M = 0.001;
-
-const TONE: Record<HardwareKind, string> = {
-  socket_screw: '#c8c8c8',
-  // Steel, as the BOM prints it. The brass tone belongs to the T-nuts, which are
-  // brass — two brass parts in one scene would only be confusable.
-  countersunk_screw: '#c8c8c8',
-  t_nut: '#b08d57',
-};
 
 /** Cyan, not the amber used for warnings: the T-nuts are brass, and an amber
  *  highlight would read as one of them. */
@@ -64,17 +57,22 @@ const PartMesh: FC<{
         <TNutMesh
           size={size}
           series={SCREW_SERIES}
-          color={TONE.t_nut}
+          family={spec.tnutFamily}
+          color={HARDWARE_TONE.t_nut}
           ghost={fastener.internal}
           emissive={emissive}
           pickable
         />
+      ) : spec.kind === 'cover' ? (
+        // No size, no length, no family — the screw branch below would draw a
+        // bogus zero-length M6 in place of the cap the kit actually ships.
+        <CoverMesh uid={spec.uid} color={HARDWARE_TONE.cover} emissive={emissive} pickable />
       ) : (
         <ScrewMesh
           family={spec.family ?? DEFAULT_SCREW_FAMILY}
           size={size}
           length={spec.length ?? 0}
-          color={TONE[spec.kind]}
+          color={HARDWARE_TONE[spec.kind]}
           emissive={emissive}
           pickable
         />
@@ -202,6 +200,7 @@ const KitEditorScene: FC<KitEditorSceneProps> = ({
   baseByKey,
   setKey,
 }) => {
+  const t = useT();
   const controlsRef = useRef<OrbitControlsImpl | null>(null);
   // A drag ends with the pointer over empty space, which R3F reports as a miss —
   // without this the release would drop the very selection being dragged.
@@ -265,7 +264,7 @@ const KitEditorScene: FC<KitEditorSceneProps> = ({
         fallback={
           <Html center>
             <div className="px-3 py-2 rounded bg-red-950/80 text-red-200 text-xs whitespace-nowrap">
-              型材模型加载失败，装配体只剩五金件
+              {t('kit.profileLoadFailed')}
             </div>
           </Html>
         }

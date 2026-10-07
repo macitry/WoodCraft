@@ -14,6 +14,7 @@
 
 import type { AxisAnchor, TabletopHole } from '../types/furniture';
 import { holeWorldBounds, nextHoleId } from './holeGeometry';
+import { t } from '../i18n';
 
 /** A template cutout: fixed geometry + X/Y edge anchors (coordinate derived). */
 export type HoleSpec =
@@ -179,7 +180,12 @@ export const HOLE_TEMPLATES: HoleTemplate[] = [
 /** Why this template can't be applied at the given board size, or null if it fits. */
 export function templateFitReason(tpl: HoleTemplate, width: number, depth: number): string | null {
   if (width >= tpl.minWidth && depth >= tpl.minDepth) return null;
-  return `板面需 ≥${tpl.minWidth}×${tpl.minDepth}mm（当前 ${width}×${depth}）`;
+  return t('fit.tooSmallBoard', {
+    w: tpl.minWidth,
+    d: tpl.minDepth,
+    curW: width,
+    curD: depth,
+  });
 }
 
 /**

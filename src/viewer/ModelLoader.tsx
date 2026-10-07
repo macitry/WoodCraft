@@ -5,7 +5,7 @@ import { STLLoader } from 'three-stdlib';
 import type { FurnitureModel, Component, TabletopHole, BracketInstance } from '../types/furniture';
 import type { DxfTabletopShape } from '../utils/dxfImport';
 import { buildHolePath } from '../utils/holeGeometry';
-import { TEMPLATE_LAYOUTS, DEFAULT_BRACKET_STL_URL } from '../types/furniture';
+import { TEMPLATE_LAYOUTS, bracketStlUrl } from '../types/furniture';
 import { useModelStore } from '../store/modelStore';
 import { FastenerSet } from './MainFastenerRenderer';
 import { applyBoardUVs, buildBoardMaterials, splitStlByFace, useBoardMaps, METRE_FRAME, STL_FRAME } from '../materials/boardMaterial';
@@ -925,7 +925,9 @@ const UserBracketPart: React.FC<UserBracketPartProps> = ({
   isSelected,
   onClick,
 }) => {
-  const geom = useLoader(STLLoader, bracket.stlUrl || DEFAULT_BRACKET_STL_URL);
+  // Same resolution the fasteners use (see MainFastenerRenderer): one helper, so
+  // the part drawn and the part drilled cannot be two different catalog entries.
+  const geom = useLoader(STLLoader, bracketStlUrl(bracket));
 
   // Clone so each bracket instance has its own geometry reference
   const cloned = useMemo(() => geom.clone(), [geom]);

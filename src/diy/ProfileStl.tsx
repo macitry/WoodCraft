@@ -7,11 +7,16 @@ const M = 0.001;
 
 /** Profile size → the extrusion mesh served from `public/profiles/`.
  *
- *  Note the three files share nothing but this table: the meshes are modelled at
- *  different origins and even extrude along opposite ends of Z (3030/4040 run
- *  −Z, 2020 runs +Z, and none of them is centred). `ProfileStl`'s bounding-box
- *  re-centring below is the only thing that makes them interchangeable — which
- *  is why it is done here rather than baked into the STLs. */
+ *  2020 and 4040 are baked from the MayTec catalog's own 4-slot cross-sections by
+ *  `maycad_extract/bake_profiles.py`, which is also where the three conventions
+ *  these files must satisfy are written down (mm, cross-section exactly 20/30/40,
+ *  extruded +Z at exactly 1000 mm). 3030 is the same profile from a finer export.
+ *
+ *  Note the files share nothing but this table: they are modelled at different
+ *  origins and even extrude along opposite ends of Z (3030/4040 run −Z, 2020 runs
+ *  +Z, and none of them is centred). `ProfileStl`'s bounding-box re-centring below
+ *  is the only thing that makes them interchangeable — which is why it is done
+ *  here rather than baked into the STLs. */
 export const PROFILE_STL_URLS: Record<string, string> = {
   '2020': '/profiles/profile_2020.stl',
   '3030': '/profiles/profile_3030.stl',
@@ -119,8 +124,8 @@ export const ProfileStl: React.FC<ProfileStlProps> = ({
 
   // Dev-only, same convention as `__wcFastenerNodes`: reports the URL each bar
   // actually resolved to, so a test can assert the profile picker switched
-  // meshes without guessing from triangle counts (2020 is 12 faces, 3030 is
-  // 4128 — a count would pass on the wrong file). A list, because the DIY page
+  // meshes without guessing from triangle counts (a count would pass on the
+  // wrong file). A list, because the DIY page
   // mounts one of these per profile.
   //
   // The world box is here because everything above depends on this transform

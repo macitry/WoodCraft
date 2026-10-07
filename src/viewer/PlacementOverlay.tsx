@@ -3,6 +3,7 @@ import { useThree } from '@react-three/fiber';
 import * as THREE from 'three';
 import { useModelStore } from '../store/modelStore';
 import type { BracketInstance, MateHit } from '../types/furniture';
+import { t } from '../i18n';
 
 /**
  * Handles both Snap Mode (one-click place) and Mate Mode (two-click face-to-face).
@@ -18,7 +19,9 @@ const PlacementOverlay: React.FC = () => {
 
   const placementMode = useModelStore((s) => s.placementMode);
   const mateState = useModelStore((s) => s.mateState);
-  const mateBracketId = useModelStore((s) => s.mateBracketId);
+  // No `mateBracketId` subscription: this component only picks the two faces and
+  // hands them to the store, which knows which bracket is being mated. Reading it
+  // here would re-render the overlay for a value nothing in it draws.
 
   const placementRef = useRef(placementMode);
   placementRef.current = placementMode;
@@ -86,7 +89,12 @@ const PlacementOverlay: React.FC = () => {
 
         const newBracket: BracketInstance = {
           id: `bracket_snap_${Date.now()}`,
-          name: `角铁-${objectName}#${idx + 1}`,
+          // Named in the language of the moment and then stored: a bracket is a
+          // user-editable object with a `name` field, and renaming every bracket
+          // in the file when someone flips the language switch would be a data
+          // migration, not a translation. `t` here is the module read, not a
+          // hook — this runs in a pointer handler, not a render.
+          name: t('name.bracketSnap', { part: objectName, n: idx + 1 }),
           position: {
             x: Math.round(point.x * 1000),
             y: Math.round(point.y * 1000),

@@ -2,19 +2,30 @@ import { useState, type FC } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useModelStore } from '../store/modelStore';
 import type { BracketInstance } from '../types/furniture';
-import { DEFAULT_BRACKET_STL_URL } from '../types/furniture';
+import { DEFAULT_BRACKET_STL_URL, bracketStlUrl } from '../types/furniture';
 import { connectorByStlUrl } from '../diy/connectors';
 import {
   ACCESSORY_KITS,
   accessoryKitById,
   kitFitReason,
   kitScheduleFor,
+  jointFasteners,
   layoutFor,
   specSummary,
+  type AccessoryKit,
 } from '../utils/accessoryKits';
 import { useKitLayoutStore } from '../store/kitLayoutStore';
+import { useT } from '../i18n';
+import {
+  connectorLabel,
+  hardwareName,
+  kitDesc,
+  kitName,
+  kitOps,
+} from '../i18n/names';
 
 const BracketEditor: FC = () => {
+  const t = useT();
   const brackets = useModelStore((s) => s.brackets);
   const selectedBracketId = useModelStore((s) => s.selectedBracketId);
   const selectBracket = useModelStore((s) => s.selectBracket);
@@ -28,7 +39,7 @@ const BracketEditor: FC = () => {
     const idx = brackets.length;
     addBracket({
       id: `bracket_user_${Date.now()}`,
-      name: `角铁-手动#${idx + 1}`,
+      name: t('panel.bracketManual', { n: idx + 1 }),
       position: { x: 0, y: 750, z: 0 },
       rotation: { roll: 0, pitch: 0, yaw: 0 },
       connectedParts: [],
@@ -38,26 +49,29 @@ const BracketEditor: FC = () => {
   };
 
   const handleDuplicate = (b: BracketInstance) => {
-    addBracket({ ...b, id: `bracket_user_${Date.now()}`, name: `${b.name} (copy)`, position: { ...b.position }, rotation: { ...b.rotation }, connectedParts: [...b.connectedParts] });
+    // The suffix is new DATA derived at the moment of the copy, not a label that
+    // follows the language: a bracket duplicated in Chinese keeps the name it was
+    // given. That is the same rule as the DIY project name.
+    addBracket({ ...b, id: `bracket_user_${Date.now()}`, name: `${b.name}${t('panel.copySuffix')}`, position: { ...b.position }, rotation: { ...b.rotation }, connectedParts: [...b.connectedParts] });
   };
 
   return (
     <div className="flex flex-col h-full">
       <div className="px-4 py-3 border-b border-neutral-800 flex items-center justify-between">
         <div>
-          <p className="text-xs uppercase tracking-wider text-neutral-500 font-medium">Corner Brackets</p>
-          <p className="text-[10px] text-neutral-600 mt-0.5">{brackets.length} bracket(s)</p>
+          <p className="text-xs uppercase tracking-wider text-neutral-500 font-medium">{t('panel.cornerBrackets')}</p>
+          <p className="text-[10px] text-neutral-600 mt-0.5">{t('panel.bracketCount', { n: brackets.length })}</p>
         </div>
         <div className="flex gap-1">
-          <button onClick={handleAdd} className="px-2 py-1 text-xs rounded bg-neutral-800 hover:bg-neutral-700 text-neutral-300 transition-colors cursor-pointer" title="Add bracket">+ Add</button>
-          <button onClick={resetBracketsToDefault} className="px-2 py-1 text-xs rounded bg-amber-900/40 hover:bg-amber-900/70 text-amber-300 transition-colors cursor-pointer" title="按接头算法重新生成角码(覆盖手动调整)">⚡ 自动</button>
+          <button onClick={handleAdd} className="px-2 py-1 text-xs rounded bg-neutral-800 hover:bg-neutral-700 text-neutral-300 transition-colors cursor-pointer" title={t('panel.addBracketHint')}>{t('panel.addBracket')}</button>
+          <button onClick={resetBracketsToDefault} className="px-2 py-1 text-xs rounded bg-amber-900/40 hover:bg-amber-900/70 text-amber-300 transition-colors cursor-pointer" title={t('panel.autoRegenHint')}>{t('panel.autoRegen')}</button>
         </div>
       </div>
 
       <AccessoryKitPanel />
 
       <div className="flex-1 overflow-y-auto">
-        {brackets.length === 0 && <div className="p-4 text-neutral-600 text-xs text-center">No brackets. Ctrl+Click two faces.</div>}
+        {brackets.length === 0 && <div className="p-4 text-neutral-600 text-xs text-center">{t('panel.noBrackets')}</div>}
         {brackets.map((bracket) => (
           <BracketRow
             key={bracket.id}
@@ -87,6 +101,7 @@ function profileSizeOf(profile: string): number {
  * so the quantities below are what the 3D view and the BOM will both show.
  */
 const AccessoryKitPanel: FC = () => {
+  const t = useT();
   const navigate = useNavigate();
   const activeKitId = useModelStore((s) => s.activeKitId);
   const setAccessoryKit = useModelStore((s) => s.setAccessoryKit);
@@ -106,7 +121,7 @@ const AccessoryKitPanel: FC = () => {
   // Frame-scope kits are budgeted per assembly and resolve to their own lines
   // whatever the joint list says; for joint-scope kits each bracket is counted
   // through the connector it is actually drawn with (see jointGroups below).
-  const lines = kitScheduleFor(kit, enabled.map((b) => b.stlUrl), layouts);
+  const lines = kitScheduleFor(kit, enabled.map(bracketStlUrl), layouts);
 
   // One entry per distinct connector in play, each described through its own
   // hole pattern. The old `enabled[0]?.stlUrl` representative was a single
@@ -117,7 +132,7 @@ const AccessoryKitPanel: FC = () => {
     if (!kit || kit.scope === 'frame') return [];
     const count = new Map<string, number>();
     for (const b of enabled) {
-      const key = b.stlUrl || DEFAULT_BRACKET_STL_URL;
+      const key = bracketStlUrl(b);
       count.set(key, (count.get(key) ?? 0) + 1);
     }
     // Nothing enabled: still describe ONE joint on the default pattern, so the
@@ -132,10 +147,38 @@ const AccessoryKitPanel: FC = () => {
     }));
   })();
 
+  // What the SELECTED kit will actually seat per joint, per connector in play.
+  //
+  // The card subtitle is the kit's RATING (`boltsPerJoint`), and the bracket can
+  // seat fewer: the default bracket is an angle with ONE mount per leg, so the
+  // 4-bolt kit places 2. Printing the rating in that card would contradict the
+  // breakdown line two rows below it, in the same panel — the panel and the 3D
+  // disagreeing about a count, which is the one thing this panel exists not to do.
+  // Rendered as a range when the connectors disagree, because a mixed model has no
+  // single per-joint number and averaging one would be another small lie.
+  const seatedRange = (k: AccessoryKit): [number, number] | null => {
+    if (k.scope !== 'joint' || k.id !== activeKitId) return null;
+    const seats = jointGroups
+      .filter((g) => g.n > 0)
+      .map((g) => jointFasteners(k, g.stl, 1, layoutFor(layouts, k.id, g.stl)).filter((f) => f.role === 'bolt').length);
+    return seats.length ? [Math.min(...seats), Math.max(...seats)] : null;
+  };
+
+  // Null while the effective count IS the rating — the common case, and the card
+  // must not gain a parenthetical for it.
+  const seatedLabel = (k: AccessoryKit, range: [number, number] | null): string | null => {
+    if (!range) return null;
+    const [lo, hi] = range;
+    if (lo === k.boltsPerJoint && hi === k.boltsPerJoint) return null;
+    return lo === hi
+      ? t('panel.seatedExact', { n: lo, r: k.boltsPerJoint })
+      : t('panel.seatedRange', { lo, hi, r: k.boltsPerJoint });
+  };
+
   return (
     <div className="px-4 py-3 border-b border-neutral-800 bg-neutral-900/60">
       <div className="flex items-center justify-between">
-        <p className="text-xs uppercase tracking-wider text-neutral-500 font-medium">配件组合</p>
+        <p className="text-xs uppercase tracking-wider text-neutral-500 font-medium">{t('panel.kits')}</p>
         {kit && (
           <span className="text-[10px] text-neutral-500 tabular-nums">
             {lines.map((l) => `×${l.qty}`).join(' + ') || '—'}
@@ -147,15 +190,15 @@ const AccessoryKitPanel: FC = () => {
         <button
           data-kit="__none__"
           onClick={() => setAccessoryKit(null)}
-          title="不使用配件组合"
+          title={t('panel.noKitTitle')}
           className={`px-2 py-1.5 text-left text-[10px] rounded border transition-colors cursor-pointer ${
             activeKitId === null
               ? 'border-wood-600 bg-wood-500/15 text-wood-200'
               : 'border-neutral-700 text-neutral-400 hover:border-neutral-600'
           }`}
         >
-          <span className="block font-medium">无</span>
-          <span className="block text-neutral-600 mt-0.5">不统计紧固件</span>
+          <span className="block font-medium">{t('panel.noKit')}</span>
+          <span className="block text-neutral-600 mt-0.5">{t('panel.noKitHint')}</span>
         </button>
 
         {ACCESSORY_KITS.map((k) => {
@@ -167,7 +210,7 @@ const AccessoryKitPanel: FC = () => {
               data-kit={k.id}
               disabled={fit !== null}
               onClick={() => setAccessoryKit(on ? null : k.id)}
-              title={fit ?? k.desc}
+              title={fit ?? kitDesc(k)}
               className={`px-2 py-1.5 text-left text-[10px] rounded border transition-colors ${
                 fit !== null
                   ? 'border-neutral-800 text-neutral-600 cursor-not-allowed'
@@ -176,9 +219,13 @@ const AccessoryKitPanel: FC = () => {
                     : 'border-neutral-700 text-neutral-400 hover:border-neutral-600 cursor-pointer'
               }`}
             >
-              <span className="block font-medium">{k.name}</span>
+              <span className="block font-medium">{kitName(k)}</span>
               <span className="block text-neutral-600 mt-0.5 leading-tight">
-                {fit ?? (k.scope === 'frame' ? `每桌板 ${k.perFrame} 颗` : `每处 ${k.boltsPerJoint} 颗`)}
+                {fit ??
+                  (k.scope === 'frame'
+                    ? t('panel.perFrame', { n: k.perFrame ?? 0 })
+                    : seatedLabel(k, seatedRange(k))
+                      ?? t('panel.boltsPerJoint', { n: k.boltsPerJoint }))}
               </span>
             </button>
           );
@@ -189,22 +236,26 @@ const AccessoryKitPanel: FC = () => {
         <div className="mt-2 space-y-1">
           <p className="text-[10px] text-neutral-500 leading-snug">
             {kit.scope === 'frame'
-              ? `${kit.bolt.name} · 清单与工序专用，不在 3D 中显示`
+              ? t('panel.frameOnly', { name: hardwareName(kit.bolt) })
               : jointGroups
                   .map(
                     (g) =>
                       // Counts and specs come from the same derivation the 3D and
                       // the BOM use, so a retyped or deleted part shows up here
                       // rather than leaving a preset figure behind.
-                      `每处 ${g.parts
-                        .map((l) => `${l.qty} 颗 ${l.spec.name}`)
-                        .join(' + ')}${g.n > 0 ? ` · 共 ${g.n} 处` : ''}`,
+                      t('panel.jointParts', {
+                        parts: g.parts
+                          .map((l) =>
+                            t('panel.partQty', { qty: l.qty, name: hardwareName(l.spec) }),
+                          )
+                          .join(' + '),
+                      }) + (g.n > 0 ? t('panel.jointCount', { n: g.n }) : ''),
                   )
-                  .join('；')}
+                  .join(t('panel.jointSeparator'))}
           </p>
           {kit.scope === 'joint' && enabled.length === 0 && (
             <p className="text-[10px] text-amber-500/80">
-              当前没有启用的角码 —— 紧固件也无处可放。
+              {t('panel.noEnabledBrackets')}
             </p>
           )}
 
@@ -221,16 +272,21 @@ const AccessoryKitPanel: FC = () => {
                   key={g.stl}
                   data-kit-edit={g.stl}
                   onClick={() => navigate(`/kits?kit=${kit.id}&stl=${encodeURIComponent(g.stl)}`)}
-                  title={`逐颗调整：${g.cc.label} · ${g.parts.map((l) => `${l.qty} 颗 ${l.spec.name}`).join(' + ')}`}
+                  title={t('panel.tweakHint', {
+                    connector: connectorLabel(g.cc),
+                    parts: g.parts
+                      .map((l) => t('panel.partQty', { qty: l.qty, name: hardwareName(l.spec) }))
+                      .join(' + '),
+                  })}
                   className="px-2 py-1 text-[10px] rounded border border-neutral-700 text-neutral-300 hover:border-wood-600 hover:text-wood-200 transition-colors cursor-pointer"
                 >
-                  微调零件…{jointGroups.length > 1 ? ` (${g.cc.dim})` : ''}
-                  {g.edited && <span className="ml-1 text-amber-500/90">已微调</span>}
+                  {t('panel.tweakParts')}{jointGroups.length > 1 ? ` (${g.cc.dim})` : ''}
+                  {g.edited && <span className="ml-1 text-amber-500/90">{t('common.tweaked')}</span>}
                 </button>
               ))}
             </div>
           )}
-          {kit.ops.map((op) => (
+          {kitOps(kit).map((op) => (
             <p key={op} className="text-[10px] text-amber-500/80">⚙ {op}</p>
           ))}
           {kit.scope === 'joint' && (
@@ -242,13 +298,13 @@ const AccessoryKitPanel: FC = () => {
                   onChange={(e) => setShowFasteners(e.target.checked)}
                   className="accent-wood-600"
                 />
-                显示紧固件
+                {t('panel.showFasteners')}
               </label>
               <label
                 className={`flex items-center gap-1 text-[10px] cursor-pointer ${
                   showFasteners ? 'text-neutral-400' : 'text-neutral-700'
                 }`}
-                title="半透明显示压入型材槽内的 T 型螺母"
+                title={t('panel.showInternalHint')}
               >
                 <input
                   type="checkbox"
@@ -257,7 +313,7 @@ const AccessoryKitPanel: FC = () => {
                   onChange={(e) => setShowInternalFasteners(e.target.checked)}
                   className="accent-wood-600"
                 />
-                槽内螺母（透视）
+                {t('panel.showInternal')}
               </label>
             </div>
           )}
@@ -267,19 +323,24 @@ const AccessoryKitPanel: FC = () => {
   );
 };
 
-/** Single bracket row with expandable edit fields. */
+/** Single bracket row with expandable edit fields.
+ *
+ *  `isMateActive` / `onMate` were declared here and passed by nobody — a
+ *  leftover from the 配对 workflow, and a standing `tsc` error since the call
+ *  site stopped providing them. Removed rather than defaulted: a prop that no
+ *  caller can set is not an optional prop, it is a description of a feature
+ *  that is not in this component. */
 const BracketRow: FC<{
   bracket: BracketInstance;
   isSelected: boolean;
   isExpanded: boolean;
-  isMateActive: boolean;
   onSelect: () => void;
   onToggle: () => void;
   onUpdate: (patch: Partial<BracketInstance>) => void;
   onDuplicate: () => void;
   onRemove: () => void;
-  onMate: () => void;
 }> = ({ bracket, isSelected, isExpanded, onSelect, onToggle, onUpdate, onDuplicate, onRemove }) => {
+  const t = useT();
   // Local editing state — only commit on blur
   const [localName, setLocalName] = useState(bracket.name);
   const [localPos, setLocalPos] = useState({ ...bracket.position });
@@ -321,7 +382,7 @@ const BracketRow: FC<{
   return (
     <div className={`border-b border-neutral-800/50 ${isSelected ? 'bg-wood-500/10' : ''}`}>
       <button className="w-full flex items-center gap-2 px-3 py-2 text-left hover:bg-neutral-800/30 transition-colors cursor-pointer" onClick={onSelect}>
-        <span className="text-xs cursor-pointer hover:opacity-80 flex-shrink-0" onClick={(e) => { e.stopPropagation(); onToggle(); }} title={bracket.enabled ? 'Disable' : 'Enable'}>{bracket.enabled ? '👁' : '👁‍🗨'}</span>
+        <span className="text-xs cursor-pointer hover:opacity-80 flex-shrink-0" onClick={(e) => { e.stopPropagation(); onToggle(); }} title={bracket.enabled ? t('panel.disable') : t('panel.enable')}>{bracket.enabled ? '👁' : '👁‍🗨'}</span>
         <span className="text-xs text-wood-400 flex-shrink-0">└┘</span>
         <span className={`text-sm truncate flex-1 ${isSelected ? 'text-wood-300' : 'text-neutral-300'}`}>{bracket.name}</span>
         <span className="text-[10px] text-neutral-600">{bracket.size}mm</span>
@@ -331,11 +392,11 @@ const BracketRow: FC<{
       {isExpanded && (
         <div className="px-4 pb-3 space-y-2">
           {/* Name */}
-          <InputRow label="Name" value={localName} onChange={setLocalName} onBlur={commit} />
+          <InputRow label={t('panel.name')} value={localName} onChange={setLocalName} onBlur={commit} />
 
           {/* Position */}
           <div>
-            <label className="text-[10px] text-neutral-500 block mb-1">Position (mm)</label>
+            <label className="text-[10px] text-neutral-500 block mb-1">{t('panel.position')}</label>
             <div className="grid grid-cols-3 gap-1">
               {(['x','y','z'] as const).map((ax) => (
                 <NumInput key={ax} label={ax.toUpperCase()} value={localPos[ax]} onChange={(v) => setLocalPos({ ...localPos, [ax]: v })} onBlur={commit} />
@@ -345,7 +406,7 @@ const BracketRow: FC<{
 
           {/* Rotation */}
           <div>
-            <label className="text-[10px] text-neutral-500 block mb-1">Rotation (deg)</label>
+            <label className="text-[10px] text-neutral-500 block mb-1">{t('panel.rotation')}</label>
             <div className="grid grid-cols-3 gap-1">
               {(['roll','pitch','yaw'] as const).map((r) => (
                 <NumInput key={r} label={r[0].toUpperCase()} value={localRot[r]} onChange={(v) => setLocalRot({ ...localRot, [r]: v })} onBlur={commit} />
@@ -354,15 +415,15 @@ const BracketRow: FC<{
           </div>
 
           {/* Connected parts */}
-          <InputRow label="Connected Parts" value={localParts} onChange={setLocalParts} onBlur={commit} placeholder="e.g. leg_front_left, beam_front" />
+          <InputRow label={t('panel.connectedParts')} value={localParts} onChange={setLocalParts} onBlur={commit} placeholder={t('panel.connectedPartsHint')} />
 
           {/* STL model — swap this bracket's connector model (leave empty for default) */}
-          <InputRow label="STL Model (stlUrl)" value={localStl} onChange={setLocalStl} onBlur={commit} placeholder="/Cast_Corner_Bracket.stl" />
+          <InputRow label={t('panel.stlModel')} value={localStl} onChange={setLocalStl} onBlur={commit} placeholder={t('panel.stlModelHint')} />
 
           {/* Actions */}
           <div className="flex gap-1 pt-1 flex-wrap">
-            <button onClick={onDuplicate} className="px-2 py-0.5 text-[10px] rounded bg-neutral-800 hover:bg-neutral-700 text-neutral-400 transition-colors cursor-pointer">Duplicate</button>
-            <button onClick={onRemove} className="px-2 py-0.5 text-[10px] rounded bg-red-900/30 hover:bg-red-900/60 text-red-400 transition-colors cursor-pointer">Delete</button>
+            <button onClick={onDuplicate} className="px-2 py-0.5 text-[10px] rounded bg-neutral-800 hover:bg-neutral-700 text-neutral-400 transition-colors cursor-pointer">{t('common.duplicate')}</button>
+            <button onClick={onRemove} className="px-2 py-0.5 text-[10px] rounded bg-red-900/30 hover:bg-red-900/60 text-red-400 transition-colors cursor-pointer">{t('common.delete')}</button>
           </div>
         </div>
       )}

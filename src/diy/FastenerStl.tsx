@@ -8,7 +8,9 @@ import {
   type BakedScrew,
   type BakedTNut,
   type ScrewFamily,
+  type TNutFamily,
 } from './fasteners';
+import { coverById } from './connectors';
 
 /**
  * Hardware geometry, straight from the MayCad catalog.
@@ -98,6 +100,12 @@ export interface TNutMeshProps extends MeshProps {
    *  thread size does not determine it, and a guessed series would draw a nut
    *  whose name is a lie. */
   series: number;
+  /** Which T-nut the catalog holds for that (size, series) — a plain block or a
+   *  spring nut. Defaulted rather than required so the half-dozen callers that
+   *  only ever meant "a T-nut" keep drawing the plain block they always drew; the
+   *  catalog holds an M6 in BOTH for the same slot, so a default is not a
+   *  placeholder here, it is a choice. */
+  family?: TNutFamily;
   color?: string;
   opacity?: number;
   /**
@@ -139,6 +147,55 @@ const TNutMesh_ = ({ part, ...props }: TNutMeshProps & { part: BakedTNut }) => {
 
 export const TNutMesh: FC<TNutMeshProps> = (props) => (
   <Suspense fallback={null}>
-    <TNutMesh_ {...props} part={findTNut(props.size, props.series)} />
+    <TNutMesh_ {...props} part={findTNut(props.size, props.series, props.family)} />
   </Suspense>
 );
+
+export interface CoverMeshProps extends MeshProps {
+  /** Catalog id of the cover (1.46.204.2828A). */
+  uid?: string;
+  color?: string;
+  metalness?: number;
+  roughness?: number;
+}
+
+const CoverMesh_ = ({ part, ...props }: CoverMeshProps & { part: { stlUrl: string } }) => {
+  const geometry = useLoader(STLLoader, part.stlUrl);
+  return (
+    <mesh
+      geometry={geometry}
+      renderOrder={props.renderOrder ?? 0}
+      {...(props.pickable ? {} : { raycast: NO_PICK })}
+    >
+      <meshStandardMaterial
+        color={props.color ?? '#9aa0a6'}
+        // Die-cast zinc with a powder coat: duller and less metallic than the
+        // steel of the screws it hides, which is what makes the cap read as a cap.
+        metalness={props.metalness ?? 0.35}
+        roughness={props.roughness ?? 0.55}
+        emissive={props.emissive ?? '#000000'}
+        emissiveIntensity={props.emissiveIntensity ?? 0.75}
+      />
+    </mesh>
+  );
+};
+
+/**
+ * An angle cover — a CONNECTOR-catalog part, not a fastener, which is why it
+ * loads from `/connectors/` and is addressed by catalog id rather than by
+ * (family, size, length).
+ *
+ * An id the catalog does not hold draws NOTHING rather than falling back to some
+ * other cap: a cover is cosmetic, and the wrong cap over a joint is worse than an
+ * uncovered joint. The position it is drawn at is the caller's business (the
+ * cover's baked frame already shares the bracket's own origin).
+ */
+export const CoverMesh: FC<CoverMeshProps> = (props) => {
+  const part = coverById(props.uid);
+  if (!part) return null;
+  return (
+    <Suspense fallback={null}>
+      <CoverMesh_ {...props} part={part} />
+    </Suspense>
+  );
+};

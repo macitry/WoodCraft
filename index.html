@@ -5,6 +5,36 @@
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>WoodCraft — Parametric Furniture Designer</title>
+    <script>
+      /*
+       * Language before first paint.
+       *
+       * The app follows the browser's language (see src/i18n/lang.ts), but the
+       * document's own `lang` and its title are decided by the browser the
+       * moment this file is parsed — long before the bundle runs. Leaving the
+       * hard-coded `en` here means a Chinese reader gets English hyphenation,
+       * English font fallback and an English tab label until React mounts, which
+       * is the flash of wrong language this block exists to prevent.
+       *
+       * The detection mirrors `detect()` in src/i18n/lang.ts on purpose. It
+       * cannot import it — the bundle does not exist yet — so the two are kept in
+       * step by hand: same key, same browser test, same two strings. Change one,
+       * change the other.
+       */
+      (function () {
+        var TITLES = { zh: 'WoodCraft — 参数化家具设计器', en: 'WoodCraft — Parametric Furniture Designer' };
+        var lang = 'en';
+        try {
+          var saved = localStorage.getItem('woodcraft.lang');
+          if (saved === 'zh' || saved === 'en') lang = saved;
+          else if ((navigator.language || '').toLowerCase().indexOf('zh') === 0) lang = 'zh';
+        } catch (e) {
+          /* Storage blocked — fall back to English rather than failing to render. */
+        }
+        document.documentElement.lang = lang === 'zh' ? 'zh-CN' : 'en';
+        document.title = TITLES[lang];
+      })();
+    </script>
   </head>
   <body class="bg-neutral-950 text-white">
     <div id="root"></div>

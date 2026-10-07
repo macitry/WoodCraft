@@ -2,22 +2,13 @@ import React, { useEffect, useMemo } from 'react';
 import { useDiyStore } from '../store/diyStore';
 import { connectorById } from './connectors';
 import type { DiyBracket } from '../types/furniture';
-import { SCREW_SERIES, accessoryKitById, jointFasteners } from '../utils/accessoryKits';
+import { HARDWARE_TONE, SCREW_SERIES, accessoryKitById, jointFasteners } from '../utils/accessoryKits';
 import { useKitLayoutFor } from '../store/kitLayoutStore';
 import type { LocalFastener } from '../utils/accessoryKits';
-import { ScrewMesh, TNutMesh } from './FastenerStl';
+import { CoverMesh, ScrewMesh, TNutMesh } from './FastenerStl';
 import { DEFAULT_SCREW_FAMILY } from './fastenerDims';
 
 const M = 0.001;
-
-const TONE = {
-  socket_screw: '#c8c8c8',
-  // Steel, like the socket screws and like the BOM's material column: the brass
-  // tone this had was the 木螺钉's, and it is now a steel machine screw — one
-  // that would also read as a T-nut, which really is brass.
-  countersunk_screw: '#c8c8c8',
-  t_nut: '#b08d57',
-} as const;
 
 /**
  * One fastener. Position in mm (the store's own unit), geometry from the baked
@@ -40,13 +31,23 @@ const KitFastener: React.FC<{ fastener: LocalFastener; ghosted: boolean }> = ({ 
       scale={M}
     >
       {spec.kind === 't_nut' ? (
-        <TNutMesh size={size} series={SCREW_SERIES} color={TONE.t_nut} ghost={ghosted} />
+        <TNutMesh
+          size={size}
+          series={SCREW_SERIES}
+          family={spec.tnutFamily}
+          color={HARDWARE_TONE.t_nut}
+          ghost={ghosted}
+        />
+      ) : spec.kind === 'cover' ? (
+        // Neither a screw nor a nut: no size, no length, no family for the branch
+        // below to read, so it would draw a bogus zero-length M6 instead.
+        <CoverMesh uid={spec.uid} color={HARDWARE_TONE.cover} />
       ) : (
         <ScrewMesh
           family={spec.family ?? DEFAULT_SCREW_FAMILY}
           size={size}
           length={spec.length ?? 0}
-          color={TONE[spec.kind]}
+          color={HARDWARE_TONE[spec.kind]}
         />
       )}
     </group>

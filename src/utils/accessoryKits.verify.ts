@@ -7,11 +7,16 @@
 
 import {
   ACCESSORY_KITS,
+  COVER_KEY,
   DEFAULT_HOLE_PATTERN,
   EMPTY_LAYOUT,
+  GUSSET_HOLE_PATTERN,
+  GUSSET_STL_URL,
   HOLE_PATTERNS,
   MATE_DEPTH_MM,
+  SCREW_SERIES,
   accessoryKitById,
+  cover,
   holePatternFor,
   holePatternSignature,
   kitLayoutKey,
@@ -35,7 +40,9 @@ import {
 } from './accessoryKits';
 import type { HardwareSpec, KitLayout, KitLayoutMap, LocalFastener, PartRole } from './accessoryKits';
 import { DEFAULT_SCREW_FAMILY, minScrewLength, snapScrewLength } from '../diy/fastenerDims';
+import { findTNut } from '../diy/fasteners';
 import { DEFAULT_BRACKET_STL_URL } from '../types/furniture';
+import { CAST_CONNECTOR, coverById } from '../diy/connectors';
 
 function assert(cond: boolean, msg: string): void {
   if (!cond) throw new RangeError(`accessoryKits.verify: ${msg}`);
@@ -45,7 +52,36 @@ const near = (a: number, b: number, tol = 1e-9) => Math.abs(a - b) < tol;
 const nearVec = (a: readonly number[], b: readonly number[], tol = 1e-9) =>
   a.length === b.length && a.every((v, i) => near(v, b[i], tol));
 
-const STL = DEFAULT_BRACKET_STL_URL;
+/** Column `k` of the three.js Euler-'XYZ' rotation — where local axis `k` ends
+ *  up. `socketAxis` is the k=2 case (where the hardware faces); a T-nut also
+ *  needs k=1 (where its long side points), which is the one nothing checked. */
+function eulerColumn(r: readonly [number, number, number], k: 0 | 1 | 2): [number, number, number] {
+  const [ca, sa, cb, sb, cc, sc] = [
+    Math.cos(r[0]),
+    Math.sin(r[0]),
+    Math.cos(r[1]),
+    Math.sin(r[1]),
+    Math.cos(r[2]),
+    Math.sin(r[2]),
+  ];
+  const R = [
+    [cb * cc, -cb * sc, sb],
+    [sa * sb * cc + ca * sc, -sa * sb * sc + ca * cc, -sa * cb],
+    [-ca * sb * cc + sa * sc, ca * sb * sc + sa * cc, ca * cb],
+  ];
+  return [R[0][k], R[1][k], R[2][k]];
+}
+
+/**
+ * Most of this file drives the machinery through ONE connector, and that
+ * connector is the CAST bracket, not the default: its pattern has two mounts per
+ * leg, which is what exercises the "min(declared, available)" cap — a
+ * one-mount-per-leg pattern caps every kit at 2 and cannot tell a working cap
+ * from a broken one. `DEFAULT_STL` is the default bracket (the GD-Zn angle) and
+ * gets its own block at the end of the pattern section.
+ */
+const STL = CAST_CONNECTOR.stlUrl;
+const DEFAULT_STL = DEFAULT_BRACKET_STL_URL;
 
 // ---------------------------------------------------------------------------
 // Catalog integrity
@@ -61,7 +97,14 @@ const STL = DEFAULT_BRACKET_STL_URL;
     assert(kit.minProfileSize > 0, `${kit.id}: minProfileSize must be positive`);
     assert(kit.bolt.length! > 0, `${kit.id}: the bolt needs a length`);
     const parts = kitParts(kit);
-    assert(parts.length === (kit.mate ? 2 : 1), `${kit.id}: kitParts must list every distinct part`);
+    // Bolt always; the mate and the cover are each optional, and a frame-scope
+    // kit never has a cover (it has no joint for one to clip onto).
+    const wantsCover = kit.scope === 'joint' && !!kit.cover;
+    assert(
+      parts.length === 1 + (kit.mate ? 1 : 0) + (wantsCover ? 1 : 0),
+      `${kit.id}: kitParts must list every distinct part it draws (got ${parts.length})`,
+    );
+    assert(new Set(parts.map((s) => s.kind)).size === parts.length, `${kit.id}: kitParts must not list one part twice`);
     if (kit.scope === 'joint') {
       assert(kit.boltsPerJoint > 0, `${kit.id}: a joint kit must declare boltsPerJoint`);
       assert(kit.perFrame === undefined, `${kit.id}: a joint kit must not declare perFrame`);
@@ -69,15 +112,19 @@ const STL = DEFAULT_BRACKET_STL_URL;
       assert(kit.perFrame! > 0, `${kit.id}: a frame kit must declare perFrame`);
       assert(kit.boltsPerJoint === 0, `${kit.id}: a frame kit has no per-joint seating`);
     }
-    // The rule that keeps the op notes honest: T-nuts mean side-slot entry,
-    // where there is no material to tap. End-face tapping is a different kit.
-    const endsTapping = kit.ops.some((o) => o.includes('端面攻丝'));
-    assert(!(kit.mate && endsTapping), `${kit.id}: a T-nut kit must not claim end-face tapping`);
-    assert(!endsTapping || !kit.mate, `${kit.id}: the tapping kit must not ship T-nuts`);
+    // The rule that keeps the kit honest: T-nuts mean side-slot entry, where
+    // there is no material to tap. End-face tapping is a different kit.
+    //
+    // Read off `tapsProfile`, NOT off a word in `ops`. The ops are prose and are
+    // now translated, so the old `o.includes('端面攻丝')` would have quietly
+    // stopped matching the moment that string changed — turning a failing build
+    // into a passing one. The flag is the fact; the sentence is only how it is
+    // said.
+    assert(!(kit.mate && kit.tapsProfile), `${kit.id}: a T-nut kit must not claim end-face tapping`);
   }
 
   // Exactly one tapping kit, and it ships no mate — the two halves of the rule.
-  const tappers = ACCESSORY_KITS.filter((k) => k.ops.some((o) => o.includes('端面攻丝')));
+  const tappers = ACCESSORY_KITS.filter((k) => k.tapsProfile);
   assert(tappers.length === 1 && !tappers[0].mate, 'end-face tapping must be exactly one mate-less kit');
 }
 
@@ -124,6 +171,38 @@ const STL = DEFAULT_BRACKET_STL_URL;
     }
     assert(near(z, 0), 'default seats must sit on the plate centreline');
   }
+
+  // A T-nut is a BLOCK, not a cylinder: its longest axis is the one that has to
+  // run along the profile, since that is how it slides down the slot and how it
+  // fits the channel — on a 30-series slot the 20mm side is wider than the
+  // opening it would have to cross otherwise. Both legs must agree about that.
+  // Read off the BAKED boxes rather than a hard-coded axis, so a re-bake that
+  // swaps the mesh's own axes fails here instead of quietly seating every nut
+  // sideways.
+  for (const family of ['spring', 't_slot'] as const) {
+    const box = findTNut('M6', SCREW_SERIES, family).boxMm;
+    const span = [0, 1, 2].map((i) => box.max[i] - box.min[i]);
+    const longest = span.indexOf(Math.max(...span)) as 0 | 1 | 2;
+    for (const [leg, dir] of [
+      ['x', [1, 0, 0]],
+      ['y', [0, 1, 0]],
+    ] as const) {
+      const seat = seats.find((s) => s.leg === leg)!;
+      const axis = eulerColumn(seat.rotation, longest);
+      const dot = Math.abs(axis[0] * dir[0] + axis[1] * dir[1] + axis[2] * dir[2]);
+      assert(
+        near(dot, 1, 1e-9),
+        `a ${family} T-nut must run ALONG the ${leg}-leg, not across the slot ` +
+          `(long axis lands on ${axis.map((v) => v.toFixed(3)).join(', ')})`,
+      );
+    }
+  }
+  // …and the guard has teeth: the rotation the +x leg used to carry — +90° about
+  // X and no roll, which is a correct FACING and a sideways nut — fails it.
+  assert(
+    !near(Math.abs(eulerColumn([Math.PI / 2, 0, 0], 1)[0]), 1, 1e-9),
+    'an unrilled +90°-about-X seat is exactly the sideways nut this guards',
+  );
 }
 
 // The socket-axis helper must reproduce three.js' Euler order 'XYZ' third column.
@@ -145,8 +224,22 @@ const STL = DEFAULT_BRACKET_STL_URL;
 // ---------------------------------------------------------------------------
 {
   assert(holePatternFor(STL) === DEFAULT_HOLE_PATTERN, 'the cast bracket must use the authored pattern');
-  assert(holePatternFor(null) === DEFAULT_HOLE_PATTERN, 'no stlUrl → default pattern');
-  assert(holePatternFor('/nope.stl') === DEFAULT_HOLE_PATTERN, 'unknown stlUrl → default pattern');
+  assert(holePatternFor(null) === DEFAULT_HOLE_PATTERN, 'an absent stlUrl falls back to the unscaled pattern');
+  assert(holePatternFor('/nope.stl') === DEFAULT_HOLE_PATTERN, 'an unknown stlUrl falls back to the unscaled pattern');
+
+  // The two rows of HOLE_PATTERNS are keyed by two strings that are now the SAME
+  // string (`GUSSET_STL_URL === DEFAULT_BRACKET_STL_URL`), so an object literal
+  // keyed by both would have silently kept whichever came last and handed the
+  // cast pattern to the default bracket. This asserts the rows stayed apart.
+  assert(DEFAULT_STL === GUSSET_STL_URL, 'the default bracket IS the gusset — same part, two names');
+  assert(
+    holePatternFor(DEFAULT_STL) === GUSSET_HOLE_PATTERN,
+    'the default bracket must resolve to the gusset pattern, not the cast one',
+  );
+  assert(
+    GUSSET_HOLE_PATTERN !== DEFAULT_HOLE_PATTERN && holePatternFor(STL) !== holePatternFor(DEFAULT_STL),
+    'the cast bracket and the default bracket must not share a pattern',
+  );
 
   const big = holePatternFor('/connectors/1.46.20536.stl'); // Angle Alu 48x48, extMm 48
   assert(big !== DEFAULT_HOLE_PATTERN, 'a catalog connector must get its own derived pattern');
@@ -179,13 +272,21 @@ const STL = DEFAULT_BRACKET_STL_URL;
   const heavy = accessoryKitById('corner-heavy')!;
   const tapped = accessoryKitById('corner-tapped')!;
 
-  // 2 bolts + 2 T-nuts = 4 pieces, and exactly one bolt per leg.
+  // 2 bolts + 2 T-nuts + 1 cover = 5 pieces, one bolt per leg.
   const std = jointFasteners(standard, STL);
-  assert(std.length === 4, `standard kit must place 2 bolts + 2 nuts (got ${std.length})`);
-  const stdBolts = std.filter((f) => !f.internal);
+  assert(std.length === 5, `standard kit must place 2 bolts + 2 nuts + 1 cover (got ${std.length})`);
+  const stdBolts = std.filter((f) => f.role === 'bolt');
   const stdNuts = std.filter((f) => f.internal);
-  assert(stdBolts.length === 2 && stdNuts.length === 2, 'standard kit: 2 bolts, 2 nuts');
-  assert(stdBolts[0].spec.kind === 'socket_screw' && stdNuts[0].spec.kind === 't_nut', 'standard kit part kinds');
+  const stdCovers = std.filter((f) => f.role === 'cover');
+  assert(stdBolts.length === 2 && stdNuts.length === 2 && stdCovers.length === 1, 'standard kit: 2 bolts, 2 nuts, 1 cover');
+  // A cover is neither of the other two: not a bolt (no seat, no seat key) and
+  // not the hidden mate that shares a bolt's axis.
+  assert(stdCovers[0].key === COVER_KEY && !stdCovers[0].internal, 'the cover sits at the joint, on its own key');
+  // What is drawn is the cover the KIT declares — not a spec rebuilt from the
+  // uid, which could drift from the catalog entry the kit was written against.
+  assert(stdCovers[0].spec.kind === 'cover' && stdCovers[0].spec === standard.cover, 'the drawn cover must be the kit\'s own');
+  assert(!!stdCovers[0].spec.uid && coverById(stdCovers[0].spec.uid) !== null, 'and it must be a real catalog cover, not a fabricated uid');
+  assert(stdBolts[0].spec.kind === 'flange_screw' && stdNuts[0].spec.kind === 't_nut', 'standard kit part kinds');
   const boltLegs = stdBolts.map((f) => (nearVec(socketAxis(f.rotation), [-1, 0, 0]) ? 'y' : 'x'));
   assert(boltLegs.join('') === 'xy', `2 bolts must straddle both legs (got ${boltLegs.join('')})`);
   assert(perJointCount(standard, STL) === 2, 'standard kit is 2 per joint');
@@ -222,6 +323,10 @@ const STL = DEFAULT_BRACKET_STL_URL;
   const halfWidth = 8.5;
   for (const kit of [standard, heavy, tapped]) {
     for (const f of jointFasteners(kit, STL)) {
+      // A cover has no seat at all — it caps the joint rather than crossing the
+      // plate, so it sits at the bracket's own origin and is neither on nor off
+      // a leg. Its position is asserted where the cover itself is.
+      if (f.role === 'cover') continue;
       const [x, y, z] = f.position;
       assert(Math.abs(z) <= halfWidth, `${kit.id}: a fastener drifted off the plate centreline (z=${z})`);
       if (f.internal) {
@@ -273,11 +378,20 @@ const STL = DEFAULT_BRACKET_STL_URL;
   }
 
   // The identity the whole feature rests on: rendered pieces × joints == BOM qty.
+  // Checked per LINE rather than only for line [0]: a kit that ships a cover names
+  // three parts, and "line [0] is the bolts" is a fact about ordering, not counting.
   for (const kit of ACCESSORY_KITS) {
+    if (kit.scope !== 'joint') continue;
     for (const n of [1, 7, 16]) {
-      const rendered = kit.scope === 'joint' ? jointFasteners(kit, STL).filter((f) => !f.internal).length : 0;
-      if (kit.scope === 'joint') {
-        assert(rendered * n === kitSchedule(kit, n, STL)[0].qty, `${kit.id}: rendered bolts × joints must equal the BOM qty`);
+      const parts = jointFasteners(kit, STL);
+      for (const line of kitSchedule(kit, n, STL)) {
+        // `linesFrom` keeps the rendered spec object by reference, so identity is
+        // enough here and cannot be fooled by two specs that merely print alike.
+        const drawn = parts.filter((f) => f.spec === line.spec).length;
+        assert(
+          drawn * n === line.qty,
+          `${kit.id} @ ${n}: ${line.spec.name} — ${line.qty} listed, ${drawn} drawn per joint`,
+        );
       }
     }
   }
@@ -316,14 +430,25 @@ function jointScheduleStable(kit: (typeof ACCESSORY_KITS)[number]): boolean {
   // describing hardware that is no longer there the moment a size override lands.
   const rebuiltName = (s: HardwareSpec) =>
     s.kind === 't_nut'
-      ? tNut(s.size!).name // the catalog's series is tNut's own default
-      : screwName(s.family ?? DEFAULT_SCREW_FAMILY, s.size!, s.length!);
+      ? // Every preset nut fits the 30 series — `SCREW_SERIES` is the one place
+        // that number lives, and a spec carries no series of its own to disagree
+        // with it. The FAMILY is carried: 1.32.4F is a spring nut, and dropping
+        // the family here would rename it back to the plain one.
+        tNut(s.size!, SCREW_SERIES, s.tnutFamily!).name
+      : s.kind === 'cover'
+        ? cover(s.uid!).name // neither a screw nor a nut: no size to derive from
+        : screwName(s.family ?? DEFAULT_SCREW_FAMILY, s.size!, s.length!);
 
   for (const kit of ACCESSORY_KITS) {
     for (const spec of kitParts(kit)) {
       assert(rebuiltName(spec) === spec.name, `${kit.id}: "${spec.name}" is not what its own fields derive`);
       if (spec.kind === 't_nut') {
         assert(spec.length === undefined, `${kit.id}: a T-nut carries no length`);
+      } else if (spec.kind === 'cover') {
+        // Unlike every other part here, a cover IS its id: there is no
+        // (family, size, length) to look it up by, so it carries a uid and
+        // nothing else would name it.
+        assert(!!spec.uid && spec.size === undefined, `${kit.id}: a cover is named by its catalog uid`);
       } else {
         assert(!!spec.size && typeof spec.length === 'number', `${kit.id}: a screw needs a size and a length`);
       }
@@ -344,9 +469,16 @@ function jointScheduleStable(kit: (typeof ACCESSORY_KITS)[number]): boolean {
   // case: the length MOVES to a real one (20) rather than being rounded to a
   // whole 18 nobody can buy.
   assert(resizeScrew(bolt, 'M6', 18.4).length === 20, 'a non-catalog length must snap to the nearest real one');
-  assert(resizeScrew(bolt, 'M5', 30).name === screwName(boltFamily, 'M5', 30), 'a re-specced bolt must rename itself');
-  assert(resizeScrew(bolt, 'M5', 30).kind === 'socket_screw', 'a re-specced bolt must stay a bolt');
-  assert(resizeScrew(bolt, 'M5', 30).family === boltFamily, 'changing only the size must keep the standard');
+  // The rename must follow the SNAP, not the number that was typed. wn7381's M5
+  // stops at 25, so a typed 30 comes back a 25 mm bolt — and the name has to say
+  // 25, or the panel and the CSV would describe a part nobody sells.
+  const respec = resizeScrew(bolt, 'M5', 30);
+  assert(respec.length === 25, `the flange family's M5 stops at 25 (got ${respec.length})`);
+  assert(respec.name === screwName(boltFamily, 'M5', respec.length!), 'a re-specced bolt must rename itself to the length it snapped to');
+  // Its own kind, not a literal: corner-standard's bolt is a flange screw, and a
+  // re-spec must not quietly turn it into the socket-head kind.
+  assert(respec.kind === bolt.kind, 'a re-specced bolt must stay a bolt');
+  assert(respec.family === boltFamily, 'changing only the size must keep the standard');
   // ...and a standard swap moves the length onto one THAT standard holds. DIN
   // 912's M6 skips 14 (12, then 16), so this is the tie case: both are 2 mm away,
   // and the SHORTER must win — a bolt that came up short still tightens, while
@@ -399,10 +531,27 @@ function jointScheduleStable(kit: (typeof ACCESSORY_KITS)[number]): boolean {
   );
 
   // Scoping. Layouts are keyed on the PATTERN signature rather than a connector
-  // id because the BOM resolves `holePatternFor(undefined)` whenever it has no
-  // stlUrl — that lookup has to land on the same pattern the renderer used.
+  // id, so that a bracket whose mesh and whose seats were resolved separately
+  // still files its edits under the pattern those seats came from.
   assert(holePatternSignature(DEFAULT_HOLE_PATTERN) === patternKeyFor(STL), 'the cast bracket must key to the authored pattern');
-  assert(patternKeyFor(STL) === patternKeyFor(null) && patternKeyFor(null) === patternKeyFor(undefined), 'the no-stlUrl lookup must reach the cast bracket\'s pattern');
+  assert(
+    patternKeyFor(null) === patternKeyFor(undefined) && patternKeyFor(null) === patternKeyFor('/nope.stl'),
+    'every unresolvable url keys to the same (unscaled) pattern',
+  );
+  // The one that bites. `holePatternFor(undefined)` is the CAST pattern, but the
+  // default bracket is the gusset — so a bracket carrying no stlUrl must reach
+  // `patternKeyFor(bracketStlUrl(b))`, never `patternKeyFor(undefined)`. If these
+  // two keys were equal the mistake would be invisible: edits saved against the
+  // default bracket would file under the cast pattern and apply to the wrong set
+  // of seats. They are not equal, and this says so out loud.
+  assert(
+    patternKeyFor(DEFAULT_STL) === patternKeyFor(GUSSET_STL_URL) && patternKeyFor(DEFAULT_STL) !== patternKeyFor(undefined),
+    'the default bracket keys to the gusset, not to the absent-url fallback',
+  );
+  assert(
+    kitLayoutKey(KIT.id, DEFAULT_STL) !== kitLayoutKey(KIT.id, undefined),
+    'a default bracket\'s edits must not collide with the absent-url key',
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -503,9 +652,10 @@ function jointScheduleStable(kit: (typeof ACCESSORY_KITS)[number]): boolean {
   assert(find(mixedParts, EDIT_KEY)!.spec.family === KIT.bolt.family, 'a size-only edit must not move the standard');
   assert(find(mixedParts, MATE_KEY)!.spec === baseMate.spec, 'its T-nut keeps the preset spec object');
   const mixedLines = kitSchedule(KIT, 4, STL, mapOf(mixed));
-  assert(mixedLines.length === 3, `two specs + one mate must be three lines (got ${mixedLines.length})`);
+  assert(mixedLines.length === 4, `two bolt specs + one mate + one cover must be four lines (got ${mixedLines.length})`);
   assert(mixedLines[0].qty === 4 && mixedLines[1].qty === 4, 'each spec keeps its own quantity');
   assert(mixedLines[2].spec.kind === 't_nut' && mixedLines[2].qty === 8, 'mates follow the bolt count');
+  assert(mixedLines[3].spec.kind === 'cover' && mixedLines[3].qty === 4, 'the cover is one per joint, not one per bolt');
 
   // A T-nut is not re-speccable, so an edit aimed at one is inert.
   const nutEdit = jointFasteners(KIT, STL, 1, { parts: { [MATE_KEY]: { size: 'M5', length: 30 } }, extra: [] });
@@ -524,11 +674,15 @@ function jointScheduleStable(kit: (typeof ACCESSORY_KITS)[number]): boolean {
 
   // ---- extra: hand-added hardware joins the drawn AND the counted set ----
   const ADDED_SPEC = socketScrew('din7984', 'M6', 30);
+  // The nut below is meant to MERGE, so it has to be the same part as the kit's
+  // own — same family included. `tNut('M6')` would default to the plain 普通 nut,
+  // which is a different part from this kit's 带弹簧 one (asserted just below).
+  const SAME_NUT = tNut('M6', SCREW_SERIES, KIT.mate!.tnutFamily!);
   const extras: KitLayout = {
     parts: {},
     extra: [
       { id: 'v1', spec: ADDED_SPEC, position: [5, 6, 7], rotation: [0, 0, 0], internal: false },
-      { id: 'v2', spec: tNut('M6'), position: [-9, -9, 0], rotation: [0, -90, 0], internal: true },
+      { id: 'v2', spec: SAME_NUT, position: [-9, -9, 0], rotation: [0, -90, 0], internal: true },
     ],
   };
   const added = jointFasteners(KIT, STL, 1, extras);
@@ -543,11 +697,25 @@ function jointScheduleStable(kit: (typeof ACCESSORY_KITS)[number]): boolean {
   assert(nearVec(jointFasteners(KIT, STL, 2, extras).find((f) => f.key === 'extra:v2')!.position, [-18, -18, 0], 1e-12), 'added parts must scale too');
   // An added part is part of the kit's DEFINITION, so it is replicated at every
   // joint; and identical hardware merges into one line rather than two.
+  // Four lines: the seated bolts, the seated T-nuts with the added one merged in,
+  // the cover, and the added bolt — which is the only one that is a NEW part.
   const extraLines = kitSchedule(KIT, 2, STL, mapOf(extras));
-  assert(extraLines.length === 3, `added hardware that is already in the kit must merge (got ${extraLines.length})`);
+  assert(extraLines.length === 4, `added hardware that is already in the kit must merge (got ${extraLines.length})`);
   assert(extraLines[0].qty === 4, 'seated bolts, 2 per joint');
   assert(extraLines[1].qty === 6, `added T-nut must merge with the seated ones: 4 seated + 2 added (got ${extraLines[1].qty})`);
-  assert(extraLines[2].qty === 2 && extraLines[2].spec.length === 30, 'the added bolt is its own line, one per joint');
+  assert(extraLines[2].spec.kind === 'cover' && extraLines[2].qty === 2, 'the cover is one per joint');
+  assert(extraLines[3].qty === 2 && extraLines[3].spec.length === 30, 'the added bolt is its own line, one per joint');
+  // ...and the merge is keyed on the WHOLE spec, family included. Same thread,
+  // same series, other family: the kit's 带弹簧 nut and a plain one are two parts,
+  // so this must be two lines — a merge on (size, series) alone would hide one.
+  const otherFamily = kitSchedule(KIT, 1, STL, mapOf({
+    parts: {},
+    extra: [{ id: 'v3', spec: tNut('M6', SCREW_SERIES, 't_slot'), position: [0, 0, 0], rotation: [0, 0, 0], internal: true }],
+  }));
+  assert(
+    otherFamily.filter((l) => l.spec.kind === 't_nut').length === 2,
+    `a T-nut of another family must keep its own line (got ${otherFamily.filter((l) => l.spec.kind === 't_nut').length})`,
+  );
 
   // ---- the invariant, in its general form ----
   // Listed === drawn, spec for spec and count for count, for every layout. The
@@ -567,7 +735,7 @@ function jointScheduleStable(kit: (typeof ACCESSORY_KITS)[number]): boolean {
       assert(line.qty === drawnCount(parts, line.spec) * 3, `${label}: ${line.spec.name} — BOM ${line.qty} must be drawn × 3 joints (${drawnCount(parts, line.spec)})`);
     }
     assert(lines.length === new Set(parts.map((f) => specKey(f.spec))).size, `${label}: every distinct drawn spec needs exactly one line`);
-    assert(lines[0].spec.kind === 'socket_screw' || lines[0].spec.kind === 'countersunk_screw', `${label}: line [0] must stay the bolt line`);
+    assert(lines[0].spec.kind === KIT.bolt.kind, `${label}: line [0] must stay the bolt line`);
     // The panels show the one-joint schedule, so it must be exactly that.
     assert(JSON.stringify(specSummary(KIT, STL, lay)) === JSON.stringify(kitSchedule(KIT, 1, STL, lay ? mapOf(lay) : null)), `${label}: specSummary must be the one-joint schedule`);
   }
@@ -609,15 +777,20 @@ function jointScheduleStable(kit: (typeof ACCESSORY_KITS)[number]): boolean {
     },
   };
   const mixedEdits = kitScheduleFor(KIT, [STL, BIG], perJoint);
-  // Each joint drops one of its two bolts; mates are untouched on both.
+  // Each joint drops one of its two bolts; mates are untouched on both. Line
+  // order is the contract (bolt, mate, cover, extra), so the cover sits at [2]
+  // and the added part — the only genuinely new spec — at [3].
+  assert(mixedEdits.length === 4, `bolt + mate + cover + added part must be four lines (got ${mixedEdits.length})`);
   assert(mixedEdits[0].qty === 2, `each joint must resolve its OWN edits (got ${mixedEdits[0].qty} bolts)`);
   assert(mixedEdits[1].qty === 4, `neither joint's T-nuts are touched (got ${mixedEdits[1].qty})`);
-  assert(mixedEdits[2].spec.length === 30 && mixedEdits[2].qty === 1, 'the 48mm-only added part appears exactly once');
+  assert(mixedEdits[2].spec.kind === 'cover' && mixedEdits[2].qty === 2, 'the cover follows the joints, not the bolts');
+  assert(mixedEdits[3].spec.length === 30 && mixedEdits[3].qty === 1, 'the 48mm-only added part appears exactly once');
   // With the gusset's entry gone, its own removal must stop applying — the 21mm
   // edit must NOT be reused in its place.
   const onlyCast = kitScheduleFor(KIT, [STL, BIG], { [kitLayoutKey(KIT.id, STL)]: perJoint[kitLayoutKey(KIT.id, STL)] });
   assert(onlyCast[0].qty === 3, `dropping the gusset's entry must restore its bolt (got ${onlyCast[0].qty})`);
-  assert(onlyCast.length === 2, `and drop its added part (${JSON.stringify(onlyCast.map((l) => l.qty))})`);
+  assert(onlyCast.length === 3, `and drop its added part (${JSON.stringify(onlyCast.map((l) => l.qty))})`);
+  assert(onlyCast[2].spec.kind === 'cover', 'the cover is not the gusset\'s to drop');
   // `layoutFor` is the only way in, so it must never fall back to another
   // connector's edits — or another kit's.
   assert(layoutFor(perJoint, KIT.id, STL) === perJoint[kitLayoutKey(KIT.id, STL)], 'layoutFor must find the exact pair');
@@ -628,6 +801,13 @@ function jointScheduleStable(kit: (typeof ACCESSORY_KITS)[number]): boolean {
   // An unknown stlUrl falls back to the default pattern, so it legitimately
   // shares the cast bracket's edits — the fallback must be consistent, not empty.
   assert(layoutFor(perJoint, KIT.id, '/nope.stl') === layoutFor(perJoint, KIT.id, STL), 'an unknown connector falls back to the default pattern, and to its edits');
+  // ...but the DEFAULT bracket is not an unknown one. It is the gusset, and its
+  // edits must be its own — replaying the cast bracket's tweaks onto it is the
+  // exact mistake the absent-vs-unknown split exists to prevent.
+  assert(
+    layoutFor(perJoint, KIT.id, DEFAULT_STL) !== layoutFor(perJoint, KIT.id, STL) && layoutFor(perJoint, KIT.id, DEFAULT_STL) === null,
+    'the default bracket must not inherit the cast bracket\'s edits',
+  );
 
   // ---- the edit follows its seat into a bigger kit ----
   const heavyBase = jointFasteners(HEAVY, STL);

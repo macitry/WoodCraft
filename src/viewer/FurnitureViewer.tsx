@@ -4,6 +4,7 @@ import { useModelStore } from '../store/modelStore';
 import ProgressBar from '../components/ProgressBar';
 import type { ViewPreset } from '../types/furniture';
 import type { OrbitControls as OrbitControlsImpl } from 'three-stdlib';
+import { useT } from '../i18n';
 
 interface FurnitureViewerProps {
   viewPreset: ViewPreset;
@@ -21,15 +22,16 @@ const FurnitureViewer: React.FC<FurnitureViewerProps> = ({
   viewPreset,
   onControlsReady,
 }) => {
+  const t = useT();
   const model = useModelStore((s) => s.model);
   const isLoading = useModelStore((s) => s.isLoading);
   const placementMode = useModelStore((s) => s.placementMode);
   const mateState = useModelStore((s) => s.mateState);
 
   const matePrompt = mateState === 'selecting_source_face'
-    ? '⚓ Mate Step 1/2: Click on the BRACKET surface (select face to mate)'
+    ? t('panel.mateStep1')
     : mateState === 'selecting_target_face'
-    ? '⚓ Mate Step 2/2: Click on the TARGET part surface (where to attach)'
+    ? t('panel.mateStep2')
     : null;
 
   return (

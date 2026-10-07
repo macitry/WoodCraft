@@ -2,13 +2,13 @@ import * as THREE from 'three';
 import { Html } from '@react-three/drei';
 import { useDiyStore } from '../store/diyStore';
 import type { AxisDir, FaceDir } from '../types/furniture';
+import { useT } from '../i18n';
 
 const M = 0.001;
 
 /** Axes perpendicular to a face direction. */
 function perpAxes(face: FaceDir): { dir: AxisDir; sign: number; label: string }[] {
   const fa = face[1] as AxisDir;
-  const fs = face.startsWith('+') ? 1 : -1;
   const all: AxisDir[] = ['X', 'Y', 'Z'];
   const result: { dir: AxisDir; sign: number; label: string }[] = [];
   for (const a of all) {
@@ -26,13 +26,17 @@ const COLORS: Record<string, string> = {
 };
 
 const DiyDirectionArrows: React.FC = () => {
+  const t = useT();
   const mode = useDiyStore((s) => s.mode);
   const parentId = useDiyStore((s) => s.attachParentId);
   const face = useDiyStore((s) => s.attachFace);
   const hitPos = useDiyStore((s) => s.attachHitPos);
   const profiles = useDiyStore((s) => s.profiles);
   const addChild = useDiyStore((s) => s.addChildProfile);
-  const clear = useDiyStore((s) => s.clearAttach);
+  // The store exposes no `clearAttach` action; cancel the pending attach here by
+  // resetting the same slice `addChildProfile` clears once it succeeds.
+  const clear = () =>
+    useDiyStore.setState({ attachParentId: null, attachFace: null, attachHitPos: null, mode: 'idle' });
 
   if (mode !== 'selecting_direction' || !face || !hitPos || !parentId) return null;
   const parent = profiles.find((p) => p.id === parentId);
@@ -46,7 +50,7 @@ const DiyDirectionArrows: React.FC = () => {
       {/* Label */}
       <Html center distanceFactor={8} style={{ pointerEvents: 'none' }}>
         <div className="bg-neutral-900/90 border border-neutral-600 rounded px-2 py-1 text-[10px] text-white whitespace-nowrap">
-          Pick growth direction
+          {t('diy.pickDirection')}
         </div>
       </Html>
 

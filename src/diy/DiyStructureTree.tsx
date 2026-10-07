@@ -2,6 +2,8 @@ import { useMemo, useState } from 'react';
 import { useDiyStore } from '../store/diyStore';
 import type { DiyProfile } from '../types/furniture';
 import { accessoryKitById } from '../utils/accessoryKits';
+import { useT } from '../i18n';
+import { kitName } from '../i18n/names';
 
 /**
  * Left-sidebar structure tree for the DIY builder.
@@ -14,6 +16,7 @@ import { accessoryKitById } from '../utils/accessoryKits';
  * part of the profile tree.
  */
 const DiyStructureTree: React.FC = () => {
+  const t = useT();
   const profiles = useDiyStore((s) => s.profiles);
   const selectedProfileId = useDiyStore((s) => s.selectedProfileId);
   const selectProfile = useDiyStore((s) => s.selectProfile);
@@ -28,13 +31,18 @@ const DiyStructureTree: React.FC = () => {
   // down here rather than derived from the kit.
   const kitRows = useMemo(() => {
     const idx = new Map(brackets.map((b, i) => [b.id, i + 1]));
-    return kitInstances.map((k) => ({
-      id: k.id,
-      bracketId: k.bracketId,
-      label: `角码-${idx.get(k.bracketId) ?? '?'}`,
-      name: accessoryKitById(k.kitId)?.name ?? k.kitId,
-    }));
-  }, [kitInstances, brackets]);
+    return kitInstances.map((k) => {
+      const kit = accessoryKitById(k.kitId);
+      return {
+        id: k.id,
+        bracketId: k.bracketId,
+        label: t('diy.kitRow', { n: idx.get(k.bracketId) ?? '?' }),
+        name: kit ? kitName(kit) : k.kitId,
+      };
+    });
+    // `t` is a dependency so the row text follows a language flip — the lookup
+    // helpers read the live language rather than a value captured in the memo.
+  }, [kitInstances, brackets, t]);
 
   // Parent-id → sorted children (by seq), plus the sorted root list.
   const { roots, childrenMap } = useMemo(() => {
@@ -88,7 +96,7 @@ const DiyStructureTree: React.FC = () => {
           >
             {kids.length > 0 ? '▼' : ''}
           </button>
-          <span className="truncate">型材-{p.seq}</span>
+          <span className="truncate">{t('diy.profileRow', { n: p.seq })}</span>
           <span className="text-[10px] text-neutral-600 flex-shrink-0">
             {p.profileSize}·{p.direction}
           </span>
@@ -105,7 +113,7 @@ const DiyStructureTree: React.FC = () => {
     <div className="flex flex-col h-full">
       {profiles.length === 0 ? (
         <div className="px-4 py-3 text-xs text-neutral-600">
-          暂无型材 — 从「元件库」tab 拖入型材
+          {t('diy.noProfiles')}
         </div>
       ) : (
         <div className="flex-1 min-h-0 overflow-y-auto py-1">
@@ -118,7 +126,7 @@ const DiyStructureTree: React.FC = () => {
       {kitRows.length > 0 && (
         <div className="flex-shrink-0 max-h-56 overflow-y-auto border-t border-neutral-800 py-1">
           <div className="px-3 py-1 text-[10px] uppercase tracking-wide text-neutral-600">
-            组合
+            {t('diy.kitsSection')}
           </div>
           {kitRows.map(({ id, bracketId, label, name }) => (
             <div
@@ -139,7 +147,7 @@ const DiyStructureTree: React.FC = () => {
               </span>
               <button
                 className="ml-auto flex-shrink-0 text-[11px] text-neutral-600 hover:text-red-400 transition-colors cursor-pointer"
-                title="删除组合"
+                title={t('diy.deleteKit')}
                 onClick={(e) => {
                   e.stopPropagation();
                   removeKitInstance(id);

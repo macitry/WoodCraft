@@ -1,12 +1,21 @@
 import { useModelStore } from '../store/modelStore';
+import { useT } from '../i18n';
+import { paramName } from '../i18n/names';
 
 /**
  * Right-side panel for editing furniture parameters.
  *
  * Users modify dimensions like width, depth, and height.
  * Changes trigger model regeneration via the store.
+ *
+ * Parameter LABELS are not literals here: they arrive on the model from the
+ * API (`param.name`), so they are looked up by id through `names.ts` with the
+ * served string as the fallback. The panel must therefore also call `useT()`
+ * itself — `paramName` is a plain function and has no way to know the language
+ * changed.
  */
 const ParameterPanel: React.FC = () => {
+  const t = useT();
   const model = useModelStore((s) => s.model);
   const isLoading = useModelStore((s) => s.isLoading);
   const updateParameter = useModelStore((s) => s.updateParameter);
@@ -19,9 +28,9 @@ const ParameterPanel: React.FC = () => {
     return (
       <div className="p-4 text-neutral-500 text-sm">
         <p className="text-xs uppercase tracking-wider text-neutral-600 mb-3">
-          Parameters
+          {t('panel.parameters')}
         </p>
-        <p>No model loaded.</p>
+        <p>{t('common.noModel')}</p>
       </div>
     );
   }
@@ -35,7 +44,7 @@ const ParameterPanel: React.FC = () => {
       {/* Header */}
       <div className="px-4 py-3 border-b border-neutral-800">
         <p className="text-xs uppercase tracking-wider text-neutral-500 font-medium">
-          Parameters
+          {t('panel.parameters')}
         </p>
         <h3 className="text-sm font-medium text-white mt-0.5 truncate">
           {model.name}
@@ -52,7 +61,7 @@ const ParameterPanel: React.FC = () => {
                 htmlFor={`param-${param.id}`}
                 className="text-sm text-neutral-300"
               >
-                {param.name}
+                {paramName(param.id, param.name)}
               </label>
               <span className="text-sm font-mono text-white tabular-nums">
                 {param.value}
@@ -96,34 +105,24 @@ const ParameterPanel: React.FC = () => {
           </div>
         ))}
 
-        {/* Profile selector */}
-        <div className="pt-2 border-t border-neutral-800">
-          <label className="text-sm text-neutral-300 block mb-2">
-            Profile
-          </label>
-          <div className="grid grid-cols-3 gap-2">
-            {['2020', '3030', '4040'].map((profile) => (
-              <button
-                key={profile}
-                className="px-3 py-2 text-xs rounded-md border border-neutral-700
-                  text-neutral-300 hover:border-wood-600 hover:text-white
-                  transition-colors cursor-pointer"
-              >
-                {profile}
-              </button>
-            ))}
-          </div>
-        </div>
+        {/* No profile selector and no board-material row here. Both used to be
+            three buttons with hover styling, a pointer cursor and NO onClick —
+            controls that lie, on the panel the user reads first. The board row
+            was worse than dead: it offered plywood/mdf/oak, which neither
+            matches the four boards the app actually has (oak/walnut/plank/ply)
+            nor includes MDF, a material no board in this app is made of. The two
+            real controls already exist and are the only ones that should — the
+            profile picker on the kits page, and MaterialSelector below. */}
 
         {/* Inset ratio sliders — only for inset-desk */}
         {useModelStore.getState().currentParams.templateId === 'inset-desk' && (
         <div className="pt-2 border-t border-neutral-800 space-y-4">
           <p className="text-xs uppercase tracking-wider text-neutral-500 font-medium">
-            Frame Inset
+            {t('panel.frameInset')}
           </p>
           {[
-            { id: 'insetRatioX', label: '宽边内缩', value: insetX },
-            { id: 'insetRatioZ', label: '深边内缩', value: insetZ },
+            { id: 'insetRatioX', label: t('panel.insetX'), value: insetX },
+            { id: 'insetRatioZ', label: t('panel.insetZ'), value: insetZ },
           ].map((s) => (
             <div key={s.id} className="space-y-2">
               <div className="flex items-center justify-between">
@@ -161,10 +160,10 @@ const ParameterPanel: React.FC = () => {
         {['cross-beam-desk', 'side-cross-desk'].includes(useModelStore.getState().currentParams.templateId) && (
           <div className="pt-2 border-t border-neutral-800 space-y-2">
             <p className="text-xs uppercase tracking-wider text-neutral-500 font-medium">
-              Cross Beam Height
+              {t('panel.crossBeamHeight')}
             </p>
             <div className="flex items-center justify-between">
-              <label className="text-sm text-neutral-300">加强横梁高度</label>
+              <label className="text-sm text-neutral-300">{t('panel.crossBeamHeight')}</label>
               <span className="text-sm font-mono text-white tabular-nums">
                 {Math.round(crossBeamRatio * 100)}%
               </span>
@@ -186,34 +185,12 @@ const ParameterPanel: React.FC = () => {
                 [&::-webkit-slider-thumb]:shadow-md"
             />
             <div className="flex justify-between text-[10px] text-neutral-600">
-              <span>0% (地面)</span>
-              <span>100% (桌腿顶)</span>
+              <span>{t('panel.ground')}</span>
+              <span>{t('panel.legTop')}</span>
             </div>
           </div>
         )}
 
-        {/* Board material */}
-        <div>
-          <label className="text-sm text-neutral-300 block mb-2">
-            Board Material
-          </label>
-          <div className="grid grid-cols-3 gap-2">
-            {[
-              { id: 'plywood', label: 'Plywood' },
-              { id: 'mdf', label: 'MDF' },
-              { id: 'oak', label: 'Oak' },
-            ].map((mat) => (
-              <button
-                key={mat.id}
-                className="px-3 py-2 text-xs rounded-md border border-neutral-700
-                  text-neutral-300 hover:border-wood-600 hover:text-white
-                  transition-colors cursor-pointer"
-              >
-                {mat.label}
-              </button>
-            ))}
-          </div>
-        </div>
       </div>
 
       {/* Loading indicator */}
@@ -221,7 +198,7 @@ const ParameterPanel: React.FC = () => {
         <div className="px-4 py-2 border-t border-neutral-800">
           <div className="flex items-center gap-2 text-xs text-wood-400">
             <div className="w-3 h-3 border border-wood-400 border-t-transparent rounded-full animate-spin" />
-            Updating model...
+            {t('panel.updating')}
           </div>
         </div>
       )}

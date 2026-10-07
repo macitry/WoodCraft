@@ -34,6 +34,7 @@
 
 import { FACE_TILE_MM } from './tabletopTextures';
 import { makeBoardId, type BoardRecord } from './boardRegistry';
+import { t } from '../i18n';
 
 /** Matches the baked PNGs (`scripts/bake_tabletop_textures.py`). */
 const FACE_PX = 1024;
@@ -97,10 +98,10 @@ function meanColor(px: Uint8ClampedArray): string {
  */
 export async function boardFromFile(file: File, tileMm: number = FACE_TILE_MM): Promise<BoardRecord> {
   if (file.size > MAX_BYTES) {
-    throw new Error(`图片太大（${Math.round(file.size / 1024 / 1024)} MB），请用 20 MB 以内的一张`);
+    throw new Error(t('panel.errTooLarge', { mb: Math.round(file.size / 1024 / 1024) }));
   }
   const mm = Math.round(tileMm);
-  if (!Number.isFinite(mm) || mm <= 0) throw new Error('覆盖毫米数必须是正数');
+  if (!Number.isFinite(mm) || mm <= 0) throw new Error(t('panel.errTileMm'));
 
   let bitmap: ImageBitmap;
   try {
@@ -109,12 +110,12 @@ export async function boardFromFile(file: File, tileMm: number = FACE_TILE_MM): 
     // be. Older browsers ignore the member rather than failing.
     bitmap = await createImageBitmap(file, { imageOrientation: 'from-image' });
   } catch {
-    throw new Error('这个文件不是浏览器能解码的图片');
+    throw new Error(t('panel.errNotImage'));
   }
 
   try {
     const side = Math.min(bitmap.width, bitmap.height);
-    if (side < 32) throw new Error('图片太小，至少需要 32 像素见方');
+    if (side < 32) throw new Error(t('panel.errTooSmall'));
     const sx = Math.round((bitmap.width - side) / 2);
     const sy = Math.round((bitmap.height - side) / 2);
 
@@ -164,7 +165,9 @@ export async function boardFromFile(file: File, tileMm: number = FACE_TILE_MM): 
       id: makeBoardId(),
       // The file name is what the user recognises in the list. The extension is
       // noise; the stamp that keeps ids unique is not something to look at.
-      label: file.name.replace(/\.[^.]+$/, '').slice(0, 40) || '上传的板',
+      // The file name is the user's own word and stays as typed; the fallback is
+      // ours, so it is the only branch that goes through the dictionary.
+      label: file.name.replace(/\.[^.]+$/, '').slice(0, 40) || t('name.uploadedBoard'),
       color,
       tileMm: mm,
       faceBlob,

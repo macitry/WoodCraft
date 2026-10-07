@@ -18,7 +18,10 @@ export function logDiyBracket(
   payload: Record<string, unknown>,
 ): void {
   console.log(
-    `%c[DIY日志] ${event}`,
+    // Not a dictionary key: this tag never reaches the screen, and the event
+    // name next to it is already an English enum id. Translating the tag would
+    // leave the log line 中英混杂 for no reader's benefit.
+    `%c[DIY] ${event}`,
     'color:#22cc88;font-weight:bold',
     JSON.stringify(payload, null, 2),
   );

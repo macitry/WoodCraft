@@ -15,6 +15,8 @@
 import type { BracketInstance, Component, DiyProfile, FurnitureModel } from '../types/furniture';
 import { computeCornerHints, eulerFromNormals } from './diyCornerGeometry';
 import { jointFitInfo, cornerBracketFits } from './diyJointGeometry';
+import { t } from '../i18n';
+import { partName } from '../i18n/names';
 
 /** Frontend-only layout + dimension params the frame math needs. */
 export interface MainFrameParams {
@@ -217,11 +219,27 @@ export function autoGenerateBrackets(
     }
 
     const e = eulerFromNormals(h.faceA, h.faceB);
-    const nameA = partNameById[h.profileIdA] ?? h.profileIdA;
-    const nameB = partNameById[h.profileIdB] ?? h.profileIdB;
+    // Through `partName`, not straight off `partNameById`: the stored names are
+    // the model's own (桌面宽度-era) Chinese, and splicing one into an English
+    // bracket label is the 混杂 this whole pass removes. The id is the key, the
+    // stored name is only the fallback for an id this build has no word for.
+    //
+    // KNOWN, DELIBERATE: this composes the name in the language current AT
+    // GENERATION TIME, and the result is STORED on the bracket — a bracket has a
+    // user-editable `name` field, and the rename flow keeps the bracket's id. So
+    // auto brackets generated in Chinese keep Chinese labels if the user then
+    // flips the switch, until the next regeneration (⚡ 自动, a template switch,
+    // or any parameter change) rewrites them. Switching the label instead would
+    // mean either renaming every bracket on a language change — a data migration
+    // — or deriving the label from the id, which cannot tell an auto name from a
+    // name the user typed over it, and would discard the rename. A page loaded
+    // in English is English throughout; this is the one seam, and it is on the
+    // side of not destroying user edits.
+    const nameA = partName(h.profileIdA, partNameById[h.profileIdA] ?? h.profileIdA);
+    const nameB = partName(h.profileIdB, partNameById[h.profileIdB] ?? h.profileIdB);
     brackets.push({
       id: `bracket_auto_${idx}`,
-      name: `角码-自动#${idx}(${nameA}/${nameB})`,
+      name: t('name.bracketAutoPair', { n: idx, side: `${nameA}/${nameB}` }),
       position: { x: h.position.x, y: h.position.y, z: h.position.z },
       rotation: {
         roll: Math.round((e.x * 180) / Math.PI * 100) / 100,

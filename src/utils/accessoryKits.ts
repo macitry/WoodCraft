@@ -20,6 +20,10 @@
 // so whatever Euler order the bracket mesh uses, the fasteners match it exactly.
 //
 // No React / zustand / three dependencies — pure data + geometry helpers.
+// The one exception is `t`, and only for the two helpers that RETURN prose
+// (`kitFitReason`, and the name builders in names.ts reading SCREW_FAMILIES):
+// they are read during render by components that already subscribe, so importing
+// the plain translator costs no React and keeps the wording in the dictionary.
 // ---------------------------------------------------------------------------
 
 import type { ScrewSize } from '../types/furniture';
@@ -27,7 +31,10 @@ import { DEFAULT_BRACKET_STL_URL } from '../types/furniture';
 import { CAST_CONNECTOR, CONNECTORS } from '../diy/connectors';
 import { snapScrewLength, DEFAULT_SCREW_FAMILY } from '../diy/fastenerDims';
 import type { SocketFamily } from '../diy/fastenerDims';
-import type { ScrewFamily } from '../diy/fasteners';
+import type { ScrewFamily, TNutFamily } from '../diy/fasteners';
+import { findScrew, findTNut } from '../diy/fasteners';
+import { coverById } from '../diy/connectors';
+import { t } from '../i18n';
 
 // ---------------------------------------------------------------------------
 // Hardware
@@ -41,7 +48,7 @@ import type { ScrewFamily } from '../diy/fasteners';
 
 /** What a piece of hardware IS. Decides which renderer draws it, whether it
  *  lives inside a profile slot, and the material the BOM prints. */
-export type HardwareKind = 'socket_screw' | 'countersunk_screw' | 't_nut';
+export type HardwareKind = 'socket_screw' | 'countersunk_screw' | 'flange_screw' | 't_nut' | 'cover';
 
 // `SocketFamily` (the cap-head standards) is declared in fastenerDims, beside the
 // default family it constrains, and imported here as a type — one definition, so
@@ -61,10 +68,44 @@ export interface HardwareSpec {
    *  for a cap screw, overall length for a countersunk one. The head sits BEHIND
    *  the mating plane, so this is also the drawn shaft length. */
   length?: number;
+  /** Which T-nut family a `t_nut` is. Not `family`: a T-nut's family is about how
+   *  it grips the slot (plain block vs spring plate), which is a different axis
+   *  from a screw's thread standard — the catalog holds an M6 in both, for the
+   *  same slot, so (size, series) alone does not name the part. */
+  tnutFamily?: TNutFamily;
+  /** Catalog id of the DRAWN part, for a kind whose shape is neither a
+   *  (family, size, length) screw nor a (size, series) T-nut: the angle cover.
+   *  Consumers resolve it through the connector catalog, which is where the bake
+   *  writes it, so the part drawn is always the part the catalog names. */
+  uid?: string;
 }
 
 /** How deep past the mating plane the T-nut body sits (mm) — display only. */
 export const MATE_DEPTH_MM = 8;
+
+/**
+ * Base colour per hardware kind — ONE table for the three scenes that draw
+ * hardware (the main viewer, the kit editor, the DIY editor).
+ *
+ * It lives here, not in each renderer, because the three copies that used to
+ * exist had already drifted apart on how much they explained and would have gone
+ * on drifting on what they contained: adding a kind is a one-line edit to the
+ * union, and nothing makes a second and third map notice. Every screw reads as
+ * steel and the T-nut as brass, matching the material the BOM prints for each —
+ * a countersunk screw drawn brass would be the same colour as a T-nut, which
+ * really is brass. The cover is the one tone chosen to MATCH something rather
+ * than stand apart: hiding the joint is the whole job of a cover, so it takes the
+ * zinc of the angle it clips to and not a colour of its own.
+ *
+ * Colours, not materials: this module stays free of three.js.
+ */
+export const HARDWARE_TONE: Record<HardwareKind, string> = {
+  socket_screw: '#c8c8c8',
+  countersunk_screw: '#c8c8c8',
+  flange_screw: '#c8c8c8',
+  t_nut: '#b08d57',
+  cover: '#9aa0a6',
+};
 
 /**
  * The kind a family belongs to. Derived rather than stored twice so the pair
@@ -72,7 +113,9 @@ export const MATE_DEPTH_MM = 8;
  * `family: 'countersunk'` would draw a flat head under a "圆柱头" name.
  */
 export function kindForFamily(family: ScrewFamily): HardwareKind {
-  return family === 'countersunk' ? 'countersunk_screw' : 'socket_screw';
+  if (family === 'countersunk') return 'countersunk_screw';
+  if (family === 'wn7381') return 'flange_screw';
+  return 'socket_screw';
 }
 
 /**
@@ -87,6 +130,9 @@ export const SCREW_FAMILIES: Record<ScrewFamily, { label: string; short: string;
   din912: { label: '内六角圆柱头螺栓', short: '圆柱头', std: 'DIN 912' },
   din7984: { label: '内六角薄头螺栓', short: '薄头', std: 'DIN 7984' },
   countersunk: { label: '内六角沉头螺栓', short: '沉头', std: 'DIN 7991' },
+  // Not 内六角: no key fits this one. The flange is part of the head, so the name
+  // says so — a 圆头 that a workshop would reach for a screwdriver for.
+  wn7381: { label: '圆头法兰螺钉', short: '圆头法兰', std: 'WN 7381' },
 };
 
 // Display names are BUILT from the spec's own fields, never stored as literals:
@@ -97,11 +143,25 @@ export const SCREW_FAMILIES: Record<ScrewFamily, { label: string; short: string;
 export function screwName(family: ScrewFamily, size: ScrewSize, length: number): string {
   return `${SCREW_FAMILIES[family].label} ${size}×${length}`;
 }
+/**
+ * How each T-nut family is named. `short` distinguishes two nuts that can share a
+ * size AND a series — the catalog holds an M6 in both — so a BOM that printed only
+ * "T 型螺母 M6 · 30 系列" twice would be naming one part for two different pieces of
+ * hardware.
+ */
+export const TNUT_FAMILIES: Record<TNutFamily, { short: string }> = {
+  t_slot: { short: '普通' },
+  // The catalog's own wording for 1.32.4F ("w/spring, F M6"), and the visible
+  // difference: the spring plate is what lets this nut be pushed in afterwards.
+  spring: { short: '带弹簧' },
+};
+
 /** `series` is the profile series the nut's slot fits (30 series → 30 mm profile).
  *  It is NOT derivable from `size`: the thread size and the slot it wedges into
- *  are independent facts, which is why a nut's spec is not user-overridable. */
-export function tNutName(size: ScrewSize, series: number): string {
-  return `T 型螺母 ${size} · ${series} 系列`;
+ *  are independent facts, which is why a nut's spec is not user-overridable. Same
+ *  for `family`, one level down again. */
+export function tNutName(size: ScrewSize, series: number, family: TNutFamily = 't_slot'): string {
+  return `T 型螺母 ${size} · ${series} 系列 · ${TNUT_FAMILIES[family].short}`;
 }
 
 /** Profile series the presets' T-nuts fit. Exported because a hand-added nut has
@@ -109,22 +169,56 @@ export function tNutName(size: ScrewSize, series: number): string {
  *  mistake `tNutName` exists to prevent. */
 export const SCREW_SERIES = 30;
 
+/**
+ * A screw in ANY family, with its kind derived from the family rather than
+ * restated — the one place a `family` becomes a `kind`. The per-family
+ * constructors below are this with the family already decided, and
+ * `resizeScrew` needs this general form because a user can move a spec between
+ * families, including across the socket/pan-head divide.
+ */
+export function screwOf(family: ScrewFamily, size: ScrewSize, length: number): HardwareSpec {
+  return { kind: kindForFamily(family), name: screwName(family, size, length), size, family, length };
+}
 /** A cap-head screw: DIN 912 (圆柱头) or DIN 7984 (薄头). */
 export function socketScrew(family: SocketFamily, size: ScrewSize, length: number): HardwareSpec {
-  return { kind: 'socket_screw', name: screwName(family, size, length), size, family, length };
+  return screwOf(family, size, length);
 }
 /** A countersunk (沉头) screw — its head sinks below the surface it sits in. */
 export function countersunkScrew(size: ScrewSize, length: number): HardwareSpec {
-  return {
-    kind: 'countersunk_screw',
-    name: screwName('countersunk', size, length),
-    size,
-    family: 'countersunk',
-    length,
-  };
+  return screwOf('countersunk', size, length);
 }
-export function tNut(size: ScrewSize, series = SCREW_SERIES): HardwareSpec {
-  return { kind: 't_nut', name: tNutName(size, series), size };
+/** A WN 7381 圆头法兰螺钉 — a pan head with a flange, driven by a screwdriver. */
+export function flangeScrew(size: ScrewSize, length: number): HardwareSpec {
+  return screwOf('wn7381', size, length);
+}
+export function tNut(
+  size: ScrewSize,
+  series = SCREW_SERIES,
+  family: TNutFamily = 't_slot',
+): HardwareSpec {
+  return { kind: 't_nut', name: tNutName(size, series, family), size, tnutFamily: family };
+}
+
+/**
+ * An angle cover (盖板) — a catalog part that clips over a finished joint.
+ *
+ * Identified by catalog id rather than by size, because that is all there is: it
+ * has no thread, no length and no series. The NAME comes from the same catalog
+ * entry the geometry does, so the part the BOM prints and the part the 3D draws
+ * cannot be two different covers.
+ *
+ * A `cover()` callable only from a real id is deliberate — there is no sensible
+ * default cover, and `coverById` returns null rather than guessing one.
+ */
+export function cover(uid: string): HardwareSpec {
+  const catalog = coverById(uid);
+  // Named the way the DIY BOM names a CONNECTOR — a Chinese noun plus the
+  // catalog's own label, `角码 Angle Alu 25x40` (diyBom.ts) — because this name is
+  // what the BOM and the property panel print, and both of those are read in
+  // Chinese. The catalog's label alone ('Angle Cover 28x28') would leave the one
+  // hardware row whose noun is not Chinese. An id the catalog does not hold falls
+  // back to the raw uid, not to another cover's name.
+  return { kind: 'cover', name: catalog ? `盖板 ${catalog.label}` : uid, uid };
 }
 
 /**
@@ -147,10 +241,34 @@ export function resizeScrew(
 ): HardwareSpec {
   // Rejected here, where the type says it should be, and not only at the call
   // site: falling through to socketScrew would silently turn a T-nut into a bolt.
-  if (spec.kind === 't_nut') return spec;
+  // Rejected for the same reason as a T-nut, and by the same rule: a cover has no
+  // size, no length and no family, so every field a resize would write is one the
+  // part does not have. `screwOf` below would happily produce one anyway.
+  if (spec.kind === 't_nut' || spec.kind === 'cover') return spec;
   const fam = family ?? spec.family ?? DEFAULT_SCREW_FAMILY;
-  const len = snapScrewLength(fam, size, length);
-  return fam === 'countersunk' ? countersunkScrew(size, len) : socketScrew(fam, size, len);
+  return screwOf(fam, size, snapScrewLength(fam, size, length));
+}
+
+/**
+ * The catalog article number (料号) of the part a spec is drawn AS.
+ *
+ * Resolved through the SAME lookup the renderer uses — `findScrew` / `findTNut`,
+ * which snap to the nearest baked part — rather than re-derived from the spec.
+ * That is the whole point: the BOM's 料号 and the 3D's mesh are then two reads of
+ * one resolution, so they cannot name different parts. (A length the catalog does
+ * not hold is exactly where a second implementation would drift.)
+ *
+ * Undefined when there is no number to give, never a placeholder string: a
+ * counter that prints a made-up number is worse than a blank cell.
+ */
+export function catalogUid(spec: HardwareSpec): string | undefined {
+  // The cover carries its id, because its id IS its identity — there is no
+  // (family, size, length) to look it up by.
+  if (spec.uid) return spec.uid;
+  if (spec.kind === 't_nut') {
+    return findTNut(spec.size ?? 'M6', SCREW_SERIES, spec.tnutFamily).uid;
+  }
+  return findScrew(spec.family ?? DEFAULT_SCREW_FAMILY, spec.size ?? 'M6', spec.length ?? 0).uid;
 }
 
 // The presets' family is DIN 7984 for a reason that is not cosmetic: the
@@ -159,8 +277,17 @@ export function resizeScrew(
 // bottom out in the hole it was tapped into.
 const M6_THIN_12 = socketScrew('din7984', 'M6', 12);
 const M6_THIN_14 = socketScrew('din7984', 'M6', 14);
-const M6_TNUT = tNut('M6');
+const M6_TNUT = tNut('M6', SCREW_SERIES, 't_slot');
 const M5_CSK_16 = countersunkScrew('M5', 16);
+
+// 角码标准连接 ships the exact hardware of a MayTec 30x30 corner: two WN 7381
+// M6×10 flange screws, two spring T-nuts, and the cap that hides the joint. The
+// 10 is not a preference — it is the length the catalog pairs with this gusset,
+// and it is SHORTER than the 12 the other kits use for the same M6 thread, so
+// swapping the fastener and swapping the length are the same edit.
+const M6_FLANGE_10 = flangeScrew('M6', 10);
+const M6_TNUT_SPRING = tNut('M6', SCREW_SERIES, 'spring');
+const ANGLE_COVER_28 = cover('1.46.204.2828A');
 
 // ---------------------------------------------------------------------------
 // Hole patterns — where a given connector can take a fastener
@@ -205,8 +332,43 @@ export const DEFAULT_HOLE_PATTERN: ConnectorHolePattern = {
   extMm: 21,
 };
 
+/**
+ * The GD-Zn 28x28 angle (1.46.204.2828.2) — the part the 角码标准连接 kit is built
+ * around.
+ *
+ * Authored rather than derived from the default's ratio, which would put the
+ * seats at 8 × 28/21 ≈ 10.7 and 15 × 28/21 ≈ 20. Two reasons that is wrong here:
+ * this part has ONE mount per leg and not two, and its usable leg is the 4 mm
+ * die-cast wall it shares with the other leg — a seat at 20 would already be past
+ * the point where the two walls meet.
+ *
+ * `along: 15` is measured off the mesh (the leg's mount feature centres at
+ * 15.3 mm), and `plateT: 4` likewise: a bolt crosses a 4 mm wall, not the 3 mm
+ * plate the cast bracket has. plateT is not cosmetic — it decides where the T-nut
+ * is placed (seat + plateT + MATE_DEPTH_MM) — and it also goes into the pattern
+ * signature that scopes a kit's per-part edits, so this part cannot inherit edits
+ * authored against a different pattern.
+ */
+/** Same string as `DEFAULT_BRACKET_STL_URL`: this part IS the default bracket.
+ *  Two names because the two roles are different — this one says which PART a
+ *  pattern or box belongs to, the other says where a bracket with no `stlUrl`
+ *  lands — and defining one as the other is what keeps them from drifting. */
+export const GUSSET_STL_URL = DEFAULT_BRACKET_STL_URL;
+
+export const GUSSET_HOLE_PATTERN: ConnectorHolePattern = {
+  plateT: { x: 4, y: 4 },
+  xRun: [{ along: 15, across: 0 }],
+  yRun: [{ along: 15, across: 0 }],
+  extMm: 28,
+};
+
 export const HOLE_PATTERNS: Record<string, ConnectorHolePattern> = {
-  [DEFAULT_BRACKET_STL_URL]: DEFAULT_HOLE_PATTERN,
+  // Keyed by the CAST bracket's own url — deliberately not by
+  // `DEFAULT_BRACKET_STL_URL`, which is now the same string as GUSSET_STL_URL
+  // below: keying this row by "the default" would have collapsed the two rows
+  // into one and handed the cast pattern to whichever came last.
+  [CAST_CONNECTOR.stlUrl]: DEFAULT_HOLE_PATTERN,
+  [GUSSET_STL_URL]: GUSSET_HOLE_PATTERN,
 };
 
 /**
@@ -214,6 +376,14 @@ export const HOLE_PATTERNS: Record<string, ConnectorHolePattern> = {
  * connector gets the default pattern scaled by its size ratio (a 48 mm gusset's
  * seats sit proportionally further out than a 21 mm cast bracket's). Unknown
  * URLs fall back to the default pattern unscaled.
+ *
+ * An ABSENT url is not an unknown one, and this function does not resolve it: a
+ * bracket with no `stlUrl` is the DEFAULT bracket, which is a fact about the
+ * bracket, not about this lookup — `bracketStlUrl` owns it, and every caller that
+ * has a bracket resolves through that before asking here. Folding the default in
+ * at this level would make the two lookups that have to agree (this one and
+ * ModelLoader's mesh) agree only by this function's say-so, while the 料号 lookup
+ * in `connectorByStlUrl` could still resolve an absent url to the cast bracket.
  */
 export function holePatternFor(stlUrl?: string | null): ConnectorHolePattern {
   if (!stlUrl) return DEFAULT_HOLE_PATTERN;
@@ -240,11 +410,25 @@ export interface JointSeat {
   /** Distance out from the corner along this leg (catalog mm, unscaled). This is
    *  the seat's identity, not its `position` — see partKey. */
   along: number;
-  /** Offset along z, the profile-slot direction (catalog mm, unscaled). */
+  /** Offset along z — ACROSS the slot, its width direction, not its length
+   *  (catalog mm, unscaled). Both legs' slots run along their own leg, so both
+   *  measure their width on z; `along` is what spreads a run down the slot. */
   across: number;
   /** Shoulder (bearing surface) position, bracket-local mm. */
   position: readonly [number, number, number];
-  /** XYZ Euler (radians) mapping the hardware's +Z axis onto the inward normal. */
+  /** Which way the hardware faces AND which way it is turned while facing that
+   *  way. The +Z column of this Euler maps onto the inward normal (see
+   *  `socketAxis`, which reads exactly that column); the remaining roll about it
+   *  puts the part's own +Y along this leg.
+   *
+   *  The roll is not decoration. A T-nut is a BLOCK — 20mm along its own Y and
+   *  11mm across — that lives inside the profile's slot, so its long axis has to
+   *  run ALONG the profile: on this leg, along +x or +y. Leaving the roll to
+   *  whatever the Euler happens to produce is how the +x leg came to seat its nut
+   *  across the slot (long axis on z, perpendicular to both profiles) while the
+   *  +y leg seated it along — the same joint, two answers. Screws are turned
+   *  about their own axis and show nothing, which is why only the nuts made it
+   *  visible. */
   rotation: readonly [number, number, number];
   /** Plate thickness the shaft crosses before reaching the mating plane (mm). */
   plateT: number;
@@ -266,7 +450,12 @@ export function jointSeats(pattern: ConnectorHolePattern): JointSeat[] {
         along: x.along,
         across: x.across,
         position: [x.along, pattern.plateT.y, x.across],
-        rotation: [Math.PI / 2, 0, 0],
+        // The -90° roll is the whole point of the `rotation` doc above: +90°
+        // about X alone faces the hardware -Y but lays its own +Y on +z, i.e.
+        // across the slot. Rolling it back turns the nut along the leg, which is
+        // the same thing the y-run leg already gets from its single -90° about Y
+        // (that one leaves +Y on +y, its own leg — do not "symmetrise" the two).
+        rotation: [Math.PI / 2, 0, -Math.PI / 2],
         plateT: pattern.plateT.y,
       });
     }
@@ -299,7 +488,7 @@ export function socketAxis(rotation: readonly [number, number, number]): [number
 // Part identity
 // ---------------------------------------------------------------------------
 
-export type PartRole = 'bolt' | 'mate' | 'extra';
+export type PartRole = 'bolt' | 'mate' | 'cover' | 'extra';
 
 /** Trim float noise without losing meaning: derived hole patterns multiply the
  *  authored seat out by an `extMm` ratio (8 × 48/21 = 18.285714285714285), and
@@ -322,6 +511,14 @@ const DEG = Math.PI / 180;
 export function partKey(role: PartRole, seat: JointSeat): string {
   return `${role}|${seat.leg}|${q3(seat.along)}|${q3(seat.across)}`;
 }
+
+/**
+ * The key for a joint's cover. A cover has no seat — it is one per joint, at the
+ * bracket's own origin — so `partKey` has nothing to build from and the key is a
+ * constant. It still goes through `partKey`-shaped plumbing so a cover edit is
+ * found by the same lookup as any other part (see `jointFasteners`).
+ */
+export const COVER_KEY = 'cover|joint|0|0';
 
 /**
  * Identifies a hole pattern, for scoping edits.
@@ -474,8 +671,25 @@ export interface AccessoryKit {
   bolt: HardwareSpec;
   /** Optional mating hardware — one per seated bolt (T-nut). */
   mate?: HardwareSpec;
+  /** Optional cosmetic part — ONE per joint, not one per seat: it clips over the
+   *  finished corner, so its position is the bracket's own origin rather than a
+   *  hole. Joint-scope kits only: a frame-scope kit has no joint to cover, and
+   *  listing one would put a part in the BOM that the 3D never draws. */
+  cover?: HardwareSpec;
   /** Machining this kit requires, beyond what the brackets themselves need. */
   ops: string[];
+  /**
+   * The bolt threads into the profile's END FACE rather than into a T-nut in its
+   * side slot — the one property that makes a kit incompatible with shipping a
+   * `mate`, because there is no nut in that design.
+   *
+   * A flag and not a substring of `ops`: the ops are prose, they are now
+   * translated, and `accessoryKits.verify.ts` used to prove this rule by
+   * searching them for 「端面攻丝」. A rule held up by a word inside a sentence
+   * that the UI is free to retranslate is not a rule, it is a coincidence — this
+   * is the machine-readable half the assertion should have been reading.
+   */
+  tapsProfile?: boolean;
   /** Smallest profile cross-section the kit is rated for (mm). */
   minProfileSize: number;
 }
@@ -509,13 +723,24 @@ export interface LocalFastener {
  */
 export const ACCESSORY_KITS: AccessoryKit[] = [
   {
+    // The MayTec 30x30 corner as the catalog actually sells it as one joint: two
+    // WN 7381 M6×10 flange screws into two spring T-nuts, hidden by an angle cover.
+    // Every part here is a catalog part with a uid, so this kit's BOM can print 料号.
+    //
+    // Two changes from the old 2 × 薄头 M6×12, and neither is a preference. The
+    // SPRING nut is the point of the kit: unlike a plain block, it can be pushed
+    // into a slot after the frame is assembled, which is the only way to bolt a
+    // joint whose profiles cannot be slid apart. And 10 is the length the catalog
+    // pairs with this hardware — shorter than the 12 the other kits use on the same
+    // M6 thread, so the fastener and the length change together or not at all.
     id: 'corner-standard',
     name: '角码标准连接',
-    desc: '每处角码 2 颗 M6×12 内六角薄头螺栓 + 2 颗 T 型螺母（压入型材槽内）',
+    desc: '每处角码 2 颗 M6×10 圆头法兰螺钉 + 2 颗带弹簧 T 型螺母（可后装）+ 1 只角件盖板',
     scope: 'joint',
     boltsPerJoint: 2,
-    bolt: M6_THIN_12,
-    mate: M6_TNUT,
+    bolt: M6_FLANGE_10,
+    mate: M6_TNUT_SPRING,
+    cover: ANGLE_COVER_28,
     ops: [],
     minProfileSize: 30,
   },
@@ -538,6 +763,7 @@ export const ACCESSORY_KITS: AccessoryKit[] = [
     boltsPerJoint: 2,
     bolt: M6_THIN_14,
     ops: ['型材端面攻丝 M6 · 深 15（代替 T 型螺母）'],
+    tapsProfile: true,
     minProfileSize: 30,
   },
   {
@@ -559,6 +785,16 @@ export const ACCESSORY_KITS: AccessoryKit[] = [
 ];
 
 const byId = new Map(ACCESSORY_KITS.map((k) => [k.id, k]));
+
+/**
+ * The kits that attach to a JOINT — everything you can hang on one bracket.
+ *
+ * Lives here rather than in the library's UI module because two panels now offer
+ * the same list: the 元件库 drag source and the bracket's own property panel. A
+ * second, drifting copy of this filter is how the two would come to disagree
+ * about which kits can be bound where.
+ */
+export const JOINT_KITS: AccessoryKit[] = ACCESSORY_KITS.filter((k) => k.scope === 'joint');
 
 /** Look up a kit; `null`/unknown → null (null is the "无" state, not a sentinel
  *  kit — there is deliberately no "none" entry in ACCESSORY_KITS). */
@@ -636,6 +872,27 @@ export function jointFasteners(
     // crosses the plate, so offset it by the plate thickness plus the nut body.
     for (let i = 0; i < n; i++) put('mate', kit.mate, seats[i], seats[i].plateT + MATE_DEPTH_MM, true);
   }
+  if (kit.cover) {
+    // Not routed through `put`: a cover has no seat, and `put` would ask for one.
+    // Everything else is the same — the same edit lookup, the same soft delete, so
+    // a cover is removable on the same terms as any other part.
+    const cEdit = layout?.parts[COVER_KEY];
+    if (!cEdit?.removed) {
+      const cOff = cEdit?.offset;
+      out.push({
+        key: COVER_KEY,
+        spec: kit.cover,
+        role: 'cover',
+        position: [
+          (cOff?.[0] ?? 0) * scale,
+          (cOff?.[1] ?? 0) * scale,
+          (cOff?.[2] ?? 0) * scale,
+        ],
+        rotation: applyRotOffset([0, 0, 0], cEdit?.rotOffset),
+        internal: false,
+      });
+    }
+  }
   for (const e of layout?.extra ?? []) {
     out.push({
       key: `extra:${e.id}`,
@@ -655,7 +912,11 @@ export interface KitLine {
   qty: number;
 }
 
-const RANK: Record<PartRole, number> = { bolt: 0, mate: 1, extra: 2 };
+// A cover is ONE per joint and sits at neither a seat nor a chosen position, so
+// it is not part of the seat/z/along identity a `bolt` or `mate` uses — see
+// COVER_KEY. Ranked between mates and hand-added parts: a joint's own hardware
+// first, then what the user did to it.
+const RANK: Record<PartRole, number> = { bolt: 0, mate: 1, cover: 2, extra: 3 };
 
 /**
  * Group key for a BOM line. NOT the display name alone: once a bolt's spec is
@@ -668,10 +929,10 @@ function specLineKey(spec: HardwareSpec): string {
 }
 
 /**
- * Fold fasteners into BOM lines. Line ORDER is part of the contract — bolts,
- * then mates, then hand-added parts — because accessoryKits.verify.ts indexes
- * `[0]` as the bolt line to check it against the rendered bolt count. `sort` is
- * stable, so parts within a role keep their seat order.
+ * Fold fasteners into BOM lines. Line ORDER is part of the contract — bolts, then
+ * mates, then the cover, then hand-added parts — because accessoryKits.verify.ts
+ * indexes `[0]` as the bolt line to check it against the rendered bolt count.
+ * `sort` is stable, so parts within a role keep their seat order.
  */
 function linesFrom(parts: LocalFastener[]): KitLine[] {
   const ordered = [...parts].sort((a, b) => RANK[a.role] - RANK[b.role]);
@@ -693,6 +954,11 @@ function frameLines(kit: AccessoryKit): KitLine[] {
   if (qty === 0) return [];
   const lines: KitLine[] = [{ spec: kit.bolt, qty }];
   if (kit.mate) lines.push({ spec: kit.mate, qty });
+  // `kit.cover` is deliberately NOT listed here. A cover is drawn only by
+  // `jointFasteners`, which returns [] for a frame kit, so listing one would put a
+  // part in the BOM and the CSV that the 3D never draws — exactly the
+  // drawn === listed === exported identity this module holds. A frame kit that
+  // wants a cover has nowhere to put it; `AccessoryKit.cover` says joint-scope only.
   return lines;
 }
 
@@ -767,13 +1033,20 @@ export function specSummary(
  * anything that must agree with what is drawn or exported use `specSummary`.
  */
 export function kitParts(kit: AccessoryKit): HardwareSpec[] {
-  return kit.mate ? [kit.bolt, kit.mate] : [kit.bolt];
+  // Mirrors `frameLines` on the cover: a frame-scope kit has no joint for one to
+  // clip onto, so it names none — listing one there would put a part in the BOM
+  // that the 3D never draws.
+  const cover = kit.scope === 'joint' && kit.cover ? [kit.cover] : [];
+  return [kit.bolt, ...(kit.mate ? [kit.mate] : []), ...cover];
 }
 
 /** Why this kit can't be used on a frame of the given profile size, or null. */
 export function kitFitReason(kit: AccessoryKit, profileSizeMm: number): string | null {
   if (profileSizeMm >= kit.minProfileSize) return null;
-  return `需 ≥${kit.minProfileSize}mm 型材（当前 ${profileSizeMm}mm）`;
+  // Reads the live language, so the panel that prints this must subscribe to it.
+  // Every caller is a component that renders the result, and all of them call
+  // `useT()` for their own labels.
+  return t('fit.tooSmall', { min: kit.minProfileSize, cur: profileSizeMm });
 }
 
 /** The cast bracket's own extent — the reference the default pattern is built on. */

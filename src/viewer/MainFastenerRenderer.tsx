@@ -1,23 +1,15 @@
 import React, { useEffect, useMemo, useRef } from 'react';
 import * as THREE from 'three';
 import type { BracketInstance } from '../types/furniture';
+import { bracketStlUrl } from '../types/furniture';
 import { useModelStore } from '../store/modelStore';
-import { SCREW_SERIES, accessoryKitById, jointFasteners } from '../utils/accessoryKits';
+import { HARDWARE_TONE, SCREW_SERIES, accessoryKitById, jointFasteners } from '../utils/accessoryKits';
 import { useKitLayoutFor } from '../store/kitLayoutStore';
-import type { HardwareKind, LocalFastener } from '../utils/accessoryKits';
-import { ScrewMesh, TNutMesh } from '../diy/FastenerStl';
+import type { LocalFastener } from '../utils/accessoryKits';
+import { CoverMesh, ScrewMesh, TNutMesh } from '../diy/FastenerStl';
 import { DEFAULT_SCREW_FAMILY } from '../diy/fastenerDims';
 
 const MM_TO_M = 0.001;
-
-/** Base colour per hardware kind — every screw reads as steel, T-nuts as brass,
- *  matching the material the BOM prints for each. A countersunk machine screw
- *  drawn brass would also be hard to tell from a T-nut, which IS brass. */
-const TONE: Record<HardwareKind, string> = {
-  socket_screw: '#c8c8c8',
-  countersunk_screw: '#c8c8c8',
-  t_nut: '#b08d57',
-};
 
 /** The catalog part for a fastener. Geometry comes from the baked STL (shared by
  *  `useLoader` per URL), so there is no prototype cache any more — but the parts
@@ -29,14 +21,28 @@ const FastenerStl: React.FC<{ fastener: LocalFastener; ghosted: boolean }> = ({
 }) => {
   const { spec } = fastener;
   const size = spec.size ?? 'M6';
-  return spec.kind === 't_nut' ? (
-    <TNutMesh size={size} series={SCREW_SERIES} color={TONE.t_nut} ghost={ghosted} />
-  ) : (
+  if (spec.kind === 't_nut') {
+    return (
+      <TNutMesh
+        size={size}
+        series={SCREW_SERIES}
+        family={spec.tnutFamily}
+        color={HARDWARE_TONE.t_nut}
+        ghost={ghosted}
+      />
+    );
+  }
+  // A cover is neither a screw nor a nut — it has no size, no length and no
+  // family, so there is nothing for the screw branch to read off it.
+  if (spec.kind === 'cover') {
+    return <CoverMesh uid={spec.uid} color={HARDWARE_TONE.cover} />;
+  }
+  return (
     <ScrewMesh
       family={spec.family ?? DEFAULT_SCREW_FAMILY}
       size={size}
       length={spec.length ?? 0}
-      color={TONE[spec.kind]}
+      color={HARDWARE_TONE[spec.kind]}
     />
   );
 };
@@ -110,12 +116,18 @@ export const FastenerSet: React.FC<{ bracket: BracketInstance }> = ({ bracket })
   const showInternalFasteners = useModelStore((s) => s.showInternalFasteners);
 
   const kit = accessoryKitById(activeKitId);
-  // The user's per-part edits, resolved through THIS bracket's connector — the
-  // same stlUrl the seats are derived from, which is what scopes the edits.
-  const layout = useKitLayoutFor(activeKitId, bracket.stlUrl);
+  // THIS bracket's connector — its own `stlUrl`, or the default bracket's when it
+  // has none. Resolved once, through the same helper `ModelLoader` draws the mesh
+  // with, because the seats and the mesh have to be the same part: a bracket that
+  // fell back to the default MESH while seating hardware on the unknown-url
+  // PATTERN would draw bolts through a plate that has no holes there.
+  const stlUrl = bracketStlUrl(bracket);
+  // The user's per-part edits, resolved through that same url — which is what
+  // scopes the edits (see `kitLayoutKey`, keyed on the hole pattern).
+  const layout = useKitLayoutFor(activeKitId, stlUrl);
   const fasteners = useMemo(
-    () => (kit ? jointFasteners(kit, bracket.stlUrl, 1, layout) : []),
-    [kit, bracket.stlUrl, layout],
+    () => (kit ? jointFasteners(kit, stlUrl, 1, layout) : []),
+    [kit, stlUrl, layout],
   );
   const shown = showFasteners
     ? fasteners.filter((f) => !f.internal || showInternalFasteners)

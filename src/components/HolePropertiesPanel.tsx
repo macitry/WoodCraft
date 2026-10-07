@@ -6,6 +6,8 @@ import {
   commitHoleEdit,
 } from '../store/modelStore';
 import { anchorFromCoord, axisCoordFromAnchor } from '../utils/holeTemplates';
+import { useT } from '../i18n';
+import type { PlanKey } from '../i18n/dict/plan';
 
 // ---------------------------------------------------------------------------
 // Right-sidebar panel shown while a hole is selected (plan or 3d mode).
@@ -17,36 +19,36 @@ import { anchorFromCoord, axisCoordFromAnchor } from '../utils/holeTemplates';
 // 等比例") that keep the hole glued to a board edge while the tabletop is resized.
 // ---------------------------------------------------------------------------
 
-const SHAPE_LABEL: Record<TabletopHole['type'], string> = {
-  circle: '圆孔',
-  rect: '方孔 · 圆角',
-  slot: '腰孔',
+const SHAPE_LABEL_KEY: Record<TabletopHole['type'], PlanKey> = {
+  circle: 'plan.tool.addCircle',
+  rect: 'plan.shape.rect',
+  slot: 'plan.tool.addSlot',
 };
 
-const SHAPE_DESC: Record<TabletopHole['type'], string> = {
-  circle: '直径可调，无需角度',
-  rect: '圆角半径 0 = 直角方孔',
-  slot: '两端半圆，长度 ≥ 宽度',
+const SHAPE_DESC_KEY: Record<TabletopHole['type'], PlanKey> = {
+  circle: 'plan.shape.circleDesc',
+  rect: 'plan.shape.rectDesc',
+  slot: 'plan.shape.slotDesc',
 };
 
 interface FieldMeta {
   key: string;
-  label: string;
+  label: PlanKey;
   min: number;
   step: number;
-  hint?: string;
+  hint?: PlanKey;
 }
 
 const SHAPE_FIELDS: Record<TabletopHole['type'], FieldMeta[]> = {
-  circle: [{ key: 'radius', label: '半径', min: 5, step: 1 }],
+  circle: [{ key: 'radius', label: 'plan.field.radius', min: 5, step: 1 }],
   rect: [
-    { key: 'width', label: '宽', min: 5, step: 1 },
-    { key: 'height', label: '高', min: 5, step: 1 },
-    { key: 'cornerRadius', label: '圆角半径', min: 0, step: 1, hint: '0 = 直角' },
+    { key: 'width', label: 'plan.field.width', min: 5, step: 1 },
+    { key: 'height', label: 'plan.field.height', min: 5, step: 1 },
+    { key: 'cornerRadius', label: 'plan.field.cornerRadius', min: 0, step: 1, hint: 'plan.field.cornerHint' },
   ],
   slot: [
-    { key: 'length', label: '长', min: 10, step: 1 },
-    { key: 'width', label: '宽', min: 5, step: 1 },
+    { key: 'length', label: 'plan.field.length', min: 10, step: 1 },
+    { key: 'width', label: 'plan.field.width', min: 5, step: 1 },
   ],
 };
 
@@ -108,11 +110,16 @@ const NumField: React.FC<{
 
 type AxisKey = 'x' | 'y';
 
-const AXIS_LABEL: Record<AxisKey, string> = { x: 'X · 宽方向', y: 'Y · 深方向' };
+const AXIS_LABEL_KEY: Record<AxisKey, PlanKey> = { x: 'plan.axis.x', y: 'plan.axis.y' };
+const MODE_LABEL_KEY: Record<AxisAnchor['mode'], PlanKey> = {
+  abs: 'plan.anchor.mode.abs',
+  mm: 'plan.anchor.mode.mm',
+  pct: 'plan.anchor.mode.pct',
+};
 const coordKeyFor = (ax: AxisKey): 'x' | 'y' => ax;
 const anchorKeyFor = (ax: AxisKey): 'anchorX' | 'anchorY' => (ax === 'x' ? 'anchorX' : 'anchorY');
-const edgeLabel = (ax: AxisKey, sign: -1 | 1) =>
-  ax === 'x' ? (sign > 0 ? '右沿' : '左沿') : sign > 0 ? '前沿' : '后沿';
+const edgeKey = (ax: AxisKey, sign: -1 | 1): PlanKey =>
+  ax === 'x' ? (sign > 0 ? 'plan.edge.right' : 'plan.edge.left') : sign > 0 ? 'plan.edge.front' : 'plan.edge.rear';
 const clampCoord = (v: number, half: number) => Math.max(-half, Math.min(half, v));
 
 /** Anchor of a chosen mode for a coordinate. A centre coord has no nearer edge
@@ -134,10 +141,11 @@ const AxisAnchorEditor: React.FC<{
   full: number;
   onPatch: (patch: HolePatch) => void;
 }> = ({ axis, anchor, coord, half, full, onPatch }) => {
+  const t = useT();
   const aKey = anchorKeyFor(axis);
   const cKey = coordKeyFor(axis);
   const mode = anchor.mode;
-  const refEdge = mode === 'abs' ? null : edgeLabel(axis, anchor.sign);
+  const refEdge = mode === 'abs' ? null : t(edgeKey(axis, anchor.sign));
   const isPct = mode === 'pct';
   // mm/pct show the offset; abs shows the raw coordinate (no rule to carry).
   const displayValue = mode === 'abs' ? coord : isPct ? anchor.value * 100 : anchor.value;
@@ -167,13 +175,18 @@ const AxisAnchorEditor: React.FC<{
     onPatch({ [cKey]: nc, [aKey]: next } as HolePatch);
   };
 
-  const coordReadout = `当前 ${axis.toUpperCase()}${coord >= 0 ? '+' : ''}${Math.round(coord)}mm`;
+  const coordReadout = t('plan.anchor.current', {
+    axis: axis.toUpperCase(),
+    coord: `${coord >= 0 ? '+' : ''}${Math.round(coord)}`,
+  });
 
   return (
     <div className="rounded-md border border-neutral-800 bg-neutral-900/40 p-2 space-y-1.5">
       <div className="flex items-baseline justify-between">
-        <span className="text-[11px] text-neutral-300">{AXIS_LABEL[axis]}</span>
-        <span className="text-[9px] text-neutral-500">{mode === 'abs' ? '固定坐标' : `参考 ${refEdge}（自动最近边）`}</span>
+        <span className="text-[11px] text-neutral-300">{t(AXIS_LABEL_KEY[axis])}</span>
+        <span className="text-[9px] text-neutral-500">
+          {mode === 'abs' ? t('plan.anchor.fixedCoord') : t('plan.anchor.refEdge', { edge: refEdge ?? '' })}
+        </span>
       </div>
       <div className="flex items-center gap-1">
         {(['abs', 'mm', 'pct'] as const).map((m) => (
@@ -184,7 +197,7 @@ const AxisAnchorEditor: React.FC<{
               mode === m ? 'bg-wood-600 text-white' : 'bg-neutral-800 text-neutral-400 hover:text-white'
             }`}
           >
-            {m === 'abs' ? '不动' : m === 'mm' ? '固定' : '比例'}
+            {t(MODE_LABEL_KEY[m])}
           </button>
         ))}
         <span className="ml-auto text-[9px] text-neutral-600 font-mono">{coordReadout}</span>
@@ -192,10 +205,10 @@ const AxisAnchorEditor: React.FC<{
       <NumField
         label={
           mode === 'abs'
-            ? `坐标 ${axis.toUpperCase()} (mm)`
+            ? t('plan.anchor.coordLabel', { axis: axis.toUpperCase() })
             : isPct
-              ? `距${refEdge} 比例 (%)`
-              : `距${refEdge} (mm)`
+              ? t('plan.anchor.distPctLabel', { edge: refEdge ?? '' })
+              : t('plan.anchor.distMmLabel', { edge: refEdge ?? '' })
         }
         value={displayValue}
         min={mode === 'abs' ? -half : 0}
@@ -204,15 +217,19 @@ const AxisAnchorEditor: React.FC<{
       />
       <p className="text-[9px] text-neutral-600 leading-snug">
         {mode === 'abs'
-          ? '改桌板尺寸时该轴保持此坐标不动。'
-          : `改桌板尺寸时孔心与${refEdge}的距离固定为${isPct ? `${Math.round(displayValue * 10) / 10}%` : `${Math.round(displayValue)}mm`}。`}
-        {'拖动或按方向键后会自动吸附到最近边。'}
+          ? t('plan.anchor.absNote')
+          : t('plan.anchor.relNote', {
+              edge: refEdge ?? '',
+              val: isPct ? `${Math.round(displayValue * 10) / 10}%` : `${Math.round(displayValue)}mm`,
+            })}
+        {t('plan.anchor.snapNote')}
       </p>
     </div>
   );
 };
 
 const HolePropertiesPanel: React.FC = () => {
+  const t = useT();
   const hole = useModelStore((s) => s.holes.find((h) => h.id === s.selectedHoleId));
   const currentParams = useModelStore((s) => s.currentParams);
   const updateHole = useModelStore((s) => s.updateHole);
@@ -253,29 +270,29 @@ const HolePropertiesPanel: React.FC = () => {
     <div className="flex-1 overflow-y-auto flex flex-col">
       {/* Banner explaining why the product params are hidden */}
       <div className="flex items-center gap-2 px-3 py-2 bg-amber-500/10 border-b border-amber-500/20">
-        <span className="flex-1 text-[11px] text-amber-200/90">正在编辑孔洞</span>
+        <span className="flex-1 text-[11px] text-amber-200/90">{t('plan.editingHole')}</span>
         <button
           onClick={() => selectHole(null)}
           className="px-2 py-0.5 rounded text-[11px] bg-wood-600 text-white hover:bg-wood-500 transition-colors cursor-pointer"
         >
-          完成
+          {t('common.done')}
         </button>
       </div>
 
       <div className="px-3 py-2">
         <div className="flex items-baseline justify-between">
           <h3 className="text-xs uppercase tracking-wider text-neutral-500 font-medium">
-            开孔属性
+            {t('plan.holeProps')}
           </h3>
-          <span className="text-[10px] text-wood-300 font-medium">{SHAPE_LABEL[hole.type]}</span>
+          <span className="text-[10px] text-wood-300 font-medium">{t(SHAPE_LABEL_KEY[hole.type])}</span>
         </div>
-        <p className="text-[10px] text-neutral-600 mt-0.5">{SHAPE_DESC[hole.type]}</p>
+        <p className="text-[10px] text-neutral-600 mt-0.5">{t(SHAPE_DESC_KEY[hole.type])}</p>
       </div>
 
       {managed ? (
         <>
           <div className="px-3 pb-3 border-b border-neutral-800">
-            <div className="text-[11px] text-neutral-400 mb-1.5">边缘锚定 · 随桌板尺寸</div>
+            <div className="text-[11px] text-neutral-400 mb-1.5">{t('plan.edgeAnchorSection')}</div>
             <div className="grid grid-cols-2 gap-2">
               <AxisAnchorEditor
                 axis="x"
@@ -297,21 +314,21 @@ const HolePropertiesPanel: React.FC = () => {
           </div>
 
           <div className="px-3 pb-3 border-b border-neutral-800 pt-3">
-            <div className="text-[11px] text-neutral-400 mb-1.5">尺寸</div>
+            <div className="text-[11px] text-neutral-400 mb-1.5">{t('plan.sizeSection')}</div>
             <div className="grid grid-cols-2 gap-2">
               {SHAPE_FIELDS[hole.type].map((f) => (
                 <NumField
                   key={f.key}
-                  label={f.label}
+                  label={t(f.label)}
                   value={valueOf(f.key)}
                   min={f.min}
                   step={f.step}
-                  hint={f.hint}
+                  hint={f.hint ? t(f.hint) : undefined}
                   onCommit={commitField(f.key, f.min)}
                 />
               ))}
               {hole.type !== 'circle' && (
-                <NumField label="角度 °" value={valueOf('angle')} min={-360} step={15} onCommit={commitField('angle', -360)} />
+                <NumField label={t('plan.field.angle')} value={valueOf('angle')} min={-360} step={15} onCommit={commitField('angle', -360)} />
               )}
             </div>
           </div>
@@ -322,21 +339,21 @@ const HolePropertiesPanel: React.FC = () => {
             <NumField label="X" value={valueOf('x')} min={-halfW} step={1} onCommit={commitField('x', -halfW)} />
             <NumField label="Y" value={valueOf('y')} min={-halfD} step={1} onCommit={commitField('y', -halfD)} />
             {hole.type !== 'circle' && (
-              <NumField label="角度 °" value={valueOf('angle')} min={-360} step={15} onCommit={commitField('angle', -360)} />
+              <NumField label={t('plan.field.angle')} value={valueOf('angle')} min={-360} step={15} onCommit={commitField('angle', -360)} />
             )}
           </div>
 
           <div className="px-3 pb-3 border-b border-neutral-800">
-            <div className="text-[11px] text-neutral-400 mb-1.5">尺寸</div>
+            <div className="text-[11px] text-neutral-400 mb-1.5">{t('plan.sizeSection')}</div>
             <div className="grid grid-cols-2 gap-2">
               {SHAPE_FIELDS[hole.type].map((f) => (
                 <NumField
                   key={f.key}
-                  label={f.label}
+                  label={t(f.label)}
                   value={valueOf(f.key)}
                   min={f.min}
                   step={f.step}
-                  hint={f.hint}
+                  hint={f.hint ? t(f.hint) : undefined}
                   onCommit={commitField(f.key, f.min)}
                 />
               ))}
@@ -351,21 +368,19 @@ const HolePropertiesPanel: React.FC = () => {
             onClick={() => duplicateHole(hole.id)}
             className="px-2 py-1.5 rounded text-xs bg-neutral-800 text-neutral-300 hover:text-white hover:bg-neutral-700 transition-colors cursor-pointer"
           >
-            ⧉ 复制
+            {'⧉ '}{t('common.duplicate')}
           </button>
           <button
             onClick={remove}
             className="px-2 py-1.5 rounded text-xs bg-red-900/60 text-red-200 hover:bg-red-800/70 transition-colors cursor-pointer"
           >
-            删除
+            {t('common.delete')}
           </button>
         </div>
         <p className="text-[10px] text-neutral-600 pt-1 leading-relaxed">
-          {managed
-            ? '输入后按 Enter / 失焦即应用（计入一步撤销）。'
-            : '输入后按 Enter / 失焦即应用（计入一步撤销）。'}
+          {t('plan.numFieldNote')}
           <br />
-          面板外点空白或按 Esc 也可返回产品参数。
+          {t('plan.panelExitNote')}
         </p>
       </div>
     </div>

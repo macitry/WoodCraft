@@ -1,16 +1,17 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
 import DiyViewer from './DiyViewer';
 import DiyProfileLibrary from '../components/DiyProfileLibrary';
 import DiyPropertyPanel from './DiyPropertyPanel';
 import DiyStructureTree from './DiyStructureTree';
 import BracketEditModal from './BracketEditModal';
+import AppHeader from '../components/AppHeader';
 import { useDiyStore } from '../store/diyStore';
 import { useModelStore } from '../store/modelStore';
 import { bomToCsv, bomToText } from '../utils/bomExport';
 import { computeDiyBom, diyOps, diyBomName } from '../utils/diyBom';
 import { useKitLayoutStore } from '../store/kitLayoutStore';
 import { downloadFile } from '../utils/download';
+import { useT } from '../i18n';
 
 const LEFT_W_KEY = 'diy.leftW';
 const LEFT_W_DEFAULT = 300;
@@ -19,17 +20,21 @@ const LEFT_W_MAX = 440;
 const clampLeftW = (v: number) => Math.min(LEFT_W_MAX, Math.max(LEFT_W_MIN, v));
 
 const DiyPage: React.FC = () => {
-  const navigate = useNavigate();
+  const t = useT();
   const profiles = useDiyStore((s) => s.profiles);
   const brackets = useDiyStore((s) => s.brackets);
   const screws = useDiyStore((s) => s.screws);
   const totalLength = profiles.reduce((sum, p) => sum + p.length, 0);
   const mode = useDiyStore((s) => s.mode);
   const bracketFaceA = useDiyStore((s) => s.bracketFaceA);
-  const startBracketFacePicking = useDiyStore((s) => s.startBracketFacePicking);
-  const cancelBracketFacePicking = useDiyStore((s) => s.cancelBracketFacePicking);
+  // No top-bar button for this any more: the corner ghosts are the way in, and
+  // the mode below is only ever entered by double-clicking two faces. The
+  // banner stays because that path can be left half-finished.
   const isPickingFaces = mode === 'placing_bracket_faces';
-  const [projectName, setProjectName] = useState('未命名');
+  // The default name is written once, in the language the page was opened in.
+  // It is the user's own data from then on (they can type over it), not a label
+  // this app should keep re-translating behind their back.
+  const [projectName, setProjectName] = useState(() => t('diy.untitled'));
   // Left column: only one panel at a time (结构树 | 元件库), resizable width.
   const [leftTab, setLeftTab] = useState<'structure' | 'library'>(
     profiles.length > 0 ? 'structure' : 'library',
@@ -71,52 +76,31 @@ const DiyPage: React.FC = () => {
 
   return (
     <div className="w-screen h-screen flex flex-col bg-neutral-950 overflow-hidden">
-      {/* Top Toolbar */}
-      <div className="h-12 px-4 flex items-center gap-3 border-b border-neutral-800 bg-neutral-950/90 backdrop-blur-sm flex-shrink-0">
-        <button
-          onClick={() => navigate('/')}
-          className="px-2 py-1 text-xs rounded text-neutral-400 hover:text-white hover:bg-neutral-800 transition-colors cursor-pointer"
-        >
-          ← Home
-        </button>
-        <div className="w-px h-5 bg-neutral-700" />
-        {/* This page has its own header rather than the shared Toolbar, so the
-            way into the assembly editor has to be repeated here — otherwise the
-            only route to it is `/`, which is the "dialog hanging off something
-            else" problem this is meant to fix. */}
-        <button
-          data-nav-kits
-          onClick={() => navigate('/kits')}
-          className="px-3 py-1 text-xs rounded bg-neutral-800 hover:bg-neutral-700 text-wood-400 hover:text-wood-300 transition-colors cursor-pointer font-medium"
-        >
-          🧩 组合
-        </button>
-        <div className="w-px h-5 bg-neutral-700" />
-        <span className="text-sm font-semibold text-white">
-          DIY Builder
-        </span>
-        <input
-          value={projectName}
-          onChange={(e) => setProjectName(e.target.value)}
-          className="px-2 py-0.5 text-sm bg-transparent border border-neutral-700 rounded text-neutral-300 focus:border-wood-600 focus:outline-none w-36"
-        />
-        <div className="flex-1" />
-        <span className="text-xs text-neutral-500">
-          型材: {profiles.length} | 角码: {brackets.length} | 螺丝: {screws.length} | 总长: {(totalLength / 1000).toFixed(1)}m
-        </span>
-        <button
-          onClick={() => (isPickingFaces ? cancelBracketFacePicking() : startBracketFacePicking())}
-          className={`px-3 py-1 text-xs rounded transition-colors cursor-pointer ${
-            isPickingFaces
-              ? 'bg-amber-500 text-black'
-              : 'bg-neutral-800 text-neutral-400 hover:text-white'
-          }`}
-          title="依次点选两个相互垂直的型材面来放置角码(或双击任意型材面直接开始)"
-        >
-          角码 · 两面对齐
-        </button>
-        <DiyExportButton />
-      </div>
+      {/* The destinations (配置器 / 自由搭建 / 组合) and the language switch
+          live in the shared header; the project name is this page's own. */}
+      <AppHeader
+        active="diy"
+        left={
+          <input
+            value={projectName}
+            onChange={(e) => setProjectName(e.target.value)}
+            className="px-2 py-0.5 text-sm bg-transparent border border-neutral-700 rounded text-neutral-300 focus:border-wood-600 focus:outline-none w-36"
+          />
+        }
+        right={
+          <>
+            <span className="text-xs text-neutral-500">
+              {t('diy.stats', {
+                profiles: profiles.length,
+                brackets: brackets.length,
+                screws: screws.length,
+                total: (totalLength / 1000).toFixed(1),
+              })}
+            </span>
+            <DiyExportButton />
+          </>
+        }
+      />
 
       {/* Main Content */}
       <div className="flex-1 flex overflow-hidden">
@@ -126,17 +110,20 @@ const DiyPage: React.FC = () => {
           style={{ width: leftW, userSelect: resizing ? 'none' : undefined }}
         >
           <div className="flex flex-shrink-0 border-b border-neutral-800 p-2 gap-1">
-            {(['structure', 'library'] as const).map((t) => (
+            {/* The callback parameter is `tab`, not `t`: it used to shadow the
+                `useT()` handle, which is how the two labels below it stayed
+                hard-coded Chinese while the rest of the page was translated. */}
+            {(['structure', 'library'] as const).map((tab) => (
               <button
-                key={t}
-                onClick={() => setLeftTab(t)}
+                key={tab}
+                onClick={() => setLeftTab(tab)}
                 className={`flex-1 px-3 py-1.5 text-xs rounded-md transition-colors cursor-pointer ${
-                  leftTab === t
+                  leftTab === tab
                     ? 'bg-wood-600 text-white'
                     : 'bg-neutral-800 text-neutral-400 hover:text-white'
                 }`}
               >
-                {t === 'structure' ? '结构树' : '元件库'}
+                {tab === 'structure' ? t('diy.leftStructure') : t('diy.leftLibrary')}
               </button>
             ))}
           </div>
@@ -160,9 +147,7 @@ const DiyPage: React.FC = () => {
           {isPickingFaces && (
             <div className="absolute top-3 left-1/2 -translate-x-1/2 z-30 pointer-events-none">
               <div className="px-4 py-2 rounded-lg bg-amber-500/90 text-black text-sm font-medium shadow-lg">
-                {bracketFaceA
-                  ? '已选第 1 面(绿色标记) — 再点选第 2 个垂直的型材面 · Esc 取消'
-                  : '点选第 1 个角码安装面(或双击任意型材面直接开始) · Esc 取消'}
+                {bracketFaceA ? t('diy.pickFace2') : t('diy.pickFace1')}
               </div>
             </div>
           )}
@@ -187,6 +172,7 @@ const DiyPage: React.FC = () => {
  * trailing 加工要求 block.
  */
 const DiyExportButton: React.FC = () => {
+  const t = useT();
   const profiles = useDiyStore((s) => s.profiles);
   const brackets = useDiyStore((s) => s.brackets);
   const screws = useDiyStore((s) => s.screws);
@@ -222,9 +208,9 @@ const DiyExportButton: React.FC = () => {
             ? 'bg-neutral-900 text-neutral-600 cursor-not-allowed'
             : 'bg-neutral-800 text-neutral-400 hover:text-white cursor-pointer'
         }`}
-        title={rows.length === 0 ? '暂无零件可导出' : `共 ${rows.length} 行`}
+        title={rows.length === 0 ? t('diy.exportNone') : t('unit.rows', { n: rows.length })}
       >
-        导出 BOM
+        {t('diy.exportBom')}
       </button>
       {open && rows.length > 0 && (
         <>
@@ -234,13 +220,13 @@ const DiyExportButton: React.FC = () => {
               onClick={() => run('csv')}
               className="w-full px-3 py-1.5 text-left text-xs text-neutral-300 hover:bg-neutral-800 transition-colors cursor-pointer"
             >
-              CSV（含加工要求）
+              {t('diy.exportCsv')}
             </button>
             <button
               onClick={() => run('txt')}
               className="w-full px-3 py-1.5 text-left text-xs text-neutral-300 hover:bg-neutral-800 transition-colors cursor-pointer"
             >
-              文本清单
+              {t('diy.exportText')}
             </button>
           </div>
         </>

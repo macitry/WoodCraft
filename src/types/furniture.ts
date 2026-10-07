@@ -279,6 +279,17 @@ export interface DiyBracket {
   enabled: boolean;
   /** Cube edge length (mm), matches profile cross-section. */
   size: number;
+  /**
+   * True when the app chose this bracket's pose and may keep it up to date.
+   *
+   * Set by the two placement paths (`jointBracket` / `placeBracket`), cleared the
+   * moment the user types a world position or rotation into the property panel —
+   * from then on the numbers are theirs. `updateProfileSize` re-fits only the
+   * `auto` ones: a resize would otherwise leave every affected bracket drawn at
+   * the old cross-section, but re-fitting a hand-placed one would silently undo
+   * the edit.
+   */
+  auto?: boolean;
 }
 
 /**
@@ -357,6 +368,14 @@ export const PROFILE_DIMS: Record<ProfileSize, number> = {
   '3030': 30,
   '4040': 40,
 };
+
+/**
+ * Every profile size, smallest first — the order a size picker should offer them.
+ *
+ * Derived from `PROFILE_DIMS` rather than written out again, so a size cannot be
+ * added to the dimension table and then be missing from the dropdowns.
+ */
+export const PROFILE_SIZES = Object.keys(PROFILE_DIMS) as ProfileSize[];
 
 /** Allowed growth directions for each profile axis (face → available directions). */
 export const GROWTH_DIRS: Record<AxisDir, Record<string, AxisDir[]>> = {
@@ -482,6 +501,20 @@ export interface BracketInstance {
   stlUrl?: string;
 }
 
-/** Default cast corner bracket STL. Configurable so the model can be swapped
- *  without touching the renderer (see also BracketInstance.stlUrl). */
-export const DEFAULT_BRACKET_STL_URL = '/Cast_Corner_Bracket.stl';
+/** The default corner bracket: the GD-Zn 28x28 angle (MayTec 1.46.204.2828.2) —
+ *  the part the 角码标准连接 kit is built around. Configurable so the part can be
+ *  swapped without touching the renderer (see also BracketInstance.stlUrl).
+ *
+ *  A bracket with no `stlUrl` of its own resolves HERE, and it has to resolve here
+ *  for TWO lookups made in different files: the mesh (`ModelLoader`) and the hole
+ *  pattern its hardware is seated on (`holePatternFor` → `jointFasteners` → the
+ *  BOM). Two fallbacks, one in each place, is how a bracket ends up drawn as one
+ *  part and drilled as another — so there is one, and `bracketStlUrl` below is the
+ *  only way to it. The cast bracket is still a catalog connector, selectable per
+ *  bracket and still the default for an UNKNOWN url (see `holePatternFor`). */
+export const DEFAULT_BRACKET_STL_URL = '/connectors/1.46.204.2828.2.stl';
+
+/** The STL a bracket renders and seats under: its own, or the default. */
+export function bracketStlUrl(bracket?: { stlUrl?: string } | null): string {
+  return bracket?.stlUrl || DEFAULT_BRACKET_STL_URL;
+}

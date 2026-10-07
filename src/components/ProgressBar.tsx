@@ -1,19 +1,23 @@
 import type { ServerProgress } from '../api/modelApi';
+import { useT } from '../i18n';
 
 interface ProgressBarProps {
   progress: ServerProgress;
 }
 
 const ProgressBar: React.FC<ProgressBarProps> = ({ progress }) => {
+  const t = useT();
   const hasTotal = progress.total > 0;
   const pct = hasTotal
     ? Math.round((progress.current / progress.total) * 100)
     : 0;
 
+  // Unknown phases (a server that learns a new one before this build does) fall
+  // through to the raw phase string rather than an empty label.
   const phaseLabel: Record<string, string> = {
-    warming: '预热中',
-    generating: '生成 CAD 模型',
-    idle: '就绪',
+    warming: t('panel.phase.warming'),
+    generating: t('panel.phase.generating'),
+    idle: t('panel.phase.idle'),
   };
 
   return (

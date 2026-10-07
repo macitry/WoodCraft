@@ -4,10 +4,14 @@ import { useDiyStore } from '../store/diyStore';
 import type { ProfileSize, AxisDir, ScrewSize } from '../types/furniture';
 import { findNearestSnap } from './DiySnap';
 import { findCornerAt } from './DiyCornerHints';
-import { fetchBracketRotation } from '../api/modelApi';
+import { bracketAtHint } from './diyCornerGeometry';
+import { DEFAULT_BRACKET_CONNECTOR_ID } from '../store/diyStore';
+import { connectorById } from './connectors';
+import { connectorLabel } from '../i18n/names';
 import { raycastScrewTarget } from './DiyScrewRaycast';
 import DiyScene from './DiyScene';
 import * as THREE from 'three';
+import { useT } from '../i18n';
 
 const M = 0.001;
 
@@ -36,11 +40,13 @@ const screwSizeFromTypes = (types: readonly string[]): ScrewSize | null => {
  *   - Screws    → raycast against profile faces, show ghost, place oriented on the face
  */
 const DiyViewer: React.FC = () => {
+  const t = useT();
   const addRootProfile = useDiyStore((s) => s.addRootProfile);
   const profiles = useDiyStore((s) => s.profiles);
   const startDraggingBracket = useDiyStore((s) => s.startDraggingBracket);
   const updateGhostBracket = useDiyStore((s) => s.updateGhostBracket);
   const placeBracket = useDiyStore((s) => s.placeBracket);
+  const placeBracketAtHint = useDiyStore((s) => s.placeBracketAtHint);
   const cancelDraggingBracket = useDiyStore((s) => s.cancelDraggingBracket);
   const startDraggingScrew = useDiyStore((s) => s.startDraggingScrew);
   const updateGhostScrew = useDiyStore((s) => s.updateGhostScrew);
@@ -56,6 +62,21 @@ const DiyViewer: React.FC = () => {
     const t = setTimeout(() => setKitHint(null), 2600);
     return () => clearTimeout(t);
   }, [kitHint]);
+
+  // The armed connector changes what a corner-click drops, so it has to be
+  // visible somewhere the user is looking — the corner ghosts themselves say
+  // WHERE, this says WHAT. Escape puts it back down, the same key that cancels
+  // every other DIY gesture.
+  const armedConnectorId = useDiyStore((s) => s.armedConnectorId);
+  const armConnector = useDiyStore((s) => s.armConnector);
+  useEffect(() => {
+    if (!armedConnectorId) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') armConnector(null);
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [armedConnectorId, armConnector]);
 
   const containerRef = useRef<HTMLDivElement>(null);
   const cameraRef = useRef<THREE.PerspectiveCamera | null>(null);
@@ -175,48 +196,25 @@ const DiyViewer: React.FC = () => {
    * fails. `connectorId` (from the drop payload) stamps which catalog entry
    * the new bracket renders.
    */
-  const placeBracketAtGhost = useCallback(async (connectorId?: string) => {
+  const placeBracketAtGhost = useCallback((connectorId?: string) => {
     const ghost = useDiyStore.getState().ghostBracket;
-    const patch = { connectorId: connectorId || 'corner_bracket' };
-    if (!ghost) {
-      placeBracket(patch);
-      return;
-    }
+    if (!ghost) return;
     const corner = findCornerAt(profilesRef.current, ghost.position);
-    if (!corner) {
-      placeBracket(patch);
+    if (corner) {
+      // Land exactly on the joint corner, so position and orientation always
+      // come from the same corner. This used to ask the backend for the same
+      // rotation `eulerFromNormals` computes locally — a network round-trip
+      // whose only other contribution was a `catch` that placed an unrotated
+      // bracket, i.e. a bracket at an orientation nobody asked for. The dev
+      // comparison harness in DiyProfileRenderer already asserts the two agree.
+      placeBracketAtHint(corner, connectorId);
       return;
     }
-    try {
-      const res = await fetchBracketRotation(
-        [corner.faceA.x, corner.faceA.y, corner.faceA.z],
-        [corner.faceB.x, corner.faceB.y, corner.faceB.z],
-      );
-      // Backend returns the rotation as row-major; THREE's Matrix4.set is
-      // column-major, so transpose on the way in.
-      const m = new THREE.Matrix4().set(
-        res.rotation_matrix[0][0], res.rotation_matrix[1][0], res.rotation_matrix[2][0], 0,
-        res.rotation_matrix[0][1], res.rotation_matrix[1][1], res.rotation_matrix[2][1], 0,
-        res.rotation_matrix[0][2], res.rotation_matrix[1][2], res.rotation_matrix[2][2], 0,
-        0, 0, 0, 1,
-      );
-      const euler = new THREE.Euler().setFromRotationMatrix(m, 'XYZ');
-      placeBracket({
-        ...patch,
-        // Land exactly on the joint corner the rotation was computed for, so
-        // position and orientation always come from the same corner.
-        position: corner.position,
-        rotation: {
-          roll: THREE.MathUtils.radToDeg(euler.x),
-          pitch: THREE.MathUtils.radToDeg(euler.y),
-          yaw: THREE.MathUtils.radToDeg(euler.z),
-        },
-        connectedProfiles: [corner.profileIdA, corner.profileIdB],
-      });
-    } catch {
-      placeBracket(patch);
-    }
-  }, [placeBracket]);
+    // The ghost follows the pointer over the whole profile, not just its
+    // corners, so a drop on a bare face has no joint to orient to. That case
+    // still places the unrotated bracket it always did.
+    placeBracket({ connectorId: connectorId || DEFAULT_BRACKET_CONNECTOR_ID });
+  }, [placeBracket, placeBracketAtHint]);
 
   const handleDrop = useCallback((e: DragEvent) => {
     e.preventDefault();
@@ -231,15 +229,25 @@ const DiyViewer: React.FC = () => {
       const corner = ghost ? findCornerAt(profilesRef.current, ghost.position) : null;
       if (!corner) {
         cancelDraggingBracket();
-        setKitHint('组合只能放在型材角点上');
+        setKitHint(t('diy.kitOnlyOnCorner'));
         return;
       }
-      void (async () => {
-        await placeBracketAtGhost();
-        // placeBracket sets selectedBracketId to the bracket it just made.
-        const made = useDiyStore.getState().selectedBracketId;
-        if (!made || !bindKit(kitId, made)) {
-          setKitHint('组合放置失败');
+      void (() => {
+        // A kit hangs off a BRACKET, so on a corner that already carries one the
+        // kit binds to that bracket — placing first would be wrong twice over:
+        // `placeBracketAtHint` now swaps the occupant's part rather than adding a
+        // bracket, and the part it swaps in is the default, i.e. a kit drop would
+        // silently replace the connector the user chose.
+        let target = bracketAtHint(useDiyStore.getState().brackets, corner)?.id;
+        if (!target) {
+          // Synchronous now that placement resolves its rotation locally — there
+          // is nothing left to await. The bracket is in the store by the next line.
+          placeBracketAtGhost();
+          // Placing sets selectedBracketId to the bracket it just made.
+          target = useDiyStore.getState().selectedBracketId ?? undefined;
+        }
+        if (!target || !bindKit(kitId, target)) {
+          setKitHint(t('diy.kitPlaceFailed'));
           return;
         }
         setKitHint(null);
@@ -279,10 +287,9 @@ const DiyViewer: React.FC = () => {
       // Snap to 10 mm grid, place vertical, bottom on ground
       const px = Math.round(hit.x * 1000 / 10) * 10;
       const pz = Math.round(hit.z * 1000 / 10) * 10;
-      const dim = ({ '2020': 20, '3030': 30, '4040': 40 } as Record<string, number>)[size] ?? 30;
       addRootProfile(size, { x: px, y: 50, z: pz }, 'Y' as AxisDir);
     }
-  }, [addRootProfile, placeBracketAtGhost, placeScrew, getMouseRay, bindKit, cancelDraggingBracket]);
+  }, [addRootProfile, placeBracketAtGhost, placeScrew, getMouseRay, bindKit, cancelDraggingBracket, t]);
 
   return (
     <div
@@ -303,9 +310,21 @@ const DiyViewer: React.FC = () => {
       {/* Drop hint */}
       <div className="absolute inset-0 pointer-events-none flex items-center justify-center z-10">
         <div className="text-neutral-700 text-sm">
-          Drag profile or bracket from library here
+          {t('diy.dropHint')}
         </div>
       </div>
+
+      {/* Armed-connector banner. The ghosts show WHERE it will land; this says
+          WHAT is in hand, so the click target is never a guess. */}
+      {armedConnectorId && (
+        <div
+          data-diy-armed={armedConnectorId}
+          className="absolute top-3 left-1/2 -translate-x-1/2 z-20 px-3 py-1.5 rounded
+            bg-wood-700/85 border border-wood-500 text-wood-50 text-xs pointer-events-none"
+        >
+          {t('diy.armBanner', { name: connectorLabel(connectorById(armedConnectorId)) })}
+        </div>
+      )}
 
       {/* Kit-drop toast */}
       {kitHint && (

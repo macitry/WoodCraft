@@ -1,4 +1,6 @@
 import { useModelStore } from '../store/modelStore';
+import { useT } from '../i18n';
+import { materialName, partName, partTypeName } from '../i18n/names';
 import type { Component } from '../types/furniture';
 
 /**
@@ -6,6 +8,7 @@ import type { Component } from '../types/furniture';
  * Displays material, dimensions, and mass information.
  */
 const ModelInfo: React.FC = () => {
+  const t = useT();
   const model = useModelStore((s) => s.model);
   const selectedComponentId = useModelStore((s) => s.selectedComponentId);
 
@@ -23,13 +26,9 @@ const ModelInfo: React.FC = () => {
     <div className="h-10 px-4 flex items-center gap-6 text-xs border-t border-neutral-800 bg-neutral-900/80 backdrop-blur-sm">
       {/* Model overview */}
       <div className="flex items-center gap-4 text-neutral-400">
-        <span>
-          {width} × {depth} × {height} mm
-        </span>
+        <span>{t('panel.dims', { w: width, d: depth, h: height })}</span>
         <span className="text-neutral-700">|</span>
-        <span>
-          {model.components.length} parts
-        </span>
+        <span>{t('panel.partCount', { n: model.components.length })}</span>
       </div>
 
       {/* Selected part info */}
@@ -37,20 +36,24 @@ const ModelInfo: React.FC = () => {
 
       {selectedPart ? (
         <div className="flex items-center gap-4 text-neutral-300">
-          <span className="text-neutral-600">Selected:</span>
-          <span className="text-wood-400 font-medium">{selectedPart.name}</span>
+          <span className="text-neutral-600">{t('panel.selected')}</span>
+          <span className="text-wood-400 font-medium">
+            {partName(selectedPart.id, selectedPart.name)}
+          </span>
           {selectedPart.material && (
             <>
               <span className="text-neutral-700">|</span>
               <span className="text-neutral-400">
-                {selectedPart.material}
+                {materialName(selectedPart.material, selectedPart.material)}
               </span>
             </>
           )}
           {selectedPart.partType && (
             <>
               <span className="text-neutral-700">|</span>
-              <span className="text-neutral-500">{selectedPart.partType}</span>
+              <span className="text-neutral-500">
+                {partTypeName(selectedPart.partType, selectedPart.partType)}
+              </span>
             </>
           )}
           <button
@@ -61,9 +64,7 @@ const ModelInfo: React.FC = () => {
           </button>
         </div>
       ) : (
-        <span className="text-neutral-600 text-xs">
-          Click a part in the 3D view or component tree to inspect
-        </span>
+        <span className="text-neutral-600 text-xs">{t('panel.inspectHint')}</span>
       )}
     </div>
   );

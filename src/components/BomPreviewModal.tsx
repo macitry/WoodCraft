@@ -1,9 +1,11 @@
 import { useEffect, useMemo, type FC } from 'react';
 import { useModelStore } from '../store/modelStore';
 import { computeBom, bomToCsv, bomOpsFrom, type BomRow } from '../utils/bomExport';
-import { TEMPLATE_LAYOUTS } from '../types/furniture';
+import { TEMPLATE_LAYOUTS, bracketStlUrl } from '../types/furniture';
 import { accessoryKitById } from '../utils/accessoryKits';
 import { useKitLayoutStore } from '../store/kitLayoutStore';
+import { useT } from '../i18n';
+import { materialName } from '../i18n/names';
 
 interface BomPreviewModalProps {
   onClose: () => void;
@@ -15,6 +17,7 @@ interface BomPreviewModalProps {
  * always matches the current frame params + bracket set.
  */
 const BomPreviewModal: FC<BomPreviewModalProps> = ({ onClose }) => {
+  const t = useT();
   const model = useModelStore((s) => s.model);
   const currentParams = useModelStore((s) => s.currentParams);
   const brackets = useModelStore((s) => s.brackets);
@@ -49,8 +52,15 @@ const BomPreviewModal: FC<BomPreviewModalProps> = ({ onClose }) => {
       enabled.length,
       // One stlUrl per enabled bracket, in the order they are drawn: the export
       // must resolve each joint through the connector the 3D used, or a model
-      // mixing connectors would export hardware nobody drew.
-      kit ? { kit, layouts: kitLayouts, jointStlUrls: enabled.map((b) => b.stlUrl) } : null,
+      // mixing connectors would export hardware nobody drew. `bracketStlUrl` is
+      // that same resolution — a bracket with no `stlUrl` of its own is drawn as
+      // the default bracket, so it must be exported as one too.
+      //
+      // Passed whenever there is a bracket, NOT only when a kit is selected: the
+      // joints describe the brackets, and the brackets are on the desk and
+      // orderable whether or not anything is bolted through them. `kit` rides
+      // along and is genuinely optional.
+      enabled.length ? { kit, layouts: kitLayouts, jointStlUrls: enabled.map(bracketStlUrl) } : null,
     );
   }, [model, currentParams, brackets, kit, kitLayouts]);
 
@@ -60,6 +70,11 @@ const BomPreviewModal: FC<BomPreviewModalProps> = ({ onClose }) => {
 
   const totalQty = rows.reduce((s, r) => s + r.qty, 0);
   const dims = `${model.parameters.find((p) => p.id === 'width')?.value ?? 1200} × ${model.parameters.find((p) => p.id === 'depth')?.value ?? 600} mm`;
+  // Same gate as the CSV: the 料号 column appears only when a row actually has a
+  // number. A model with no kit and no bracket connector has none, and an empty
+  // column full of dashes is a column of noise pretending to be data. Kept in step
+  // with bomToCsv by both asking the rows, not by a flag passed between them.
+  const hasArticle = rows.some((r) => r.articleNo);
 
   const handleExport = () => {
     const csv = bomToCsv(rows, ops);
@@ -80,13 +95,13 @@ const BomPreviewModal: FC<BomPreviewModalProps> = ({ onClose }) => {
       onClick={onClose}
     >
       <div
-        className="w-[600px] max-w-full max-h-[82vh] flex flex-col bg-neutral-900 border border-neutral-700 rounded-xl shadow-2xl"
+        className={`${hasArticle ? 'w-[720px]' : 'w-[600px]'} max-w-full max-h-[82vh] flex flex-col bg-neutral-900 border border-neutral-700 rounded-xl shadow-2xl`}
         onClick={(e) => e.stopPropagation()}
       >
         {/* Header */}
         <div className="px-5 py-3 border-b border-neutral-800 flex items-center justify-between">
           <div>
-            <h2 className="text-sm font-semibold text-white">📋 BOM 物料清单</h2>
+            <h2 className="text-sm font-semibold text-white">{t('panel.bomTitle')}</h2>
             <p className="text-[10px] text-neutral-500 mt-0.5">
               {model.name} · {dims}
             </p>
@@ -94,7 +109,7 @@ const BomPreviewModal: FC<BomPreviewModalProps> = ({ onClose }) => {
           <button
             onClick={onClose}
             className="w-7 h-7 flex items-center justify-center rounded-md text-neutral-500 hover:text-white hover:bg-neutral-800 transition-colors cursor-pointer"
-            title="关闭"
+            title={t('common.close')}
           >
             ✕
           </button>
@@ -105,11 +120,12 @@ const BomPreviewModal: FC<BomPreviewModalProps> = ({ onClose }) => {
           <table className="w-full text-xs">
             <thead>
               <tr className="text-left text-neutral-500 border-b border-neutral-800">
-                <th className="py-2 pr-2 font-medium">零件名称</th>
-                <th className="py-2 pr-2 font-medium">材料</th>
-                <th className="py-2 pr-2 font-medium">型材</th>
-                <th className="py-2 pr-2 font-medium text-right">长度 (mm)</th>
-                <th className="py-2 font-medium text-right">数量</th>
+                <th className="py-2 pr-2 font-medium">{t('panel.colPart')}</th>
+                <th className="py-2 pr-2 font-medium">{t('panel.colMaterial')}</th>
+                <th className="py-2 pr-2 font-medium">{t('panel.colProfile')}</th>
+                {hasArticle && <th className="py-2 pr-2 font-medium">{t('panel.colArticle')}</th>}
+                <th className="py-2 pr-2 font-medium text-right">{t('panel.colLength')}</th>
+                <th className="py-2 font-medium text-right">{t('panel.colQty')}</th>
               </tr>
             </thead>
             <tbody>
@@ -118,8 +134,20 @@ const BomPreviewModal: FC<BomPreviewModalProps> = ({ onClose }) => {
                 // table (bolt + nut), so type alone collides.
                 <tr key={`${r.type}-${r.part}-${i}`} className="border-b border-neutral-800/40">
                   <td className="py-2 pr-2 text-neutral-200">{r.part}</td>
-                  <td className="py-2 pr-2 text-neutral-400">{r.material}</td>
+                  <td className="py-2 pr-2 text-neutral-400">
+                    {materialName(r.material, r.material)}
+                  </td>
                   <td className="py-2 pr-2 text-neutral-400">{r.profile}</td>
+                  {hasArticle && (
+                    <td
+                      className="py-2 pr-2 font-mono text-[10px] text-amber-200/70 select-all"
+                      // Selectable and monospaced: ordering is a copy-paste of these
+                      // digits, and a proportional font makes 1 vs l a guess.
+                      title={r.articleNo ? t('panel.articleHint') : t('panel.articleMissing')}
+                    >
+                      {r.articleNo ?? '—'}
+                    </td>
+                  )}
                   <td className="py-2 pr-2 text-neutral-300 text-right tabular-nums">
                     {r.lengthMm ? r.lengthMm : '—'}
                   </td>
@@ -131,7 +159,7 @@ const BomPreviewModal: FC<BomPreviewModalProps> = ({ onClose }) => {
 
           {ops.length > 0 && (
             <div className="mt-4 pt-3 border-t border-neutral-800">
-              <p className="text-[10px] uppercase tracking-wider text-neutral-500 font-medium">加工要求</p>
+              <p className="text-[10px] uppercase tracking-wider text-neutral-500 font-medium">{t('panel.ops')}</p>
               <ul className="mt-1 space-y-0.5">
                 {ops.map((op) => (
                   <li key={op} className="text-[11px] text-amber-500/90">⚙ {op}</li>
@@ -144,21 +172,21 @@ const BomPreviewModal: FC<BomPreviewModalProps> = ({ onClose }) => {
         {/* Footer */}
         <div className="px-5 py-3 border-t border-neutral-800 flex items-center justify-between">
           <span className="text-xs text-neutral-500">
-            共 <span className="text-neutral-300 font-medium">{totalQty}</span> 件
+            {t('panel.bomTotal', { n: totalQty })}
           </span>
           <div className="flex gap-2">
             <button
               onClick={onClose}
               className="px-3 py-1.5 text-xs rounded-md bg-neutral-800 hover:bg-neutral-700 text-neutral-300 transition-colors cursor-pointer"
             >
-              关闭
+              {t('common.close')}
             </button>
             <button
               onClick={handleExport}
               className="px-3 py-1.5 text-xs rounded-md bg-wood-600 hover:bg-wood-500 text-white transition-colors cursor-pointer"
-              title="导出 BOM 为 CSV"
+              title={t('panel.exportCsvHint')}
             >
-              📤 导出 CSV
+              {t('panel.exportCsv')}
             </button>
           </div>
         </div>

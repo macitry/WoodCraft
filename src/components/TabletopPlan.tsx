@@ -3,6 +3,9 @@ import { useModelStore, captureHoleSnapshot, commitHoleEdit } from '../store/mod
 import type { TabletopHole, HolePatch } from '../types/furniture';
 import { DEFAULT_HOLE_SIZES, sampleHolePerimeterCCW, holeWorldBounds, holeFeaturePoints, nextHoleId } from '../utils/holeGeometry';
 import { HOLE_TEMPLATES, templateFitReason, holesFitBoard, resolveTemplateHoles, type HoleTemplate } from '../utils/holeTemplates';
+import { useT } from '../i18n';
+import { holeTemplateName, holeTemplateDescription } from '../i18n/names';
+import type { PlanKey } from '../i18n/dict/plan';
 
 /**
  * 2D top-down plan view of the tabletop with zoom/pan, a mode toolbar
@@ -19,8 +22,19 @@ import { HOLE_TEMPLATES, templateFitReason, holesFitBoard, resolveTemplateHoles,
 
 type ToolId = 'select' | 'addCircle' | 'addRect' | 'addSlot' | 'measure';
 
+/** Solver-frame side of a projected beam; the id is internal, so the on-canvas
+ *  label goes through BEAM_LABEL_KEY rather than showing the raw id. */
+type BeamSide = 'front' | 'back' | 'left' | 'right';
+
+const BEAM_LABEL_KEY: Record<BeamSide, PlanKey> = {
+  front: 'plan.beam.front',
+  back: 'plan.beam.back',
+  left: 'plan.beam.left',
+  right: 'plan.beam.right',
+};
+
 interface BeamLine {
-  name: string;
+  name: BeamSide;
   x1: number; y1: number;
   x2: number; y2: number;
 }
@@ -54,12 +68,12 @@ const EDGE_WARN_THRESHOLD = 50;
 const ALIGN_TOLERANCE = 2; // mm
 const SNAP_TOLLERANCE_MM = 8; // magnet radius for geometry snapping
 
-const TOOLS: { id: ToolId; label: string; title: string }[] = [
-  { id: 'select', label: '选择', title: '选中/移动孔 · 拖动空白平移 · 单击空白取消' },
-  { id: 'addCircle', label: '圆孔', title: '单击放置圆孔（可连续）· Esc 退出' },
-  { id: 'addRect', label: '方孔', title: '单击放置方孔/圆角方孔（可连续）· Esc 退出' },
-  { id: 'addSlot', label: '腰孔', title: '单击放置可旋转腰孔（可连续）· Esc 退出' },
-  { id: 'measure', label: '测量', title: '吸附孔心/孔特征点/板边/角 → 水平垂直锁定 → 点第二点记录 · Esc 退出' },
+const TOOLS: { id: ToolId; labelKey: PlanKey; titleKey: PlanKey }[] = [
+  { id: 'select', labelKey: 'plan.tool.select', titleKey: 'plan.tool.selectTitle' },
+  { id: 'addCircle', labelKey: 'plan.tool.addCircle', titleKey: 'plan.tool.addCircleTitle' },
+  { id: 'addRect', labelKey: 'plan.tool.addRect', titleKey: 'plan.tool.addRectTitle' },
+  { id: 'addSlot', labelKey: 'plan.tool.addSlot', titleKey: 'plan.tool.addSlotTitle' },
+  { id: 'measure', labelKey: 'plan.tool.measure', titleKey: 'plan.tool.measureTitle' },
 ];
 
 let _annoId = 0;
@@ -223,6 +237,7 @@ function holeSvgPathD(hole: TabletopHole, toSvgY: (y: number) => number): string
 // ---------------------------------------------------------------------------
 
 const TabletopPlan: React.FC = () => {
+  const t = useT();
   const model = useModelStore((s) => s.model);
   const svgRef = useRef<SVGSVGElement>(null);
 
@@ -350,7 +365,7 @@ const TabletopPlan: React.FC = () => {
         };
       });
     },
-    [svgW, svgH],
+    [svgW],
   );
 
   // ---- beam projections (solver → display fold; front = +Y shown at top) ----
@@ -752,7 +767,7 @@ const TabletopPlan: React.FC = () => {
   if (!model) return null;
 
   const zoomPct = Math.round((svgW / viewBox.w) * 100);
-  const gridLabel = snapGrid === 0 ? 'Off' : `${snapGrid}mm`;
+  const gridLabel = snapGrid === 0 ? t('plan.gridOff') : `${snapGrid}mm`;
   const cursor = isPanning ? 'grabbing' : isAddTool || activeTool === 'measure' ? 'crosshair' : 'default';
 
   // Rotate-handle world point (local (0, +halfTop)) for rect/slot.
@@ -775,37 +790,37 @@ const TabletopPlan: React.FC = () => {
       {/* ---- Toolbar ---- */}
       <div className="px-3 py-2 border-b border-neutral-800 flex-shrink-0 flex items-center gap-3 flex-wrap">
         <div className="flex items-center gap-2">
-          <p className="text-xs uppercase tracking-wider text-neutral-500 font-medium">平面图</p>
+          <p className="text-xs uppercase tracking-wider text-neutral-500 font-medium">{t('view.plan')}</p>
           <p className="text-sm text-neutral-400 font-mono">
             {width}×{depth}×{thickness}
-            <span className="text-neutral-600 text-xs ml-1.5">{holes.length} 孔</span>
+            <span className="text-neutral-600 text-xs ml-1.5">{t('plan.holeCount', { n: holes.length })}</span>
             {managed && (
               <span className="ml-1.5 text-[10px] text-amber-200/80 bg-amber-500/10 border border-amber-500/30 rounded px-1 py-px align-middle">
-                模板
+                {t('plan.template')}
               </span>
             )}
           </p>
         </div>
 
         <div className="flex items-center rounded-md bg-neutral-900 border border-neutral-800 p-0.5">
-          {TOOLS.map((t) => {
-            const isAdd = t.id.startsWith('add');
+          {TOOLS.map((tool) => {
+            const isAdd = tool.id.startsWith('add');
             const locked = managed && isAdd;
             return (
               <button
-                key={t.id}
-                title={locked ? '模板已锁定：需手动加孔请先转为自由副本或删除孔' : t.title}
+                key={tool.id}
+                title={locked ? t('plan.toolLockedHint') : t(tool.titleKey)}
                 disabled={locked}
-                onClick={() => switchTool(t.id)}
+                onClick={() => switchTool(tool.id)}
                 className={`px-2.5 py-1 text-xs rounded transition-colors ${
                   locked
                     ? 'text-neutral-600 cursor-not-allowed'
-                    : activeTool === t.id
+                    : activeTool === tool.id
                       ? 'bg-wood-600 text-white'
                       : 'text-neutral-400 hover:text-white hover:bg-neutral-800 cursor-pointer'
                 }`}
               >
-                {t.label}
+                {t(tool.labelKey)}
                 {locked && <span className="ml-1 text-[9px]">🔒</span>}
               </button>
             );
@@ -817,7 +832,7 @@ const TabletopPlan: React.FC = () => {
             aria-haspopup="menu"
             aria-expanded={templateMenuOpen}
             onClick={() => setTemplateMenuOpen((v) => !v)}
-            title={managed ? '模板已锁定：孔随桌板尺寸自适应 · 可替换模板或转为自由副本' : '插入预设开孔模板'}
+            title={managed ? t('plan.templateManagedHint') : t('plan.insertTemplateHint')}
             className={`flex items-center gap-1.5 px-2.5 py-1 text-xs rounded-md transition-colors cursor-pointer border ${
               templateMenuOpen
                 ? 'bg-wood-600 text-white border-wood-700'
@@ -826,7 +841,7 @@ const TabletopPlan: React.FC = () => {
                   : 'bg-neutral-900 text-neutral-300 border-neutral-700 hover:border-neutral-600 hover:text-white'
             }`}
           >
-            {managed ? '模板 ✓' : '模板'} <span className="text-[10px] opacity-70">▼</span>
+            {managed ? t('plan.templateApplied') : t('plan.template')} <span className="text-[10px] opacity-70">▼</span>
           </button>
           {templateMenuOpen && (
             <div
@@ -835,25 +850,29 @@ const TabletopPlan: React.FC = () => {
             >
               {managed && (
                 <div className="px-3 py-2 border-b border-neutral-800 bg-neutral-800/40">
-                  <div className="text-[11px] text-amber-200/90">模板已锁定 · 一块板仅一套</div>
+                  <div className="text-[11px] text-amber-200/90">{t('plan.templateManagedTitle')}</div>
                   <div className="text-[10px] text-neutral-500 mt-0.5 leading-snug">
-                    {holes.length} 个孔随桌板尺寸自适应 · 手动开孔已关闭
+                    {t('plan.templateManagedDesc', { n: holes.length })}
                   </div>
                 </div>
               )}
-              {HOLE_TEMPLATES.map((t) => {
-                const reason = templateFitReason(t, width, depth);
+              {HOLE_TEMPLATES.map((tpl) => {
+                const reason = templateFitReason(tpl, width, depth);
                 return (
                   <button
-                    key={t.id}
+                    key={tpl.id}
                     role="menuitem"
                     disabled={!!reason}
-                    onClick={() => applyTemplate(t)}
-                    title={reason ? undefined : t.description}
+                    onClick={() => applyTemplate(tpl)}
+                    title={reason ? undefined : holeTemplateDescription(tpl.id, tpl.description)}
                     className="w-full px-3 py-2.5 text-left hover:bg-neutral-800 transition-colors flex flex-col gap-0.5 disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-neutral-900 cursor-pointer"
                   >
-                    <span className="text-white text-sm">{t.name}</span>
-                    <span className="text-neutral-500 text-[11px]">{reason ?? t.description}</span>
+                    <span className="text-white text-sm">{holeTemplateName(tpl.id, tpl.name)}</span>
+                    <span className="text-neutral-500 text-[11px]">
+                      {reason
+                        ? t('plan.tplTooSmall', { minW: tpl.minWidth, minD: tpl.minDepth, w: width, d: depth })
+                        : holeTemplateDescription(tpl.id, tpl.description)}
+                    </span>
                   </button>
                 );
               })}
@@ -866,15 +885,15 @@ const TabletopPlan: React.FC = () => {
                       actions.detachAnchors();
                       setTemplateMenuOpen(false);
                     }}
-                    title="解除模板锁定：当前孔变成普通可编辑孔，之后可自由手动加孔"
+                    title={t('plan.detachTemplateHint')}
                     className="w-full px-3 py-2.5 text-left hover:bg-neutral-800 transition-colors flex items-center gap-1.5 cursor-pointer text-red-300"
                   >
-                    <span>✂ 转为自由副本（脱离模板）</span>
+                    <span>{t('plan.detachTemplate')}</span>
                   </button>
                 </>
               ) : holes.length > 0 ? (
                 <div className="px-3 pb-2 pt-1.5 text-[10px] text-neutral-600 border-t border-neutral-800">
-                  套用会先清空当前已布孔（一步可撤销）
+                  {t('plan.applyClears')}
                 </div>
               ) : null}
             </div>
@@ -887,18 +906,18 @@ const TabletopPlan: React.FC = () => {
           <button
             disabled={!canUndo}
             onClick={() => actions.undoHoles()}
-            title="撤销 (Ctrl+Z)"
+            title={t('plan.undoHint')}
             className="px-2 py-1 rounded bg-neutral-800 text-neutral-300 hover:bg-neutral-700 transition-colors cursor-pointer disabled:opacity-30 disabled:cursor-default"
           >
-            ↩ 撤销
+            {'↩ '}{t('common.undo')}
           </button>
           <button
             disabled={!canRedo}
             onClick={() => actions.redoHoles()}
-            title="重做 (Ctrl+Shift+Z)"
+            title={t('plan.redoHint')}
             className="px-2 py-1 rounded bg-neutral-800 text-neutral-300 hover:bg-neutral-700 transition-colors cursor-pointer disabled:opacity-30 disabled:cursor-default"
           >
-            ↪ 重做
+            {'↪ '}{t('common.redo')}
           </button>
           <button
             onClick={() => actions.setAnnotationsVisible(!annotationsVisible)}
@@ -909,26 +928,26 @@ const TabletopPlan: React.FC = () => {
                   : 'bg-neutral-800 text-neutral-400 hover:text-white'
                 : 'bg-neutral-800 text-neutral-600 cursor-default'
             }`}
-            title="测量标注 显示/隐藏"
+            title={t('plan.annotateHint')}
           >
-            标注{annotations.length > 0 ? ` ${annotations.length}` : ''}
+            {t('plan.annotate')}{annotations.length > 0 ? ` ${annotations.length}` : ''}
           </button>
           <button
             className={`px-2 py-1 rounded transition-colors cursor-pointer font-mono ${
               snapGrid > 0 ? 'bg-blue-800 text-blue-200' : 'bg-neutral-800 text-neutral-400 hover:bg-neutral-700'
             }`}
             onClick={() => setSnapGrid((g) => (g === 0 ? 10 : g === 10 ? 50 : 0))}
-            title="对齐网格 (G 键)"
+            title={t('plan.gridHint')}
           >
-            Grid {gridLabel}
+            {t('plan.gridLabel', { grid: gridLabel })}
           </button>
           <span className="text-neutral-500 w-9 text-right font-mono">{zoomPct}%</span>
           <button
             className="px-2 py-1 text-neutral-400 bg-neutral-800 rounded hover:bg-neutral-700 transition-colors cursor-pointer"
             onClick={resetView}
-            title="适配视图"
+            title={t('plan.fitHint')}
           >
-            适配
+            {t('plan.fit')}
           </button>
         </div>
       </div>
@@ -993,7 +1012,7 @@ const TabletopPlan: React.FC = () => {
                 <line x1={l.x1} y1={l.y1} x2={l.x2} y2={l.y2} stroke={COLORS.profileStroke} strokeWidth="0.5" strokeDasharray="3 3" opacity="0.4" />
                 <rect x={(l.x1 + l.x2) / 2 - 14} y={(l.y1 + l.y2) / 2 - 6} width="28" height="12" rx="3" fill="#1a1a2e" fillOpacity="0.85" />
                 <text x={(l.x1 + l.x2) / 2} y={(l.y1 + l.y2) / 2 + 4} textAnchor="middle" fontSize="6" fill={COLORS.profileStroke}>
-                  {l.name}
+                  {t(BEAM_LABEL_KEY[l.name])}
                 </text>
               </g>
             );
@@ -1195,9 +1214,9 @@ const TabletopPlan: React.FC = () => {
             <div className="px-3 py-1.5 rounded-full bg-neutral-800/90 border border-neutral-700 text-[11px] text-neutral-300 shadow-lg whitespace-nowrap">
               {activeTool === 'measure'
                 ? measureStart
-                  ? '单击第二点记录距离（吸附孔特征点/板边/水平垂直）· Esc 退出'
-                  : '单击第一点（吸附孔心/孔特征点/板边）'
-                : '在台面上单击放置（吸附网格/孔心）· Esc 退出'}
+                  ? t('plan.measureHint2')
+                  : t('plan.measureHint1')
+                : t('plan.placeHint')}
             </div>
           </div>
         )}
@@ -1206,16 +1225,16 @@ const TabletopPlan: React.FC = () => {
       {/* ---- Footer ---- */}
       <div className="px-4 py-2 border-t border-neutral-800 flex-shrink-0 flex items-center justify-between gap-4">
         <div className="flex flex-wrap gap-3 text-[10px] text-neutral-500">
-          <span className="flex items-center gap-1"><span className="w-3 h-3 rounded-sm bg-wood-400/30 border border-wood-600" /> 台面</span>
-          <span className="flex items-center gap-1"><span className="w-3 h-3 rounded-sm bg-[#6b7b8d]/40 border border-[#8899aa]" /> 型材投影</span>
-          <span className="flex items-center gap-1"><span className="w-3 h-3 rounded-full bg-red-400/50 border border-red-400" /> 开孔</span>
-          <span className="flex items-center gap-1"><span className="w-3 h-3 rounded-full border border-[#c4b5fd]" /> 测量标注</span>
+          <span className="flex items-center gap-1"><span className="w-3 h-3 rounded-sm bg-wood-400/30 border border-wood-600" /> {t('plan.legendTop')}</span>
+          <span className="flex items-center gap-1"><span className="w-3 h-3 rounded-sm bg-[#6b7b8d]/40 border border-[#8899aa]" /> {t('plan.legendProfile')}</span>
+          <span className="flex items-center gap-1"><span className="w-3 h-3 rounded-full bg-red-400/50 border border-red-400" /> {t('plan.legendHole')}</span>
+          <span className="flex items-center gap-1"><span className="w-3 h-3 rounded-full border border-[#c4b5fd]" /> {t('plan.legendMeasure')}</span>
           {snapGrid > 0 && (
-            <span className="flex items-center gap-1 text-green-400"><span className="w-1.5 h-1.5 rounded-full bg-green-400" /> Grid {snapGrid}mm</span>
+            <span className="flex items-center gap-1 text-green-400"><span className="w-1.5 h-1.5 rounded-full bg-green-400" /> {t('plan.gridLabel', { grid: `${snapGrid}mm` })}</span>
           )}
         </div>
         <div className="text-[10px] text-neutral-600 text-right leading-relaxed">
-          方向键 移动(Shift 10mm) · +/- 主尺寸 · R 旋转15° · G 网格 · Del 删除 · Esc 返回 · Ctrl+Z 撤销
+          {t('plan.keyboardHelp')}
         </div>
       </div>
     </div>

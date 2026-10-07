@@ -11,7 +11,7 @@ import type { DiyConnector } from '../diy/connectors';
 import type { ProfileSize, ScrewSize } from '../types/furniture';
 import { DEFAULT_BRACKET_STL_URL, PROFILE_DIMS } from '../types/furniture';
 import {
-  ACCESSORY_KITS,
+  JOINT_KITS,
   SCREW_SERIES,
   accessoryKitById,
   jointFasteners,
@@ -21,6 +21,8 @@ import {
 } from '../utils/accessoryKits';
 import type { AccessoryKit, HardwareSpec, KitLayoutMap } from '../utils/accessoryKits';
 import { useKitLayoutFor, useKitLayoutStore } from '../store/kitLayoutStore';
+import { useT, hasKey } from '../i18n';
+import { connectorLabel, connectorDesc, hardwareName, kitName, kitDesc } from '../i18n/names';
 
 // ---------------------------------------------------------------------------
 // Data
@@ -38,27 +40,33 @@ const KIND_ICON: Record<DiyConnector['kind'], string> = {
   alu: '└┘',
   pa: '⊿',
   steel: '⌐',
+  // Die-cast zinc, the same └┘ shape as the cast aluminium brackets it sits beside
+  // — a cover IS an angle from the outside, which is the entire point of one.
+  zinc: '└┘',
 };
 
 /** One card per thread size. The drag payload is a size, so a dropped screw
  *  starts on the default standard (DIN 7984 薄头) — its family and length are
  *  then editable in the property panel, which is where the full catalog of
  *  lengths is on offer. */
-const SCREW_SIZES: { id: ScrewSize; label: string; desc: string }[] = [
-  { id: 'M4', label: 'M4', desc: 'Ø4 · 内六角薄头' },
-  { id: 'M5', label: 'M5', desc: 'Ø5 · 内六角薄头' },
-  { id: 'M6', label: 'M6', desc: 'Ø6 · 内六角薄头' },
+const SCREW_SIZES: { id: ScrewSize; label: string }[] = [
+  { id: 'M4', label: 'M4' },
+  { id: 'M5', label: 'M5' },
+  { id: 'M6', label: 'M6' },
 ];
 
 type TabId = 'profiles' | 'connectors' | 'screws' | 'kits';
 
 /**
- * Kits offered in the DIY builder. Only joint-scope kits: a frame-scope kit
- * (桌板固定) budgets screws for a whole tabletop, and the DIY builder has no
- * tabletop — binding one to a corner would invent screws that belong to
- * nothing. The main configurator, which does have a tabletop, offers all four.
+ * Kits offered in the DIY builder: the joint-scope ones, from the shared list.
+ *
+ * A frame-scope kit (桌板固定) budgets screws for a whole tabletop and the DIY
+ * builder has no tabletop, so binding one to a corner would invent screws that
+ * belong to nothing. The main configurator, which does have a tabletop, offers
+ * all four. The bracket's property panel offers the same joint-scope list, which
+ * is why the filter itself lives in `accessoryKits.ts` now.
  */
-const DIY_KITS = ACCESSORY_KITS.filter((k) => k.scope === 'joint');
+const DIY_KITS = JOINT_KITS;
 
 /**
  * The part names a kit card advertises, after the user's edits.
@@ -75,7 +83,7 @@ const kitLineNames = (kitId: string, layouts: KitLayoutMap | null): string[] =>
     accessoryKitById(kitId),
     DEFAULT_BRACKET_STL_URL,
     layoutFor(layouts, kitId, DEFAULT_BRACKET_STL_URL),
-  ).map((line) => line.spec.name);
+  ).map((line) => hardwareName(line.spec));
 
 // ---------------------------------------------------------------------------
 // Rotating 3D bracket preview
@@ -273,6 +281,7 @@ const Kit3DPreview: React.FC<{ kit: AccessoryKit }> = ({ kit }) => {
 // ---------------------------------------------------------------------------
 
 const DiyProfileLibrary: React.FC = () => {
+  const t = useT();
   const [activeTab, setActiveTab] = useState<TabId>('profiles');
   const [hoveredId, setHoveredId] = useState<string | null>(null);
   const [previewOpen, setPreviewOpen] = useState(true);
@@ -296,6 +305,10 @@ const DiyProfileLibrary: React.FC = () => {
   const selBracketSize = useDiyStore(
     (s) => s.brackets.find((b) => b.id === s.selectedBracketId)?.size ?? null,
   );
+  // The connector the next corner-click will drop. Arming is not a mode — it
+  // does not change what the pointer does, only which part the ghosts place.
+  const armedConnectorId = useDiyStore((s) => s.armedConnectorId);
+  const armConnector = useDiyStore((s) => s.armConnector);
 
   const handleProfileDragStart = (e: React.DragEvent, size: ProfileSize) => {
     e.dataTransfer.setData('application/diy-profile', size);
@@ -329,10 +342,10 @@ const DiyProfileLibrary: React.FC = () => {
   const handleMouseLeave = () => setHoveredId(null);
 
   const tabs: { id: TabId; label: string }[] = [
-    { id: 'profiles', label: 'Profiles' },
-    { id: 'connectors', label: 'Connectors' },
-    { id: 'screws', label: 'Screws' },
-    { id: 'kits', label: 'Kits' },
+    { id: 'profiles', label: t('diy.tabProfiles') },
+    { id: 'connectors', label: t('diy.tabConnectors') },
+    { id: 'screws', label: t('diy.tabScrews') },
+    { id: 'kits', label: t('diy.tabKits') },
   ];
 
   // Subscribed, not read once: the cards below list parts, and a card that kept
@@ -354,14 +367,15 @@ const DiyProfileLibrary: React.FC = () => {
   // Cross-section the Kits tab greys cards against; null = nothing selected.
   const fitMm: number | null =
     selBracketSize ?? (selProfileSize ? PROFILE_DIMS[selProfileSize] : null);
+  const captionDim = PROFILE_DIMS[previewProfileSize];
   const previewCaption =
     activeTab === 'profiles'
-      ? `型材 ${previewProfileSize} · ${PROFILE_DIMS[previewProfileSize]}×${PROFILE_DIMS[previewProfileSize]}mm`
+      ? t('diy.captionProfile', { size: previewProfileSize, dim: captionDim })
       : activeTab === 'connectors'
-        ? `${previewConnector.label} · ${previewConnector.dim}`
+        ? `${connectorLabel(previewConnector)} · ${previewConnector.dim}`
         : activeTab === 'kits'
-          ? `${previewKit.name} · ${kitLineNames(previewKit.id, layouts).join(' + ')}`
-          : `螺丝 ${previewScrewSize}`;
+          ? `${kitName(previewKit)} · ${kitLineNames(previewKit.id, layouts).join(' + ')}`
+          : t('diy.captionScrew', { size: previewScrewSize });
 
   return (
     <div className="flex flex-col h-full min-h-0">
@@ -390,10 +404,10 @@ const DiyProfileLibrary: React.FC = () => {
           <button
             onClick={() => setPreviewOpen((v) => !v)}
             className="flex items-center gap-1 text-[11px] text-neutral-500 hover:text-neutral-300 transition-colors cursor-pointer"
-            title={previewOpen ? '收起预览' : '展开预览'}
+            title={previewOpen ? t('diy.collapsePreview') : t('diy.expandPreview')}
           >
             <span className="text-[8px]">{previewOpen ? '▼' : '▶'}</span>
-            <span>3D 预览</span>
+            <span>{t('diy.previewStrip')}</span>
           </button>
           <span className="text-[10px] text-neutral-600 truncate">{previewCaption}</span>
         </div>
@@ -431,7 +445,7 @@ const DiyProfileLibrary: React.FC = () => {
       <div className="flex-1 min-h-0 overflow-y-auto p-3 space-y-2">
         {activeTab === 'profiles' && (
           <>
-            <p className="text-[10px] text-neutral-600 px-1">Drag a profile into the scene</p>
+            <p className="text-[10px] text-neutral-600 px-1">{t('diy.dragProfileHint')}</p>
             {SIZES.map((s) => (
               <div
                 key={s.id}
@@ -465,27 +479,41 @@ const DiyProfileLibrary: React.FC = () => {
 
             {/* Help */}
             <div className="mt-4 p-3 rounded-lg bg-neutral-900/50 border border-neutral-800 text-neutral-500 text-[10px] space-y-1">
-              <p><span className="text-neutral-400">Drag</span> profile → place root</p>
-              <p><span className="text-neutral-400">Shift+Click</span> face → grow new</p>
-              <p><span className="text-neutral-400">Drag</span> arrow → stretch</p>
-              <p><span className="text-neutral-400">Double-click</span> face → purple target</p>
+              <p>{t('diy.helpDragProfileRoot')}</p>
+              <p>{t('diy.helpShiftClickFace')}</p>
+              <p>{t('diy.helpDragArrow')}</p>
+              <p>{t('diy.helpDoubleClickFace')}</p>
             </div>
           </>
         )}
 
         {activeTab === 'connectors' && (
           <>
-            <p className="text-[10px] text-neutral-600 px-1">Drag a connector onto a frame corner</p>
-            {CONNECTORS.map((c) => (
+            <p className="text-[10px] text-neutral-600 px-1">{t('diy.dragConnectorHint')}</p>
+            {CONNECTORS.map((c) => {
+              // Armed = clicking a corner ghost drops THIS connector. Clicking
+              // the armed card again puts it back down (`armConnector` toggles),
+              // so the card is a two-state switch rather than a one-way mode.
+              const armed = armedConnectorId === c.id;
+              return (
               <div
                 key={c.id}
+                data-connector-card={c.id}
+                data-connector-armed={armed ? '1' : '0'}
                 draggable
                 onDragStart={(e) => handleBracketDragStart(e, c.id)}
                 onMouseEnter={() => handleMouseEnter(c.id)}
                 onMouseLeave={handleMouseLeave}
-                className="flex items-center gap-3 p-3 rounded-lg border border-neutral-800
-                  hover:border-neutral-600 bg-neutral-900/50 cursor-grab active:cursor-grabbing
-                  transition-colors group"
+                // A real HTML5 drag does not fire `click`, so arming and
+                // dragging share the card without fighting.
+                onClick={() => armConnector(c.id)}
+                className={`flex items-center gap-3 p-3 rounded-lg border
+                  bg-neutral-900/50 cursor-grab active:cursor-grabbing
+                  transition-colors group
+                  ${armed
+                    ? 'border-wood-500 ring-1 ring-wood-500/40'
+                    : 'border-neutral-800 hover:border-neutral-600'
+                  }`}
               >
                 <span
                   className="w-10 h-10 rounded flex-shrink-0 border-2 flex items-center justify-center text-[15px]"
@@ -494,34 +522,36 @@ const DiyProfileLibrary: React.FC = () => {
                     backgroundColor: c.color + '20',
                     color: c.color,
                   }}
-                  title={c.kind}
+                  title={hasKey(`diy.kind.${c.kind}`) ? t(`diy.kind.${c.kind}`) : c.kind}
                 >
                   {KIND_ICON[c.kind]}
                 </span>
                 <div className="flex-1 min-w-0">
                   <div className="text-sm text-neutral-200 group-hover:text-white font-medium">
-                    {c.label}
+                    {connectorLabel(c)}
                   </div>
                   <div className="text-[10px] text-neutral-500">
-                    {c.dim} · {c.desc}
+                    {c.dim} · {connectorDesc(c)}
                   </div>
                 </div>
                 <span className="text-neutral-700 text-xs">⠿</span>
               </div>
-            ))}
+              );
+            })}
 
             {/* Help */}
             <div className="mt-4 p-3 rounded-lg bg-neutral-900/50 border border-neutral-800 text-neutral-500 text-[10px] space-y-1">
-              <p><span className="text-neutral-400">Hover</span> card → 3D preview of the model</p>
-              <p><span className="text-neutral-400">Drag</span> card → drop on a corner to mount</p>
-              <p><span className="text-neutral-400">Double-click</span> a face pair places the built-in bracket</p>
+              <p>{t('diy.helpClickCorner')}</p>
+              <p>{t('diy.helpHoverCard')}</p>
+              <p>{t('diy.helpDragCard')}</p>
+              <p>{t('diy.helpDoubleClickPair')}</p>
             </div>
           </>
         )}
 
         {activeTab === 'screws' && (
           <>
-            <p className="text-[10px] text-neutral-600 px-1">Drag a screw onto a profile face</p>
+            <p className="text-[10px] text-neutral-600 px-1">{t('diy.dragScrewHint')}</p>
             {SCREW_SIZES.map((s) => (
               <div
                 key={s.id}
@@ -540,7 +570,7 @@ const DiyProfileLibrary: React.FC = () => {
                   <div className="text-sm text-neutral-200 group-hover:text-white font-medium">
                     {s.label}
                   </div>
-                  <div className="text-[10px] text-neutral-500">{s.desc}</div>
+                  <div className="text-[10px] text-neutral-500">{t('diy.screwCardDesc', { d: s.id.slice(1) })}</div>
                 </div>
                 <span className="text-neutral-700 text-xs">⠿</span>
               </div>
@@ -548,8 +578,8 @@ const DiyProfileLibrary: React.FC = () => {
 
             {/* Help */}
             <div className="mt-4 p-3 rounded-lg bg-neutral-900/50 border border-neutral-800 text-neutral-500 text-[10px] space-y-1">
-              <p><span className="text-neutral-400">Drag</span> screw → profile face, snaps to face</p>
-              <p><span className="text-neutral-400">Click</span> screw → edit spec in right panel</p>
+              <p>{t('diy.helpDragScrew')}</p>
+              <p>{t('diy.helpClickScrew')}</p>
             </div>
           </>
         )}
@@ -557,7 +587,7 @@ const DiyProfileLibrary: React.FC = () => {
         {activeTab === 'kits' && (
           <>
             <p className="text-[10px] text-neutral-600 px-1">
-              拖到角点上 —— 组合只附着于已有角码，螺丝数量自动跟随
+              {t('diy.kitsDragHint')}
             </p>
             {DIY_KITS.map((k) => {
               const reason = fitMm === null ? null : kitFitReason(k, fitMm);
@@ -572,7 +602,7 @@ const DiyProfileLibrary: React.FC = () => {
                   onDragStart={(e) => !blocked && handleKitDragStart(e, k.id)}
                   onMouseEnter={() => handleMouseEnter(k.id)}
                   onMouseLeave={handleMouseLeave}
-                  title={reason ?? k.desc}
+                  title={reason ?? kitDesc(k)}
                   className={`flex items-center gap-3 p-3 rounded-lg border transition-colors group
                     ${blocked
                       ? 'border-neutral-800/50 bg-neutral-900/20 opacity-40 cursor-not-allowed'
@@ -587,7 +617,7 @@ const DiyProfileLibrary: React.FC = () => {
                   </span>
                   <div className="flex-1 min-w-0">
                     <div className="text-sm text-neutral-200 group-hover:text-white font-medium">
-                      {k.name}
+                      {kitName(k)}
                     </div>
                     <div className="text-[10px] text-neutral-500 truncate">
                       {parts.join(' + ')}
@@ -603,10 +633,10 @@ const DiyProfileLibrary: React.FC = () => {
 
             {/* Help */}
             <div className="mt-4 p-3 rounded-lg bg-neutral-900/50 border border-neutral-800 text-neutral-500 text-[10px] space-y-1">
-              <p><span className="text-neutral-400">Drag</span> kit → 实心角点（虚线幽灵出现时松手）</p>
-              <p><span className="text-neutral-400">Esc</span> 或点空白 → 取消</p>
-              <p><span className="text-neutral-400">T 型螺母</span> 默认透视隐藏，可在右侧打开</p>
-              <p className="pt-1 text-neutral-600">微调改的是组合定义本身，所有角点同步</p>
+              <p>{t('diy.helpKitDrag')}</p>
+              <p>{t('diy.helpKitCancel')}</p>
+              <p>{t('diy.helpKitNuts')}</p>
+              <p className="pt-1 text-neutral-600">{t('diy.helpKitTune')}</p>
             </div>
           </>
         )}

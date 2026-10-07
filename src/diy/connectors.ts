@@ -4,7 +4,7 @@
 // mounting frame: inner faces on the x=0/y=0 planes, legs +x/+y, z centred,
 // extents in mm.
 
-export type ConnectorKind = 'cast' | 'alu' | 'pa' | 'steel';
+export type ConnectorKind = 'cast' | 'alu' | 'pa' | 'steel' | 'zinc';
 
 export interface DiyConnector {
   /** Catalog id — carried in the drag payload and stored on DiyBracket.connectorId. */
@@ -161,13 +161,56 @@ export const CONNECTORS: DiyConnector[] = [
     extMm: 47.5,
     boxMm: { min: [0, 0, -15], max: [47.5, 47.5, 15] },
   },
+  {
+    id: '1.46.204.2828.2',
+    label: 'Angle GD-Zn 28x28',
+    desc: '锌合金 角件 · 粉末喷涂 · 三角加强',
+    dim: '28x28',
+    kind: 'zinc',
+    stlUrl: '/connectors/1.46.204.2828.2.stl',
+    color: '#9aa0a6',
+    extMm: 28,
+    boxMm: { min: [0, 0, -14], max: [28, 28, 14] },
+  },
+];
+
+/**
+ * Angle covers (盖板) — catalog parts whose whole job is to hide a joint.
+ *
+ * Deliberately NOT in CONNECTORS: a connector is something the editor lets you
+ * place and a kit bolts THROUGH, and a cover is neither. It rides along with
+ * the joint that owns it (see AccessoryKit.cover), so it needs a lookup of its
+ * own and must not turn up in the connector library or the parts count.
+ */
+export const CONNECTOR_COVERS: DiyConnector[] = [
+  {
+    id: '1.46.204.2828A',
+    label: 'Angle Cover 28x28',
+    desc: '角件盖板 · 锌合金',
+    dim: '28x28',
+    kind: 'zinc',
+    stlUrl: '/connectors/1.46.204.2828A.stl',
+    color: '#9aa0a6',
+    extMm: 32,
+    boxMm: { min: [0, 0, -14], max: [32, 32, 14] },
+  },
 ];
 
 const byId = new Map(CONNECTORS.map((c) => [c.id, c]));
+const coverById_ = new Map(CONNECTOR_COVERS.map((c) => [c.id, c]));
 
 /** Look up a connector catalog entry; unknown ids fall back to the cast bracket. */
 export function connectorById(id?: string | null): DiyConnector {
   return (id && byId.get(id)) || CAST_CONNECTOR;
+}
+
+/**
+ * Look up an angle cover by catalog id. Returns null rather than a fallback:
+ * there is no "default cover" to substitute, and quietly drawing the wrong
+ * cap over a joint would be worse than drawing none.
+ */
+export function coverById(id?: string | null): DiyConnector | null {
+  return (id && coverById_.get(id)) || null;
 }
 
 // The cast bracket is NOT in CONNECTORS (it is the built-in default rather than

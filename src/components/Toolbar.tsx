@@ -1,12 +1,14 @@
 import { useRef, useState, useEffect, useCallback } from 'react';
-import { useNavigate } from 'react-router-dom';
 import { useModelStore, injectVirtualComponents } from '../store/modelStore';
 import { autoGenerateBrackets } from '../diy/mainBracketAuto';
 import { mockTemplates } from '../mock/exampleModel';
+import { templateDescription, templateName } from '../i18n/names';
 import { parseTabletopDxf } from '../utils/dxfImport';
 import { generateTabletopDxf, dxfShapeToDxf } from '../utils/dxfExport';
 import BomPreviewModal from './BomPreviewModal';
+import AppHeader from './AppHeader';
 import { downloadFile } from '../utils/download';
+import { useT } from '../i18n';
 import type { ViewPreset } from '../types/furniture';
 import type { ViewMode } from '../app/App';
 
@@ -23,9 +25,8 @@ const Toolbar: React.FC<ToolbarProps> = ({
   viewMode,
   onViewMode,
 }) => {
-  const navigate = useNavigate();
+  const t = useT();
   const loadModelFromApi = useModelStore((s) => s.loadModelFromApi);
-  const loadMockModel = useModelStore((s) => s.loadMockModel);
   const model = useModelStore((s) => s.model);
   const isLoading = useModelStore((s) => s.isLoading);
   const [templateMenuOpen, setTemplateMenuOpen] = useState(false);
@@ -85,50 +86,22 @@ const Toolbar: React.FC<ToolbarProps> = ({
   );
 
   const viewPresets: { id: ViewPreset; label: string; icon: string }[] = [
-    { id: 'front', label: 'Front', icon: '⊡' },
-    { id: 'top', label: 'Top', icon: '⊟' },
-    { id: 'side', label: 'Side', icon: '⊞' },
-    { id: 'perspective', label: '3D', icon: '◈' },
+    { id: 'front', label: t('view.front'), icon: '⊡' },
+    { id: 'top', label: t('view.top'), icon: '⊟' },
+    { id: 'side', label: t('view.side'), icon: '⊞' },
+    { id: 'perspective', label: t('view.perspective'), icon: '◈' },
   ];
 
   return (
     <>
-    <div className="h-12 px-4 flex items-center gap-3 border-b border-neutral-800 bg-neutral-950/90 backdrop-blur-sm flex-shrink-0 relative z-50">
-      {/* Logo */}
-      <div className="flex items-center gap-2 mr-4">
-        <div className="w-8 h-8 rounded-lg bg-wood-600 flex items-center justify-center text-white font-bold text-sm">
-          W
-        </div>
-        <span className="text-sm font-semibold text-white tracking-wide">
-          WoodCraft
-        </span>
-      </div>
-
-      <div className="w-px h-6 bg-neutral-800" />
-
-      {/* DIY link */}
-      <button
-        onClick={() => navigate('/diy')}
-        className="px-3 py-1 text-xs rounded bg-neutral-800 hover:bg-neutral-700 text-wood-400 hover:text-wood-300 transition-colors cursor-pointer font-medium"
-      >
-        🔧 DIY
-      </button>
-
-      {/* The assembly editor is a document in its own right, so it gets its own
-          way in — no joint has to exist first. */}
-      <button
-        data-nav-kits
-        onClick={() => navigate('/kits')}
-        className="px-3 py-1 text-xs rounded bg-neutral-800 hover:bg-neutral-700 text-wood-400 hover:text-wood-300 transition-colors cursor-pointer font-medium"
-      >
-        🧩 组合
-      </button>
-
-      <div className="w-px h-6 bg-neutral-800" />
-
-      {/* Template selector */}
+    {/* Logo, the DIY/组合 destinations and the language switch all live in the
+        shared header now; this page owns only the controls below. */}
+    <AppHeader
+      active="home"
+      left={
       <div className="relative" ref={menuRef}>
         <button
+          data-template-menu
           className="flex items-center gap-2 px-3 py-1.5 text-sm rounded-md
             bg-neutral-900 border border-neutral-700 text-neutral-300
             hover:border-neutral-600 hover:text-white transition-colors cursor-pointer
@@ -137,7 +110,12 @@ const Toolbar: React.FC<ToolbarProps> = ({
           disabled={isLoading}
         >
           <span className="text-xs">📐</span>
-          {mockTemplates.find((t) => t.id === useModelStore.getState().currentParams.templateId)?.name || 'Select Template'}
+          {(() => {
+            const cur = mockTemplates.find(
+              (tpl) => tpl.id === useModelStore.getState().currentParams.templateId,
+            );
+            return cur ? templateName(cur.id, cur.name ?? cur.id) : t('home.selectTemplate');
+          })()}
           <span className="text-neutral-600 text-[10px] ml-1">▼</span>
         </button>
 
@@ -147,20 +125,21 @@ const Toolbar: React.FC<ToolbarProps> = ({
             rounded-lg shadow-xl z-[100] overflow-hidden"
           >
             <div className="px-3 py-2 text-[10px] uppercase tracking-wider text-neutral-600">
-              Furniture Templates
+              {t('home.templates')}
             </div>
-            {mockTemplates.map((t) => (
+            {mockTemplates.map((tpl) => (
               <button
-                key={t.id}
+                key={tpl.id}
+                data-template={tpl.id}
                 className="w-full px-3 py-2.5 text-left text-sm hover:bg-neutral-800
                   transition-colors cursor-pointer flex items-start gap-3"
-                onClick={() => handleTemplateSelect(t.id)}
+                onClick={() => handleTemplateSelect(tpl.id)}
               >
                 <span className="text-lg mt-0.5">🪑</span>
                 <div>
-                  <div className="text-white text-sm">{t.name}</div>
+                  <div className="text-white text-sm">{templateName(tpl.id, tpl.name)}</div>
                   <div className="text-neutral-500 text-xs mt-0.5">
-                    {t.description}
+                    {templateDescription(tpl.id, tpl.description ?? '')}
                   </div>
                 </div>
               </button>
@@ -168,13 +147,15 @@ const Toolbar: React.FC<ToolbarProps> = ({
           </div>
         )}
       </div>
-
-      <div className="flex-1" />
+      }
+      right={
+      <>
 
       {/* 3D / Plan view toggle */}
       {model && (
         <div className="flex items-center rounded-md bg-neutral-900 border border-neutral-700 overflow-hidden">
           <button
+            data-view-mode="3d"
             className={`px-3 py-1.5 text-xs transition-colors cursor-pointer ${
               viewMode === '3d'
                 ? 'bg-wood-600 text-white'
@@ -182,9 +163,10 @@ const Toolbar: React.FC<ToolbarProps> = ({
             }`}
             onClick={() => onViewMode('3d')}
           >
-            3D
+            {t('view.3d')}
           </button>
           <button
+            data-view-mode="plan"
             className={`px-3 py-1.5 text-xs transition-colors cursor-pointer ${
               viewMode === 'plan'
                 ? 'bg-wood-600 text-white'
@@ -192,7 +174,7 @@ const Toolbar: React.FC<ToolbarProps> = ({
             }`}
             onClick={() => onViewMode('plan')}
           >
-            Plan
+            {t('view.plan')}
           </button>
         </div>
       )}
@@ -224,9 +206,9 @@ const Toolbar: React.FC<ToolbarProps> = ({
       <label
         className="px-3 py-1.5 text-xs rounded-md text-neutral-400
           hover:text-white hover:bg-neutral-900 transition-colors cursor-pointer"
-        title="Import DXF tabletop"
+        title={t('home.importDxfHint')}
       >
-        📐 Import DXF
+        📐 {t('home.importDxf')}
         <input
           type="file"
           accept=".dxf"
@@ -244,7 +226,7 @@ const Toolbar: React.FC<ToolbarProps> = ({
               (e.target as HTMLInputElement).value = '';
             } catch (err) {
               console.error('[DXF] Import failed:', err);
-              alert('DXF import failed: ' + (err as Error).message);
+              alert(t('home.dxfImportFailed') + (err as Error).message);
             }
           }}
         />
@@ -253,7 +235,7 @@ const Toolbar: React.FC<ToolbarProps> = ({
       <button
         className="px-3 py-1.5 text-xs rounded-md text-neutral-400
           hover:text-white hover:bg-neutral-900 transition-colors cursor-pointer"
-        title="Export tabletop as DXF"
+        title={t('home.exportDxfHint')}
         onClick={() => {
           const store = useModelStore.getState();
           const model = store.model;
@@ -275,7 +257,7 @@ const Toolbar: React.FC<ToolbarProps> = ({
       <button
         className="px-3 py-1.5 text-xs rounded-md text-neutral-400
           hover:text-white hover:bg-neutral-900 transition-colors cursor-pointer"
-        title="查看 BOM 物料清单"
+        title={t('home.bomHint')}
         onClick={() => setShowBom(true)}
       >
         📋 BOM
@@ -284,12 +266,14 @@ const Toolbar: React.FC<ToolbarProps> = ({
       <button
         className="px-3 py-1.5 text-xs rounded-md text-neutral-500
           hover:text-neutral-300 hover:bg-neutral-900 transition-colors cursor-pointer"
-        title="Clear imported DXF"
+        title={t('home.clearDxfHint')}
         onClick={() => useModelStore.getState().setDxfTabletop(null)}
       >
         ↺
       </button>
-    </div>
+      </>
+      }
+    />
     {showBom && <BomPreviewModal onClose={() => setShowBom(false)} />}
     </>
   );

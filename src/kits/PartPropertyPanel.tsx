@@ -5,6 +5,8 @@ import { SCREW_FAMILIES } from '../utils/accessoryKits';
 import { DEFAULT_SCREW_FAMILY, headText, screwDims } from '../diy/fastenerDims';
 import { screwFamiliesFor, screwLengths } from '../diy/fasteners';
 import { useKitLayoutStore } from '../store/kitLayoutStore';
+import { useT } from '../i18n';
+import { hardwareName } from '../i18n/names';
 
 const SIZES: ScrewSize[] = ['M4', 'M5', 'M6'];
 
@@ -50,6 +52,7 @@ const PartPropertyPanel: FC<PartPropertyPanelProps> = ({
   edit,
   extra,
 }) => {
+  const t = useT();
   const setPartPosition = useKitLayoutStore((s) => s.setPartPosition);
   const setPartRotation = useKitLayoutStore((s) => s.setPartRotation);
   const setPartSpec = useKitLayoutStore((s) => s.setPartSpec);
@@ -112,17 +115,17 @@ const PartPropertyPanel: FC<PartPropertyPanelProps> = ({
   return (
     <div className="space-y-3">
       <div>
-        <p className="text-[10px] uppercase tracking-wider text-neutral-500 font-medium">选中零件</p>
-        <p className="text-xs text-neutral-100 leading-snug mt-1">{spec.name}</p>
+        <p className="text-[10px] uppercase tracking-wider text-neutral-500 font-medium">{t('kit.selectedPart')}</p>
+        <p className="text-xs text-neutral-100 leading-snug mt-1">{hardwareName(spec)}</p>
         <p className="text-[10px] font-mono text-neutral-600 break-all">{fastener.key}</p>
         <p className="text-[10px] text-neutral-500 mt-0.5">
-          {fastener.added ? '手工添加' : fastener.role === 'bolt' ? '螺栓' : '配合件'}
-          {fastener.internal ? ' · 槽内（透视）' : ''}
-          {edit ? ' · 已微调' : ''}
+          {t(fastener.added ? 'kit.handAdded' : fastener.role === 'bolt' ? 'kit.bolt' : 'kit.mate')}
+          {fastener.internal ? t('kit.internalGhost') : ''}
+          {edit ? ` · ${t('common.tweaked')}` : ''}
         </p>
       </div>
 
-      <Section label="位置 Position (mm) · 绝对值">
+      <Section label={t('kit.sectionPosition')}>
         {AXIS_LABEL.map((a, i) => (
           <Row key={a} label={a}>
             <input
@@ -147,12 +150,12 @@ const PartPropertyPanel: FC<PartPropertyPanelProps> = ({
         ))}
         {!extra && (
           <p className="text-[10px] text-neutral-600">
-            预设孔位 {base.map((v) => v.toFixed(1)).join(', ')} mm · 存的是相对它的增量
+            {t('kit.seatBase', { pos: base.map((v) => v.toFixed(1)).join(', ') })}
           </p>
         )}
       </Section>
 
-      <Section label="朝向 Rotation (°) · XYZ 序">
+      <Section label={t('kit.sectionRotation')}>
         {AXIS_LABEL.map((a, i) => (
           <Row key={a} label={a}>
             <input
@@ -176,13 +179,12 @@ const PartPropertyPanel: FC<PartPropertyPanelProps> = ({
           </Row>
         ))}
         <p className="text-[10px] text-neutral-600">
-          {extra ? '绝对值。' : '相对预设朝向的增量。'}
-          注意：Z 轴旋转不改变螺栓的朝向 —— 轴向只由 X / Y 决定。
+          {t(extra ? 'kit.rotAbsolute' : 'kit.rotOffset')} {t('kit.rotNote')}
         </p>
       </Section>
 
       {resizable ? (
-        <Section label="规格 Size / Length">
+        <Section label={t('kit.sectionSize')}>
           <div className="flex gap-1">
             {SIZES.map((sz) => (
               <button
@@ -220,7 +222,7 @@ const PartPropertyPanel: FC<PartPropertyPanelProps> = ({
               </button>
             ))}
           </div>
-          <Row label="杆长 (mm)">
+          <Row label={t('kit.shaftLength')}>
             {/* A SELECT, not a number box: `length` names a catalog part and the
                 BOM prints it verbatim, so a hand-typed 17 would export a part
                 nobody sells while the 3D drew whatever it snapped to. */}
@@ -233,7 +235,7 @@ const PartPropertyPanel: FC<PartPropertyPanelProps> = ({
               className={`${cls} cursor-pointer`}
             >
               {!lengths.includes(choice.length) && (
-                <option value={choice.length}>{choice.length} · 目录无此长度</option>
+                <option value={choice.length}>{t('kit.lengthNotInCatalog', { n: choice.length })}</option>
               )}
               {lengths.map((l) => (
                 <option key={l} value={l}>{l}</option>
@@ -241,14 +243,13 @@ const PartPropertyPanel: FC<PartPropertyPanelProps> = ({
             </select>
           </Row>
           <p className="text-[10px] text-neutral-600">
-            {headText(dims)} · 目录内 {lengths[0]}–{lengths[lengths.length - 1]}mm
+            {headText(dims)} {t('kit.catalogRange', { min: lengths[0], max: lengths[lengths.length - 1] })}
           </p>
         </Section>
       ) : (
-        <Section label="规格 Size / Length">
+        <Section label={t('kit.sectionSize')}>
           <p className="text-[10px] text-neutral-600 leading-snug">
-            T 型螺母的规格不可改：名字里的「系列」由它压进的型材槽决定，不是 `size`
-            的函数 —— 由 size 拼出来的名字会说谎。取下它或换一颗，比改半个名字诚实。
+            {t('kit.tNutLocked')}
           </p>
         </Section>
       )}
@@ -266,9 +267,9 @@ const PartPropertyPanel: FC<PartPropertyPanelProps> = ({
                 ? 'bg-amber-600/25 hover:bg-amber-600/40 text-amber-200'
                 : 'bg-neutral-800 hover:bg-neutral-700 text-neutral-300'
             }`}
-            title="3D、清单与导出同时消失；清单仍留一行可恢复"
+            title={t('kit.hideHint')}
           >
-            {edit?.removed ? '恢复显示' : '隐藏此零件'}
+            {edit?.removed ? t('kit.restoreShow') : t('kit.hidePart')}
           </button>
         )}
         <button
@@ -283,7 +284,7 @@ const PartPropertyPanel: FC<PartPropertyPanelProps> = ({
               : 'bg-neutral-900 text-neutral-600 cursor-not-allowed'
           }`}
         >
-          {isExtra ? '移除这个零件' : '重置此零件'}
+          {isExtra ? t('kit.removePart') : t('kit.resetPart')}
         </button>
       </div>
 

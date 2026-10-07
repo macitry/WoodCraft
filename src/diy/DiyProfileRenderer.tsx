@@ -8,6 +8,7 @@ import { findCornerAt, eulerFromNormals } from './DiyCornerHints';
 import { fetchBracketRotation } from '../api/modelApi';
 import { logDiyBracket } from './diyLog';
 import { ProfileStl } from './ProfileStl';
+import { t } from '../i18n';
 
 const M = 0.001;
 
@@ -144,19 +145,23 @@ async function runFaceComparison(first: BracketFacePick, second: BracketFacePick
       }
     : null;
 
+  // Dev-only comparison harness. Its keys are deliberately NOT dictionary
+  // entries: nothing here is drawn, so a translated key would only mean the log
+  // reads one way and the code that greps it reads another. English because the
+  // values beside these keys — `normal`, `rotation`, `Euler` — already are.
   console.log(
-    '%c[角码对比] 手动·两面对齐 vs 自动·角码提示',
+    '%c[corner-compare] manual face-pair vs auto corner hint',
     'color:#ff8844;font-weight:bold',
     {
-      '位置·手动(mm)': placed.position,
-      '位置·自动(mm)': corner?.position ?? '无角码提示',
-      '位置偏差Δ(mm)': delta ?? '无角码提示',
-      '面1法向·手动': first.normal,
-      '面1法向·自动': corner?.faceA ?? '—',
-      '面2法向·手动': second.normal,
-      '面2法向·自动': corner?.faceB ?? '—',
-      '欧拉·手动(deg)': placed.rotation,
-      '欧拉·自动(deg)': corner ? toDeg(eulerFromNormals(corner.faceA, corner.faceB)) : '无角码提示',
+      'pos.manual(mm)': placed.position,
+      'pos.auto(mm)': corner?.position ?? 'no corner hint',
+      'delta(mm)': delta ?? 'no corner hint',
+      'face1.normal.manual': first.normal,
+      'face1.normal.auto': corner?.faceA ?? '—',
+      'face2.normal.manual': second.normal,
+      'face2.normal.auto': corner?.faceB ?? '—',
+      'euler.manual(deg)': placed.rotation,
+      'euler.auto(deg)': corner ? toDeg(eulerFromNormals(corner.faceA, corner.faceB)) : 'no corner hint',
     },
   );
 
@@ -220,12 +225,12 @@ async function runFaceComparison(first: BracketFacePick, second: BracketFacePick
       Math.abs(bdeg.pitch - placed.rotation.pitch) < 0.5 &&
       Math.abs(bdeg.yaw - placed.rotation.yaw) < 0.5;
     console.log(
-      '%c[角码对比] 后端(同一组手动法向)',
+      '%c[corner-compare] backend, same manual normals',
       'color:#66ccff;font-weight:bold',
-      { '后端Euler(deg)': bdeg, '与手动一致': agree },
+      { 'backend.euler(deg)': bdeg, 'agreesWithManual': agree },
     );
   } catch (err) {
-    console.warn('[角码对比] 后端请求失败', err);
+    console.warn('[corner-compare] backend request failed', err);
   }
 }
 
@@ -254,22 +259,20 @@ const DiyProfileRenderer: React.FC = () => {
     async (second: BracketFacePick) => {
       const first = useDiyStore.getState().bracketFaceA;
       const status = pickBracketFace(second);
+      // Module `t`, not the hook's: the message is composed here and stored in
+      // the store, so it is a value written at pick time rather than a label
+      // that re-renders. A hook handle captured in this `useCallback` would go
+      // stale the moment the language changed.
       if (status === 'rejected') {
-        useModelStore.getState().setError(
-          '两个面必须相互垂直(90°)。角码安装在两个互相垂直的型材面上,请点另一个垂直的面。',
-        );
+        useModelStore.getState().setError(t('diy.errNotPerpendicular'));
         return;
       }
       if (status === 'no_overlap') {
-        useModelStore.getState().setError(
-          '这两个面没有相交区域,请点相邻的两个型材面。',
-        );
+        useModelStore.getState().setError(t('diy.errNoOverlap'));
         return;
       }
       if (status === 'no_fit') {
-        useModelStore.getState().setError(
-          '这个位置的面不够放角码:角码会伸出型材。请换一个离型材端部更远的位置。',
-        );
+        useModelStore.getState().setError(t('diy.errNoFit'));
         return;
       }
       if (status === 'placed' && first) {
