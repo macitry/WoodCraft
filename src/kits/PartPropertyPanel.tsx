@@ -120,7 +120,7 @@ const PartPropertyPanel: FC<PartPropertyPanelProps> = ({
         <p className="text-[10px] font-mono text-neutral-600 break-all">{fastener.key}</p>
         <p className="text-[10px] text-neutral-500 mt-0.5">
           {t(fastener.added ? 'kit.handAdded' : fastener.role === 'bolt' ? 'kit.bolt' : 'kit.mate')}
-          {fastener.internal ? t('kit.internalGhost') : ''}
+          {fastener.internal ? t('kit.internalInSlot') : ''}
           {edit ? ` · ${t('common.tweaked')}` : ''}
         </p>
       </div>

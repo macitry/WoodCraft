@@ -13,6 +13,7 @@ import type {
   MateHit,
 } from '../types/furniture';
 import { TEMPLATE_BACKEND_ID, TEMPLATE_LAYOUTS } from '../types/furniture';
+import { DEFAULT_SCENE_ID, type SceneId } from '../viewer/scenes/ids';
 import { nextHoleId } from '../utils/holeGeometry';
 import { reflowAnchoredHoles, reanchorFromCoord } from '../utils/holeTemplates';
 import { DEFAULT_ACCESSORY_KIT_ID, accessoryKitById } from '../utils/accessoryKits';
@@ -217,16 +218,24 @@ interface ModelState {
   activeKitId: string | null;
   /** Draw the bolts at each joint. */
   showFasteners: boolean;
-  /** X-ray the T-nuts inside the profile slots (off by default). */
+  /** Mount the T-nuts seated inside the profile slots. On by default, because a
+   *  T-nut that is not in the scene at all is a part of the BOM with nothing to
+   *  point at — but they are drawn like any other part, so the profile hides them
+   *  the way it would in your hand (see `TNutMeshProps.xray`). Turning this off
+   *  is about not carrying 16 never-visible parts, not about a look. */
   showInternalFasteners: boolean;
-  /** Draw the desk inside a room (floor + two walls) instead of on a bare grid.
+  /** Which room the desk is shown in, or null for none at all.
    *
    *  Like `showFasteners`, this is a picture of the desk, not a property of it:
-   *  session-only, never persisted, and it changes no geometry. The room is
-   *  scenery — it is deliberately not part of the model, the BOM or the export.
-   *  It is on by default: the desk reads as furniture rather than a CAD part the
-   *  moment the page opens, and the room cannot hide anything (see RoomScene). */
-  showRoom: boolean;
+   *  session-only, never persisted, and no scene touches a vertex, a volume or a
+   *  BOM row. Rooms are scenery — deliberately not part of the model, the BOM or
+   *  the export. `null` means no room, no rig, no environment map and the CAD
+   *  grid back: the original look exactly, not an approximation of it.
+   *
+   *  One field rather than a show/hide plus a separate picker, because "off" is
+   *  not orthogonal to "which room" — a room you have switched off still has to
+   *  remember which one it is, and then the two fields can disagree. */
+  sceneId: SceneId | null;
 
   // Mate (SolidWorks-style assembly)
   mateState: MateState;
@@ -304,7 +313,7 @@ interface ModelState {
   setAccessoryKit: (kitId: string | null) => void;
   setShowFasteners: (v: boolean) => void;
   setShowInternalFasteners: (v: boolean) => void;
-  setShowRoom: (v: boolean) => void;
+  setSceneId: (id: SceneId | null) => void;
   // Mate actions
   startMate: (bracketId: string) => void;
   cancelMate: () => void;
@@ -372,8 +381,8 @@ export const useModelStore = create<ModelState>((set, get) => ({
   placementMode: false,
   activeKitId: DEFAULT_ACCESSORY_KIT_ID,
   showFasteners: true,
-  showInternalFasteners: false,
-  showRoom: true,
+  showInternalFasteners: true,
+  sceneId: DEFAULT_SCENE_ID,
   tabletopTexture: DEFAULT_TABLETOP_TEXTURE,
   customBoards: [],
   currentParams: {
@@ -811,7 +820,7 @@ export const useModelStore = create<ModelState>((set, get) => ({
   setAccessoryKit: (kitId) => set({ activeKitId: accessoryKitById(kitId) ? kitId : null }),
   setShowFasteners: (v) => set({ showFasteners: v }),
   setShowInternalFasteners: (v) => set({ showInternalFasteners: v }),
-  setShowRoom: (v) => set({ showRoom: v }),
+  setSceneId: (id) => set({ sceneId: id }),
 
   // ---- Mate workflow ----
   mateState: 'idle',

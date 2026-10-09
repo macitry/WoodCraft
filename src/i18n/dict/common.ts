@@ -66,9 +66,21 @@ export const zh = {
   'view.perspective': '轴测',
   'view.3d': '3D',
   'view.plan': '平面图',
-  'view.room': '房间',
-  'view.roomHint': '在房间里显示这件家具',
   'view.orbitHint': '拖动旋转 · 滚轮缩放 · 右键平移',
+
+  // --- scenes (the main viewer's room picker) ----------------------------
+  'scene.label': '场景',
+  'scene.hint': '把这件家具放进不同的房间里看',
+  'scene.off': '关',
+  'scene.offNote': '不显示房间，回到原始视图',
+  'scene.bedroom': '卧室',
+  'scene.bedroomNote': '夜晚的卧室，床头一盏暖灯，桌子还是原来的样子',
+  'scene.daylight': '日间',
+  'scene.daylightNote': '明亮的白天房间，木地板，带陈设',
+  'scene.studio': '影棚',
+  'scene.studioNote': '无缝白背景，像产品图',
+  'scene.workshop': '工坊',
+  'scene.workshopNote': '水泥地车间，顶灯偏冷，落地灯常亮',
 } as const;
 
 export type CommonKey = keyof typeof zh;
@@ -130,7 +142,18 @@ export const en: Record<CommonKey, string> = {
   'view.perspective': 'Isometric',
   'view.3d': '3D',
   'view.plan': 'Plan',
-  'view.room': 'Room',
-  'view.roomHint': 'Show the piece in a room',
   'view.orbitHint': 'Drag to rotate · Scroll to zoom · Right-drag to pan',
+
+  'scene.label': 'Scene',
+  'scene.hint': 'See the piece in a different room',
+  'scene.off': 'Off',
+  'scene.offNote': 'No room — the original view',
+  'scene.bedroom': 'Bedroom',
+  'scene.bedroomNote': 'A bedroom at night — one warm lamp, and the desk as it always was',
+  'scene.daylight': 'Daylight',
+  'scene.daylightNote': 'A bright room with oak boards, furnished',
+  'scene.studio': 'Studio',
+  'scene.studioNote': 'A seamless white sweep, like a product shot',
+  'scene.workshop': 'Workshop',
+  'scene.workshopNote': 'Concrete, a cool overhead light, and a lamp left on',
 };

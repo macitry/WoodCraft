@@ -20,7 +20,7 @@ const M = 0.001;
  * is easy to lose — the procedural prototypes this replaced carried their own
  * scale inside `<primitive>`, so nothing here looked like it needed one.
  */
-const KitFastener: React.FC<{ fastener: LocalFastener; ghosted: boolean }> = ({ fastener, ghosted }) => {
+const KitFastener: React.FC<{ fastener: LocalFastener }> = ({ fastener }) => {
   const { spec } = fastener;
   const [x, y, z] = fastener.position;
   const size = spec.size ?? 'M6';
@@ -36,7 +36,6 @@ const KitFastener: React.FC<{ fastener: LocalFastener; ghosted: boolean }> = ({ 
           series={SCREW_SERIES}
           family={spec.tnutFamily}
           color={HARDWARE_TONE.t_nut}
-          ghost={ghosted}
         />
       ) : spec.kind === 'cover' ? (
         // Neither a screw nor a nut: no size, no length, no family for the branch
@@ -97,7 +96,7 @@ const KitGroup: React.FC<{ bracket: DiyBracket; kitId: string }> = ({ bracket, k
     <>
       {shown.map((f) => (
         // `f.key` (the seat), not the index — see the main renderer.
-        <KitFastener key={f.key} fastener={f} ghosted={f.internal} />
+        <KitFastener key={f.key} fastener={f} />
       ))}
     </>
   );

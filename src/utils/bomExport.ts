@@ -12,6 +12,7 @@ import { catalogUid, kitScheduleFor } from './accessoryKits';
 import { CAST_CONNECTOR, connectorByStlUrl } from '../diy/connectors';
 import { t } from '../i18n';
 import { hardwareName, kitName, kitOps, materialName } from '../i18n/names';
+import { buildXlsx, type Cell } from './xlsx';
 
 /**
  * The accessory kit applied to this model, plus where to find the user's edits.
@@ -327,6 +328,76 @@ export function bomToCsv(rows: BomRow[], ops: string[] = []): string {
     for (const op of ops) lines.push(`# ${op}`);
   }
   return lines.join('\n');
+}
+
+/**
+ * Generate an `.xlsx` workbook from BOM rows.
+ *
+ * Same columns, same order, same trailing remark block as `bomToCsv` — the two
+ * writers answer one question about one set of rows, and the differences are
+ * only the ones a spreadsheet can express and a text file cannot: a bold header
+ * row that stays put while scrolling, columns sized to their contents, and 数量
+ * written as a NUMBER so that it can be summed. Everything else is identical on
+ * purpose, including the remark block, so a supplier given the CSV and one given
+ * the workbook are reading the same document.
+ *
+ * Two column-presence questions are asked here again rather than passed in from
+ * `bomToCsv`, for the same reason the modal asks them again: a flag threaded
+ * between writers is a flag that can disagree with the rows.
+ */
+export function bomToXlsx(rows: BomRow[], ops: string[] = []): Uint8Array {
+  // The published column line, split back into cells. The SAME dictionary key as
+  // the CSV header, not a second list of column names — two spellings of one
+  // header is how two exports start to drift. A comma inside a column name would
+  // break this split, but it would break the CSV first (six fields of rows under
+  // a seven-field header), so splitting adds no failure the CSV did not have.
+  const header = t('bom.csvHeader').split(',');
+  const hasNotes = rows.some((r) => r.note);
+  const hasArticle = rows.some((r) => r.articleNo);
+  if (hasNotes) header.push(t('bom.csvNotes'));
+  if (hasArticle) header.push(t('bom.csvArticle'));
+
+  const body: Cell[][] = rows.map((r) => {
+    const cells: Cell[] = [
+      r.part,
+      r.type,
+      materialName(r.material, r.material),
+      r.profile,
+      // A length-less part is countable, not zero-length; `-` is what the CSV
+      // and the modal both say, and it is not a number, so it stays text.
+      r.lengthMm > 0 ? r.lengthMm : '-',
+      // The one deliberate content difference from the CSV, and the reason to
+      // open the workbook rather than the CSV at all.
+      r.qty,
+    ];
+    // Present whenever it is in the HEADER, so a short row cannot shift a
+    // column left; an absent value is an empty cell, not a missing one.
+    if (hasNotes) cells.push(r.note ?? null);
+    if (hasArticle) cells.push(r.articleNo ?? null);
+    return cells;
+  });
+
+  const widths = [18, 12, 10, 10, 10, 7];
+  if (hasNotes) widths.push(14);
+  if (hasArticle) widths.push(20);
+
+  const total = rows.reduce((s, r) => s + r.qty, 0);
+
+  return buildXlsx({
+    // Untranslated: 'BOM' is the name of the document in both languages, and
+    // every label around it in the dictionary already leaves it as 'BOM'.
+    name: 'BOM',
+    header,
+    rows: body,
+    // `panel.ops` and not `bom.csvOpsComment`: the latter carries the CSV's
+    // leading `#`, which is how a COMMENT is spelled in a text file and means
+    // nothing in a cell.
+    ops: ops.length > 0 ? { label: t('panel.ops'), items: ops } : undefined,
+    // A total, but in column A as prose — under the quantities it would be a
+    // row that `SUM(数量)` silently includes.
+    footer: [t('panel.bomTotal', { n: total })],
+    colWidths: widths,
+  });
 }
 
 /**

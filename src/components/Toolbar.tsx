@@ -9,8 +9,19 @@ import BomPreviewModal from './BomPreviewModal';
 import AppHeader from './AppHeader';
 import { downloadFile } from '../utils/download';
 import { useT } from '../i18n';
+import type { DictKey } from '../i18n/dict';
+import { SCENES, sceneById, type SceneId } from '../viewer/scenes';
 import type { ViewPreset } from '../types/furniture';
 import type { ViewMode } from '../app/App';
+
+/** The scene menu's entries, in the order they are shown: 「关」 first, then the
+ *  registry. Derived from `SCENES` rather than written out again, so a scene
+ *  added to the viewer appears here — with its own note — without a second
+ *  list to keep in step. */
+const SCENE_CHOICES: { id: SceneId | null; noteKey: DictKey }[] = [
+  { id: null, noteKey: 'scene.offNote' },
+  ...SCENES.map((s) => ({ id: s.id as SceneId | null, noteKey: s.noteKey })),
+];
 
 interface ToolbarProps {
   onViewPreset: (preset: ViewPreset) => void;
@@ -29,17 +40,30 @@ const Toolbar: React.FC<ToolbarProps> = ({
   const loadModelFromApi = useModelStore((s) => s.loadModelFromApi);
   const model = useModelStore((s) => s.model);
   const isLoading = useModelStore((s) => s.isLoading);
-  const showRoom = useModelStore((s) => s.showRoom);
-  const setShowRoom = useModelStore((s) => s.setShowRoom);
+  const sceneId = useModelStore((s) => s.sceneId);
+  const setSceneId = useModelStore((s) => s.setSceneId);
   const [templateMenuOpen, setTemplateMenuOpen] = useState(false);
+  const [sceneMenuOpen, setSceneMenuOpen] = useState(false);
   const [showBom, setShowBom] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
+  const sceneRef = useRef<HTMLDivElement>(null);
 
-  // Close menu on outside click
+  const sceneLabel = (id: SceneId | null) => {
+    const def = sceneById(id);
+    return def ? t(def.labelKey) : t('scene.off');
+  };
+
+  // Close menus on outside click — one listener, both menus. A click on either
+  // menu's button is outside the other's ref, so this closes whichever was open
+  // without either menu needing to know the other exists.
   useEffect(() => {
     const handler = (e: MouseEvent) => {
-      if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
+      const target = e.target as Node;
+      if (menuRef.current && !menuRef.current.contains(target)) {
         setTemplateMenuOpen(false);
+      }
+      if (sceneRef.current && !sceneRef.current.contains(target)) {
+        setSceneMenuOpen(false);
       }
     };
     document.addEventListener('mousedown', handler);
@@ -202,23 +226,58 @@ const Toolbar: React.FC<ToolbarProps> = ({
         </div>
       )}
 
-      {/* Room on/off. Sits with the camera presets because it is the same kind of
-          thing — how the desk is being looked at, not what the desk is. Styled on
-          the preset row's active/idle classes, but its own button rather than a
-          fifth preset, so it does not read as moving the camera. */}
+      {/* Scene picker. Sits with the camera presets because it is the same kind
+          of thing — how the desk is being looked at, not what the desk is.
+
+          A menu rather than a toggle, and the reason is the point of the whole
+          feature: the value of four rooms is being able to SEE them against one
+          another, and a cycle button makes that a stroll through the set rather
+          than a choice. 「关」 is an entry in the same list, not a separate
+          switch, because off is one of the things you can pick. */}
       {model && viewMode === '3d' && (
-        <button
-          data-room-toggle
-          className={`px-2.5 py-1.5 text-xs rounded-md transition-colors cursor-pointer
-            ${showRoom
-              ? 'bg-neutral-800 text-white'
-              : 'text-neutral-500 hover:text-neutral-300 hover:bg-neutral-900'
-            }`}
-          onClick={() => setShowRoom(!showRoom)}
-          title={t('view.roomHint')}
-        >
-          {t('view.room')}
-        </button>
+        <div className="relative" ref={sceneRef}>
+          <button
+            data-scene-menu
+            className={`flex items-center gap-1.5 px-2.5 py-1.5 text-xs rounded-md
+              transition-colors cursor-pointer
+              ${sceneId
+                ? 'bg-neutral-800 text-white'
+                : 'text-neutral-500 hover:text-neutral-300 hover:bg-neutral-900'
+              }`}
+            onClick={() => setSceneMenuOpen(!sceneMenuOpen)}
+            title={t('scene.hint')}
+          >
+            {t('scene.label')}
+            <span className="text-neutral-400">{sceneLabel(sceneId)}</span>
+            <span className="text-neutral-600 text-[10px]">▼</span>
+          </button>
+
+          {sceneMenuOpen && (
+            <div
+              className="absolute top-full mt-1 right-0 w-60 bg-neutral-900 border border-neutral-700
+              rounded-lg shadow-xl z-[100] overflow-hidden"
+            >
+              {SCENE_CHOICES.map((choice) => (
+                <button
+                  key={choice.id ?? 'off'}
+                  data-scene={choice.id ?? 'off'}
+                  className={`w-full px-3 py-2 text-left hover:bg-neutral-800
+                    transition-colors cursor-pointer
+                    ${choice.id === sceneId ? 'bg-neutral-800/60' : ''}`}
+                  onClick={() => {
+                    setSceneId(choice.id);
+                    setSceneMenuOpen(false);
+                  }}
+                >
+                  <div className={`text-sm ${choice.id === sceneId ? 'text-white' : 'text-neutral-300'}`}>
+                    {sceneLabel(choice.id)}
+                  </div>
+                  <div className="text-neutral-500 text-xs mt-0.5">{t(choice.noteKey)}</div>
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
       )}
 
       <div className="w-px h-6 bg-neutral-800" />

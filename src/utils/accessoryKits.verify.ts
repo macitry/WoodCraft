@@ -692,7 +692,7 @@ function jointScheduleStable(kit: (typeof ACCESSORY_KITS)[number]): boolean {
   assert(nearVec(v1.position, [5, 6, 7]), 'an added part keeps the absolute catalog position it was given');
   assert(nearVec(v1.rotation, [0, 0, 0], 1e-12), 'added-part degrees must convert to radians');
   const v2 = find(added, 'extra:v2')!;
-  assert(v2.internal === true, 'an added T-nut must stay internal (ghosted, x-ray only)');
+  assert(v2.internal === true, 'an added T-nut must stay internal (seated in the slot)');
   assert(nearVec(v2.rotation, [0, -Math.PI / 2, 0], 1e-12), 'added-part degrees must convert to radians');
   assert(nearVec(jointFasteners(KIT, STL, 2, extras).find((f) => f.key === 'extra:v2')!.position, [-18, -18, 0], 1e-12), 'added parts must scale too');
   // An added part is part of the kit's DEFINITION, so it is replicated at every

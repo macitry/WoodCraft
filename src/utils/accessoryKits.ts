@@ -632,9 +632,10 @@ export interface ExtraPart {
   position: [number, number, number];
   /** Degrees, XYZ order. */
   rotation: [number, number, number];
-  /** Hardware living inside the profile slot (a T-nut). Renders ghosted and only
-   *  under the x-ray toggle — drawn with normal depth testing it is buried by the
-   *  profile around it, which reads as a bug. */
+  /** Hardware living inside the profile slot (a T-nut). The viewers draw these
+   *  like any other part, which means the profile hides them — correct, and the
+   *  reason there is a toggle to leave them out instead. Only the kit editor
+   *  draws them through the metal; see `TNutMeshProps.xray`. */
   internal: boolean;
 }
 
@@ -708,8 +709,8 @@ export interface LocalFastener {
   position: [number, number, number];
   /** XYZ Euler, radians. */
   rotation: readonly [number, number, number];
-  /** True for hardware that lives inside the profile slot (T-nut) — the
-   *  renderers draw these ghosted, and only when explicitly asked. */
+  /** True for hardware that lives inside the profile slot (T-nut) — drawn like
+   *  anything else, so its own toggle is the only way to keep it in or out. */
   internal: boolean;
   /** True for hardware the user added by hand — no seat behind it. */
   added?: boolean;

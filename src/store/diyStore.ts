@@ -295,7 +295,9 @@ interface DiyState {
   selectedKitId: string | null;
   /** Draw the kit bolts. */
   showKitFasteners: boolean;
-  /** X-ray the T-nuts sitting inside the profile slots. */
+  /** Mount the T-nuts sitting inside the profile slots. On by default — see
+   *  `showInternalFasteners` in `modelStore`, which defaults the same way and for
+   *  the same reason. */
   showKitNuts: boolean;
   /** Bind a kit to an ALREADY-PLACED bracket. Never places a bracket itself —
    *  DiyViewer orients and places first, then binds. False if the kit id is
@@ -859,7 +861,7 @@ export const useDiyStore = create<DiyState>((set, get) => ({
   kitInstances: [],
   selectedKitId: null,
   showKitFasteners: true,
-  showKitNuts: false,
+  showKitNuts: true,
 
   bindKit: (kitId, bracketId) => {
     // A kit is only meaningful on a real corner joint: its fasteners are seated

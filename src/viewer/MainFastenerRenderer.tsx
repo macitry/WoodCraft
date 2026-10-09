@@ -15,20 +15,18 @@ const MM_TO_M = 0.001;
  *  `useLoader` per URL), so there is no prototype cache any more — but the parts
  *  are still NOT pickable: the bracket itself is what the user selects and drags,
  *  and a fastener that swallowed that click would be a hole in its hit area. */
-const FastenerStl: React.FC<{ fastener: LocalFastener; ghosted: boolean }> = ({
-  fastener,
-  ghosted,
-}) => {
+const FastenerStl: React.FC<{ fastener: LocalFastener }> = ({ fastener }) => {
   const { spec } = fastener;
   const size = spec.size ?? 'M6';
   if (spec.kind === 't_nut') {
+    // Deliberately NO `xray`: the nut belongs in the slot, and the profile hides
+    // it there. See `TNutMeshProps.xray` before changing that.
     return (
       <TNutMesh
         size={size}
         series={SCREW_SERIES}
         family={spec.tnutFamily}
         color={HARDWARE_TONE.t_nut}
-        ghost={ghosted}
       />
     );
   }
@@ -47,9 +45,8 @@ const FastenerStl: React.FC<{ fastener: LocalFastener; ghosted: boolean }> = ({
   );
 };
 
-const FastenerMesh: React.FC<{ fastener: LocalFastener; ghosted: boolean; bracketId: string }> = ({
+const FastenerMesh: React.FC<{ fastener: LocalFastener; bracketId: string }> = ({
   fastener,
-  ghosted,
   bracketId,
 }) => {
   const groupRef = useRef<THREE.Group>(null);
@@ -68,6 +65,12 @@ const FastenerMesh: React.FC<{ fastener: LocalFastener; ghosted: boolean; bracke
       bracketId,
       object: obj,
       local: position,
+      /** Which catalog kind this is. A headless check cannot tell a T-nut from a
+       *  bolt by looking at the mounted mesh (both are just an STL), and "is the
+       *  T-nut drawn at all" is exactly the question worth asking. */
+      kind: fastener.spec.kind,
+      /** Seated inside the profile, so the profile hides it — see `TNutMeshProps.xray`. */
+      internal: fastener.internal,
       /** Closest ancestor group carrying this bracket's tag. */
       bracketGroup: (() => {
         let p: THREE.Object3D | null = obj.parent;
@@ -84,7 +87,9 @@ const FastenerMesh: React.FC<{ fastener: LocalFastener; ghosted: boolean; bracke
       const i = list.indexOf(rec);
       if (i >= 0) list.splice(i, 1);
     };
-  }, [bracketId, position]);
+    // `fastener` as well as its position: `kind` and `internal` are read off it
+    // above, so the record must be republished when the seat it describes is.
+  }, [bracketId, fastener, position]);
 
   return (
     <group
@@ -96,7 +101,7 @@ const FastenerMesh: React.FC<{ fastener: LocalFastener; ghosted: boolean; bracke
       rotation={rotation as unknown as [number, number, number]}
       scale={MM_TO_M}
     >
-      <FastenerStl fastener={fastener} ghosted={ghosted} />
+      <FastenerStl fastener={fastener} />
     </group>
   );
 };
@@ -150,7 +155,7 @@ export const FastenerSet: React.FC<{ bracket: BracketInstance }> = ({ bracket })
       {shown.map((f) => (
         // `f.key` (the seat), not the index: after an add or a delete an index
         // would make React reuse a node for a different part.
-        <FastenerMesh key={f.key} fastener={f} ghosted={f.internal} bracketId={bracket.id} />
+        <FastenerMesh key={f.key} fastener={f} bracketId={bracket.id} />
       ))}
     </group>
   );

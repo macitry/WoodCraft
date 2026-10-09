@@ -9,6 +9,7 @@ export const zh = {
   'diy.exportBom': '导出 BOM',
   'diy.exportNone': '暂无零件可导出',
   'diy.exportCsv': 'CSV（含加工要求）',
+  'diy.exportXlsx': 'Excel（含加工要求）',
   'diy.exportText': '文本清单',
 
   // --- structure tree -----------------------------------------------------
@@ -47,7 +48,7 @@ export const zh = {
   'diy.tuneParts': '微调零件…',
   'diy.routing': '加工要求',
   'diy.showFasteners': '显示紧固件（{n}）',
-  'diy.showNuts': '槽内螺母透视（{n}）',
+  'diy.showNuts': '槽内螺母（{n}）',
   'diy.profileHeading': '{size} 型材',
   'diy.crossSection': '截面',
   'diy.length': '长度',
@@ -126,7 +127,7 @@ export const zh = {
   'diy.helpClickScrew': '点击螺丝 → 在右侧面板编辑规格',
   'diy.helpKitDrag': '拖拽组合 → 实心角点（虚线幽灵出现时松手）',
   'diy.helpKitCancel': 'Esc 或点空白 → 取消',
-  'diy.helpKitNuts': 'T 型螺母默认透视隐藏，可在右侧打开',
+  'diy.helpKitNuts': 'T 型螺母默认装入；它们压在型材槽内，正常视角被型材挡住，可在右侧关闭',
   'diy.helpKitTune': '微调改的是组合定义本身，所有角点同步',
 
   // --- connector material kinds (card tooltip) ----------------------------
@@ -145,6 +146,7 @@ export const en: Record<DiyKey, string> = {
   'diy.exportBom': 'Export BOM',
   'diy.exportNone': 'Nothing to export yet',
   'diy.exportCsv': 'CSV (with routing notes)',
+  'diy.exportXlsx': 'Excel (with routing notes)',
   'diy.exportText': 'Plain list',
 
   'diy.profileRow': 'Profile-{n}',
@@ -254,7 +256,7 @@ export const en: Record<DiyKey, string> = {
   'diy.helpClickScrew': 'Click screw → edit spec in right panel',
   'diy.helpKitDrag': 'Drag kit → solid corner (release when the ghost appears)',
   'diy.helpKitCancel': 'Esc or click empty space → cancel',
-  'diy.helpKitNuts': 'T-nuts are hidden by default, toggle them on the right',
+  'diy.helpKitNuts': 'T-nuts are mounted by default; they sit inside the profile slot, so the profile hides them from most angles — toggle them on the right',
   'diy.helpKitTune': 'Tuning edits the kit definition itself and syncs to every corner',
 
   'diy.kind.cast': 'Cast aluminium',

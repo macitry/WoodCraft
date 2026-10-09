@@ -1,9 +1,10 @@
 import { useEffect, useMemo, type FC } from 'react';
 import { useModelStore } from '../store/modelStore';
-import { computeBom, bomToCsv, bomOpsFrom, type BomRow } from '../utils/bomExport';
+import { computeBom, bomToCsv, bomToXlsx, bomOpsFrom, type BomRow } from '../utils/bomExport';
 import { TEMPLATE_LAYOUTS, bracketStlUrl } from '../types/furniture';
 import { accessoryKitById } from '../utils/accessoryKits';
 import { useKitLayoutStore } from '../store/kitLayoutStore';
+import { downloadFile } from '../utils/download';
 import { useT } from '../i18n';
 import { materialName } from '../i18n/names';
 
@@ -76,17 +77,20 @@ const BomPreviewModal: FC<BomPreviewModalProps> = ({ onClose }) => {
   // with bomToCsv by both asking the rows, not by a flag passed between them.
   const hasArticle = rows.some((r) => r.articleNo);
 
-  const handleExport = () => {
-    const csv = bomToCsv(rows, ops);
-    const blob = new Blob([`﻿${csv}`], { type: 'text/csv;charset=utf-8' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `bom_${model.id}.csv`;
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    URL.revokeObjectURL(url);
+  // Two formats over one set of rows. Both go out through the shared
+  // `downloadFile`, which is what makes the binary one work at all — the inline
+  // anchor this used to do would have had to stringify the workbook's bytes.
+  const exportCsv = () => {
+    // U+FEFF so Excel reads the Chinese headers as UTF-8.
+    downloadFile(`bom_${model.id}.csv`, `﻿${bomToCsv(rows, ops)}`, 'text/csv;charset=utf-8');
+  };
+
+  const exportXlsx = () => {
+    downloadFile(
+      `bom_${model.id}.xlsx`,
+      bomToXlsx(rows, ops),
+      'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    );
   };
 
   return (
@@ -182,11 +186,21 @@ const BomPreviewModal: FC<BomPreviewModalProps> = ({ onClose }) => {
               {t('common.close')}
             </button>
             <button
-              onClick={handleExport}
+              onClick={exportCsv}
               className="px-3 py-1.5 text-xs rounded-md bg-wood-600 hover:bg-wood-500 text-white transition-colors cursor-pointer"
               title={t('panel.exportCsvHint')}
             >
               {t('panel.exportCsv')}
+            </button>
+            {/* Same weight as the CSV button, not a lesser one: they are two
+                formats of the same document, and the newer one is the better
+                of the two for anyone who wants to total the quantities. */}
+            <button
+              onClick={exportXlsx}
+              className="px-3 py-1.5 text-xs rounded-md bg-wood-600 hover:bg-wood-500 text-white transition-colors cursor-pointer"
+              title={t('panel.exportXlsxHint')}
+            >
+              {t('panel.exportXlsx')}
             </button>
           </div>
         </div>

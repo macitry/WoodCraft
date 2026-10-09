@@ -38,6 +38,10 @@ import { coverById } from './connectors';
  *  be an invisible hole in the bracket's hit area. */
 const NO_PICK = () => null;
 
+/** Draw order for the one mode that ignores the profile in front of it. Above
+ *  the profile bars (0) and the brackets (1) it is meant to be seen across. */
+const X_RAY_DRAW_ORDER = 7;
+
 /** What a screw and a T-nut both take. */
 interface MeshProps {
   /** Self-illumination, for the editor's selection highlight. A prop rather than
@@ -109,25 +113,32 @@ export interface TNutMeshProps extends MeshProps {
   color?: string;
   opacity?: number;
   /**
-   * X-ray mode. A T-nut lives INSIDE the profile's slot, behind opaque
-   * aluminium, so with normal depth testing it is never visible however it is
-   * coloured — an "x-ray" toggle that only lowered opacity would draw nothing on
-   * screen. Ghosted nuts therefore also drop depth testing and draw late, so
-   * they show through the profile that contains them.
+   * Draw the nut through the profile it is seated in, by dropping the depth test
+   * and drawing late.
+   *
+   * OFF everywhere a nut is shown as it actually is. A T-nut lives inside the
+   * slot, behind the aluminium, so a depth-tested one is invisible from most
+   * angles — and that is CORRECT, not a bug to be worked around: the part is
+   * where the BOM says it is, and you see it when the slot mouth happens to face
+   * you. Setting this in a viewer trades that truth for a nut painted on top of
+   * the profile, which reads as a component floating in the metal.
+   *
+   * The exception is `kits/KitEditorScene`, whose subject IS this hardware: an
+   * editor that cannot show two of the five parts it is editing is not usable.
    */
-  ghost?: boolean;
+  xray?: boolean;
   pickable?: boolean;
 }
 
 const TNutMesh_ = ({ part, ...props }: TNutMeshProps & { part: BakedTNut }) => {
   const geometry = useLoader(STLLoader, part.stlUrl);
-  const ghost = props.ghost ?? false;
-  const opacity = props.opacity ?? (ghost ? 0.45 : 1);
+  const xray = props.xray ?? false;
+  const opacity = props.opacity ?? 1;
   return (
     <mesh
       geometry={geometry}
-      // See `ghost`: without this the nut is hidden by the profile around it.
-      renderOrder={props.renderOrder ?? (ghost ? 7 : 0)}
+      // See `xray`: without this the profile covers the nut it is meant to show.
+      renderOrder={props.renderOrder ?? (xray ? X_RAY_DRAW_ORDER : 0)}
       {...(props.pickable ? {} : { raycast: NO_PICK })}
     >
       <meshStandardMaterial
@@ -136,8 +147,8 @@ const TNutMesh_ = ({ part, ...props }: TNutMeshProps & { part: BakedTNut }) => {
         roughness={0.45}
         transparent={opacity < 1}
         opacity={opacity}
-        depthTest={!ghost}
-        depthWrite={!ghost}
+        depthTest={!xray}
+        depthWrite={!xray}
         emissive={props.emissive ?? '#000000'}
         emissiveIntensity={props.emissiveIntensity ?? 0.75}
       />

@@ -12,6 +12,10 @@ dist
 dist-ssr
 *.local
 
+# `scripts/*.py` are run from a venv that drops bytecode next to them.
+__pycache__/
+*.pyc
+
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json

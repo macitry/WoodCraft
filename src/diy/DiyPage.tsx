@@ -7,7 +7,7 @@ import BracketEditModal from './BracketEditModal';
 import AppHeader from '../components/AppHeader';
 import { useDiyStore } from '../store/diyStore';
 import { useModelStore } from '../store/modelStore';
-import { bomToCsv, bomToText } from '../utils/bomExport';
+import { bomToCsv, bomToText, bomToXlsx } from '../utils/bomExport';
 import { computeDiyBom, diyOps, diyBomName } from '../utils/diyBom';
 import { useKitLayoutStore } from '../store/kitLayoutStore';
 import { downloadFile } from '../utils/download';
@@ -186,12 +186,18 @@ const DiyExportButton: React.FC = () => {
   );
   const ops = useMemo(() => diyOps(kitInstances), [kitInstances]);
 
-  const run = (kind: 'csv' | 'txt') => {
+  const run = (kind: 'csv' | 'txt' | 'xlsx') => {
     const stem = diyBomName();
     if (kind === 'csv') {
       // U+FEFF so Excel reads the Chinese headers as UTF-8 (same as the main
       // configurator's export).
       downloadFile(`${stem}.csv`, `﻿${bomToCsv(rows, ops)}`, 'text/csv;charset=utf-8');
+    } else if (kind === 'xlsx') {
+      downloadFile(
+        `${stem}.xlsx`,
+        bomToXlsx(rows, ops),
+        'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+      );
     } else {
       downloadFile(`${stem}.txt`, bomToText(rows, ops), 'text/plain;charset=utf-8');
     }
@@ -221,6 +227,12 @@ const DiyExportButton: React.FC = () => {
               className="w-full px-3 py-1.5 text-left text-xs text-neutral-300 hover:bg-neutral-800 transition-colors cursor-pointer"
             >
               {t('diy.exportCsv')}
+            </button>
+            <button
+              onClick={() => run('xlsx')}
+              className="w-full px-3 py-1.5 text-left text-xs text-neutral-300 hover:bg-neutral-800 transition-colors cursor-pointer"
+            >
+              {t('diy.exportXlsx')}
             </button>
             <button
               onClick={() => run('txt')}

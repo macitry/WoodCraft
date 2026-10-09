@@ -87,8 +87,8 @@ export const zh = {
   'panel.tweakParts': '微调零件…',
   'panel.tweakHint': '逐颗调整：{connector} · {parts}',
   'panel.showFasteners': '显示紧固件',
-  'panel.showInternal': '槽内螺母（透视）',
-  'panel.showInternalHint': '半透明显示压入型材槽内的 T 型螺母',
+  'panel.showInternal': '槽内螺母',
+  'panel.showInternalHint': '把压入型材槽内的 T 型螺母装进模型。它们就埋在型材里，正常视角由型材挡住 —— 这是实情，不是画错',
 
   // --- BomPreviewModal ---------------------------------------------------
   'panel.bomTitle': '📋 BOM 物料清单',
@@ -104,6 +104,8 @@ export const zh = {
   'panel.bomTotal': '共 {n} 件',
   'panel.exportCsv': '📤 导出 CSV',
   'panel.exportCsvHint': '导出 BOM 为 CSV',
+  'panel.exportXlsx': '📊 导出 Excel',
+  'panel.exportXlsxHint': '导出 BOM 为 Excel 工作簿（.xlsx）',
 
   // --- BOM row labels and export headers (`utils/bomExport`) -------------
   // These were bilingual IN ONE STRING — 「桌面 (Tabletop)」 — which is the exact
@@ -215,8 +217,8 @@ export const en: Record<PanelKey, string> = {
   'panel.tweakParts': 'Tweak parts…',
   'panel.tweakHint': 'Adjust individually: {connector} · {parts}',
   'panel.showFasteners': 'Show fasteners',
-  'panel.showInternal': 'Nuts in slot (x-ray)',
-  'panel.showInternalHint': 'Draw the T-nuts pressed into the profile slot semi-transparently',
+  'panel.showInternal': 'Nuts in slot',
+  'panel.showInternalHint': 'Mount the T-nuts pressed into the profile slot. They sit inside the aluminium, so the profile hides them from most angles — which is what they really look like, not a drawing fault',
 
   'panel.bomTitle': '📋 BOM — bill of materials',
   'panel.colPart': 'Part',
@@ -231,6 +233,8 @@ export const en: Record<PanelKey, string> = {
   'panel.bomTotal': '{n} pcs in total',
   'panel.exportCsv': '📤 Export CSV',
   'panel.exportCsvHint': 'Export the BOM as CSV',
+  'panel.exportXlsx': '📊 Export Excel',
+  'panel.exportXlsxHint': 'Export the BOM as an Excel workbook (.xlsx)',
 
   'bom.tabletop': 'Tabletop',
   'bom.leg': 'Leg',

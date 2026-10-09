@@ -5,10 +5,9 @@ import { TEMPLATE_LAYOUTS } from '../types/furniture';
 import type { Component, ViewPreset } from '../types/furniture';
 import type { OrbitControls as OrbitControlsImpl } from 'three-stdlib';
 import CameraController from './CameraController';
-import Lighting from './Lighting';
 import ModelLoader from './ModelLoader';
 import PlacementOverlay from './PlacementOverlay';
-import RoomScene from './RoomScene';
+import { SceneRenderer, sceneById } from './scenes';
 
 interface SceneProps {
   viewPreset: ViewPreset;
@@ -70,7 +69,7 @@ const Scene: React.FC<SceneProps> = ({ viewPreset, onControlsReady }) => {
   const selectedBracketId = useModelStore((s) => s.selectedBracketId);
   const brackets = useModelStore((s) => s.brackets);
   const cp = useModelStore((s) => s.currentParams);
-  const showRoom = useModelStore((s) => s.showRoom);
+  const sceneId = useModelStore((s) => s.sceneId);
   const controlsRef = useRef<OrbitControlsImpl | null>(null);
 
   // Dev-only, same convention as `__wcDiyScene` / `__wcKitEditorScene`: the
@@ -147,8 +146,7 @@ const Scene: React.FC<SceneProps> = ({ viewPreset, onControlsReady }) => {
 
   return (
     <>
-      <color attach="background" args={['#1a1a2e']} />
-      <Lighting />
+      <color attach="background" args={[sceneById(sceneId)?.background ?? '#1a1a2e']} />
       <CameraController
         viewPreset={viewPreset}
         controlsRef={controlsRef}
@@ -156,17 +154,17 @@ const Scene: React.FC<SceneProps> = ({ viewPreset, onControlsReady }) => {
         focusTarget={focusTarget}
         focusDistance={0.25}
       />
-      {/* The grid and the room say the same thing twice — "here is the floor" —
+      {/* The grid and a room say the same thing twice — "here is the floor" —
           and they disagree: the grid is a CAD 8 m square floating 15 mm above
           the room's floor, running out past its walls. Only one of them shows at
-          a time. */}
-      {!showRoom && (
+          a time, so the grid is exactly the signal that no scene is mounted. */}
+      {sceneId === null && (
         <gridHelper
           args={[8, 20, '#303050', '#202035']}
           position={[0, -0.005, 0]}
         />
       )}
-      <RoomScene />
+      <SceneRenderer />
       <ModelLoader model={model} />
       <PlacementOverlay />
     </>

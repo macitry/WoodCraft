@@ -200,10 +200,10 @@ const KIT_ORBIT_CX = 9.5;
 const KIT_ORBIT_CY = 9.5;
 
 /** Hardware mesh for one spec, in the bracket-local mm frame. */
-const HardwareMesh: React.FC<{ spec: HardwareSpec; ghosted: boolean }> = ({ spec, ghosted }) => {
+const HardwareMesh: React.FC<{ spec: HardwareSpec }> = ({ spec }) => {
   const size = spec.size ?? 'M6';
   return spec.kind === 't_nut' ? (
-    <TNutMesh size={size} series={SCREW_SERIES} color="#b08d57" ghost={ghosted} />
+    <TNutMesh size={size} series={SCREW_SERIES} color="#b08d57" />
   ) : (
     <ScrewMesh
       family={spec.family ?? DEFAULT_SCREW_FAMILY}
@@ -252,7 +252,7 @@ const RotatingKitMesh: React.FC<{ kit: AccessoryKit }> = ({ kit }) => {
             position={f.position}
             rotation={f.rotation as unknown as [number, number, number]}
           >
-            <HardwareMesh spec={f.spec} ghosted={f.internal} />
+            <HardwareMesh spec={f.spec} />
           </group>
         ))}
       </group>

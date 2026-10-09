@@ -59,7 +59,10 @@ const PartMesh: FC<{
           series={SCREW_SERIES}
           family={spec.tnutFamily}
           color={HARDWARE_TONE.t_nut}
-          ghost={fastener.internal}
+          // The ONE place a nut is drawn through the metal. See `xray`: it is
+          // right for a viewer to hide the part in its slot, and wrong for the
+          // editor whose job is to show and pick it.
+          xray={fastener.internal}
           emissive={emissive}
           pickable
         />
@@ -103,11 +106,15 @@ const PartMesh: FC<{
  * depth-sort triangles within one geometry, and an ASCII STL arrives as a
  * non-indexed `BufferGeometry` (3030 is 4128 faces = 12384 vertices), so with
  * `depthWrite: false` the slot mouths and lips all bleed into each other and the
- * very detail being shown is erased. The repo's answer for "see inside a solid"
- * is the ghost mechanism instead — `depthTest/depthWrite = !ghost` plus
- * `renderOrder`, see `TNutMesh` in `diy/FastenerStl.tsx` — and every T-nut here
- * already carries `ghost: f.internal`, so it draws over these bars regardless of
- * their depth.
+ * very detail being shown is erased.
+ *
+ * These bars are also opaque because that is what a profile IS — so the T-nuts
+ * seated in them carry `xray: f.internal` instead (`TNutMesh` in
+ * `diy/FastenerStl.tsx`), dropping their depth test to draw over the bars. It is
+ * the only place in the app that does: everywhere else, including every viewer
+ * built on the same renderers, a nut is drawn normally and the profile it sits in
+ * hides it, which is what a nut in a slot looks like. Here the hardware is the
+ * subject — an editor that cannot show two of the five parts it edits is not one.
  *
  * `ProfileStl` centres its mesh on all three axes, extrusion axis included, so
  * each bar spans ±length/2 and needs a group to put it where the box used to be.

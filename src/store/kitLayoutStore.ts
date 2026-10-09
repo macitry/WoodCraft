@@ -394,8 +394,8 @@ export const useKitLayoutStore = create<KitLayoutState>((set, get) => ({
     const cur = get().layouts[setKey] ?? EMPTY_LAYOUT;
     const id = uid();
     // `internal` follows the KIND, never a UI toggle: a T-nut carries no seat of
-    // its own and is drawn ghosted under x-ray only, so adding one without
-    // setting this would put invisible hardware into the BOM.
+    // its own and lives inside the profile, so adding one without setting this
+    // would put a part into the BOM that nothing draws.
     const part: ExtraPart = { id, spec, position, rotation, internal: spec.kind === 't_nut' };
     set({ layouts: commit(get().layouts, setKey, { parts: cur.parts, extra: [...cur.extra, part] }) });
     return `extra:${id}`;
