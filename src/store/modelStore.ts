@@ -15,7 +15,7 @@ import type {
 import { TEMPLATE_BACKEND_ID, TEMPLATE_LAYOUTS } from '../types/furniture';
 import { nextHoleId } from '../utils/holeGeometry';
 import { reflowAnchoredHoles, reanchorFromCoord } from '../utils/holeTemplates';
-import { accessoryKitById } from '../utils/accessoryKits';
+import { DEFAULT_ACCESSORY_KIT_ID, accessoryKitById } from '../utils/accessoryKits';
 import type { DxfTabletopShape } from '../utils/dxfImport';
 import { generateModel, fetchDefaultModel, fetchProgress } from '../api/modelApi';
 import type { ServerProgress } from '../api/modelApi';
@@ -211,6 +211,9 @@ interface ModelState {
   // fasteners themselves are NOT stored: they are derived from `brackets` +
   // `activeKitId` (see utils/accessoryKits), so they follow the geometry for
   // free and never need migrating when brackets are regenerated.
+  //
+  // A session opens on `DEFAULT_ACCESSORY_KIT_ID`, not on the "无" state, so a
+  // new desk shows its bolts. Clearing to null is still the panel's 「无」 card.
   activeKitId: string | null;
   /** Draw the bolts at each joint. */
   showFasteners: boolean;
@@ -358,7 +361,7 @@ export const useModelStore = create<ModelState>((set, get) => ({
   selectedBracketId: null,
   defaultBracketCount: 0,
   placementMode: false,
-  activeKitId: null,
+  activeKitId: DEFAULT_ACCESSORY_KIT_ID,
   showFasteners: true,
   showInternalFasteners: false,
   tabletopTexture: DEFAULT_TABLETOP_TEXTURE,

@@ -796,6 +796,22 @@ const byId = new Map(ACCESSORY_KITS.map((k) => [k.id, k]));
  */
 export const JOINT_KITS: AccessoryKit[] = ACCESSORY_KITS.filter((k) => k.scope === 'joint');
 
+/** The kit a fresh session starts with, instead of the "无" state.
+ *
+ *  `activeKitId` drives three things at once — the hardware `FastenerSet` draws
+ *  on every bracket, the counts the kit panel prints, and the hardware rows in
+ *  the BOM — so defaulting it to null meant a new desk opened with bare angle
+ *  brackets and a BOM that listed no fasteners at all. A corner joint's whole
+ *  point is the bolts, so the default is the joint kit the app is built around,
+ *  the same one `DEFAULT_BRACKET_STL_URL` is the connector for.
+ *
+ *  It must satisfy `kitFitReason` for every profile a model can actually have:
+ *  choosing a kit the panel draws as disabled would put the 3D and the panel at
+ *  odds. `corner-standard` needs a 30-series profile and nothing in the app
+ *  writes `currentParams.profile` — it is `'3030'` from the store's own default
+ *  on, with no picker on the main page — so the two agree. */
+export const DEFAULT_ACCESSORY_KIT_ID = 'corner-standard';
+
 /** Look up a kit; `null`/unknown → null (null is the "无" state, not a sentinel
  *  kit — there is deliberately no "none" entry in ACCESSORY_KITS). */
 export function accessoryKitById(id?: string | null): AccessoryKit | null {
