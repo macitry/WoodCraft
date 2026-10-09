@@ -66,6 +66,8 @@ export const zh = {
   'view.perspective': '轴测',
   'view.3d': '3D',
   'view.plan': '平面图',
+  'view.room': '房间',
+  'view.roomHint': '在房间里显示这件家具',
   'view.orbitHint': '拖动旋转 · 滚轮缩放 · 右键平移',
 } as const;
 
@@ -128,5 +130,7 @@ export const en: Record<CommonKey, string> = {
   'view.perspective': 'Isometric',
   'view.3d': '3D',
   'view.plan': 'Plan',
+  'view.room': 'Room',
+  'view.roomHint': 'Show the piece in a room',
   'view.orbitHint': 'Drag to rotate · Scroll to zoom · Right-drag to pan',
 };

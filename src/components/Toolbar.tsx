@@ -29,6 +29,8 @@ const Toolbar: React.FC<ToolbarProps> = ({
   const loadModelFromApi = useModelStore((s) => s.loadModelFromApi);
   const model = useModelStore((s) => s.model);
   const isLoading = useModelStore((s) => s.isLoading);
+  const showRoom = useModelStore((s) => s.showRoom);
+  const setShowRoom = useModelStore((s) => s.setShowRoom);
   const [templateMenuOpen, setTemplateMenuOpen] = useState(false);
   const [showBom, setShowBom] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
@@ -198,6 +200,25 @@ const Toolbar: React.FC<ToolbarProps> = ({
             </button>
           ))}
         </div>
+      )}
+
+      {/* Room on/off. Sits with the camera presets because it is the same kind of
+          thing — how the desk is being looked at, not what the desk is. Styled on
+          the preset row's active/idle classes, but its own button rather than a
+          fifth preset, so it does not read as moving the camera. */}
+      {model && viewMode === '3d' && (
+        <button
+          data-room-toggle
+          className={`px-2.5 py-1.5 text-xs rounded-md transition-colors cursor-pointer
+            ${showRoom
+              ? 'bg-neutral-800 text-white'
+              : 'text-neutral-500 hover:text-neutral-300 hover:bg-neutral-900'
+            }`}
+          onClick={() => setShowRoom(!showRoom)}
+          title={t('view.roomHint')}
+        >
+          {t('view.room')}
+        </button>
       )}
 
       <div className="w-px h-6 bg-neutral-800" />

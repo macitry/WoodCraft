@@ -8,6 +8,7 @@ import CameraController from './CameraController';
 import Lighting from './Lighting';
 import ModelLoader from './ModelLoader';
 import PlacementOverlay from './PlacementOverlay';
+import RoomScene from './RoomScene';
 
 interface SceneProps {
   viewPreset: ViewPreset;
@@ -69,6 +70,7 @@ const Scene: React.FC<SceneProps> = ({ viewPreset, onControlsReady }) => {
   const selectedBracketId = useModelStore((s) => s.selectedBracketId);
   const brackets = useModelStore((s) => s.brackets);
   const cp = useModelStore((s) => s.currentParams);
+  const showRoom = useModelStore((s) => s.showRoom);
   const controlsRef = useRef<OrbitControlsImpl | null>(null);
 
   // Dev-only, same convention as `__wcDiyScene` / `__wcKitEditorScene`: the
@@ -154,10 +156,17 @@ const Scene: React.FC<SceneProps> = ({ viewPreset, onControlsReady }) => {
         focusTarget={focusTarget}
         focusDistance={0.25}
       />
-      <gridHelper
-        args={[8, 20, '#303050', '#202035']}
-        position={[0, -0.005, 0]}
-      />
+      {/* The grid and the room say the same thing twice — "here is the floor" —
+          and they disagree: the grid is a CAD 8 m square floating 15 mm above
+          the room's floor, running out past its walls. Only one of them shows at
+          a time. */}
+      {!showRoom && (
+        <gridHelper
+          args={[8, 20, '#303050', '#202035']}
+          position={[0, -0.005, 0]}
+        />
+      )}
+      <RoomScene />
       <ModelLoader model={model} />
       <PlacementOverlay />
     </>

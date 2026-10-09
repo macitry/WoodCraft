@@ -219,6 +219,14 @@ interface ModelState {
   showFasteners: boolean;
   /** X-ray the T-nuts inside the profile slots (off by default). */
   showInternalFasteners: boolean;
+  /** Draw the desk inside a room (floor + two walls) instead of on a bare grid.
+   *
+   *  Like `showFasteners`, this is a picture of the desk, not a property of it:
+   *  session-only, never persisted, and it changes no geometry. The room is
+   *  scenery — it is deliberately not part of the model, the BOM or the export.
+   *  It is on by default: the desk reads as furniture rather than a CAD part the
+   *  moment the page opens, and the room cannot hide anything (see RoomScene). */
+  showRoom: boolean;
 
   // Mate (SolidWorks-style assembly)
   mateState: MateState;
@@ -296,6 +304,7 @@ interface ModelState {
   setAccessoryKit: (kitId: string | null) => void;
   setShowFasteners: (v: boolean) => void;
   setShowInternalFasteners: (v: boolean) => void;
+  setShowRoom: (v: boolean) => void;
   // Mate actions
   startMate: (bracketId: string) => void;
   cancelMate: () => void;
@@ -364,6 +373,7 @@ export const useModelStore = create<ModelState>((set, get) => ({
   activeKitId: DEFAULT_ACCESSORY_KIT_ID,
   showFasteners: true,
   showInternalFasteners: false,
+  showRoom: true,
   tabletopTexture: DEFAULT_TABLETOP_TEXTURE,
   customBoards: [],
   currentParams: {
@@ -801,6 +811,7 @@ export const useModelStore = create<ModelState>((set, get) => ({
   setAccessoryKit: (kitId) => set({ activeKitId: accessoryKitById(kitId) ? kitId : null }),
   setShowFasteners: (v) => set({ showFasteners: v }),
   setShowInternalFasteners: (v) => set({ showInternalFasteners: v }),
+  setShowRoom: (v) => set({ showRoom: v }),
 
   // ---- Mate workflow ----
   mateState: 'idle',
