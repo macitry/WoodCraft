@@ -332,35 +332,89 @@ export interface DiyScrew {
 }
 
 
-/** Ghost screw shown while dragging a screw over the 3D viewport. */
+/** Ghost screw shown while dragging a screw over the 3D viewport.
+ *
+ *  Carries the whole part, not just where it goes: the library's cards are
+ *  grouped by standard, so which standard was dragged is decided at the card and
+ *  has to survive the trip — see `raycastScrewTarget`. `length` is deliberately
+ *  absent: the drag picks a standard and a thread, and the length is chosen
+ *  afterwards in the property panel. */
 export interface DiyScrewGhost {
   position: { x: number; y: number; z: number };
   rotation: { roll: number; pitch: number; yaw: number };
   size: ScrewSize;
+  family: ScrewFamily;
   profileId: string;
 }
 
-/** DIY editor mode. */
+/** Ghost profile shown on the ground plane while a profile is in hand.
+ *
+ *  The root profile was the one part with no preview at all: it used to arrive on
+ *  a dropped drag, so the pointer was already carrying the browser's own drag
+ *  image and nothing had to be drawn. With a plain click there is no drag image,
+ *  so the ghost is what tells the user where the post will stand.
+ *
+ *  Carries the direction as well as the size even though every placement is
+ *  vertical today: the ghost draws what `addRootProfile` will build, and a
+ *  direction that lived only in the store would let the two disagree. */
+export interface DiyProfileGhost {
+  position: { x: number; y: number; z: number };
+  size: ProfileSize;
+  direction: AxisDir;
+}
+
+/**
+ * The part the pointer is holding — picked from the library, not yet placed.
+ *
+ * Replaces the drag payloads (`application/diy-*` MIME types) and the
+ * connector-only `armedConnectorId` with one concept: what is in hand is store
+ * state, so the ghost that follows the pointer and the click that commits it
+ * read the same value. It is deliberately NOT a `DiyMode` — like the arming it
+ * replaces, it says what a click would place, and every other gesture (orbit,
+ * selection, the stretch handle) keeps working while it is set.
+ *
+ * Placement clears it. That is what lets the click AFTER a placement land on the
+ * part just made (to select and then drag it) instead of stamping a second copy.
+ */
+export type DiyHand =
+  | { kind: 'profile'; size: ProfileSize }
+  | { kind: 'connector'; connectorId: string }
+  | { kind: 'screw'; size: ScrewSize; family: ScrewFamily }
+  | { kind: 'kit'; kitId: string };
+
+/** What a `useDiyMoveDrag` gesture is moving. */
+export interface DiyMovingPart {
+  kind: 'profile' | 'bracket' | 'screw';
+  id: string;
+}
+
+/**
+ * The live dimension annotation drawn beside a part, CAD-fashion, while a height
+ * is being set.
+ *
+ * `length` measures the profile along its OWN axis — its two end faces, which for
+ * a post is its height. `height` measures the vertical distance from the ground
+ * plane up to the profile's axis, which is what a rail sliding up its post is
+ * choosing. Both, for a post, are "the height" — which one is on screen is what
+ * says which gesture put it there.
+ */
+export interface DiyDimension {
+  profileId: string;
+  kind: 'length' | 'height';
+}
+
+/**
+ * DIY editor mode.
+ *
+ * There is no `placing_child`: growing a child profile off a face is a HOVER,
+ * not a mode. It arms and un-arms as the pointer crosses the selected bar, and
+ * a mode that flickers with the mouse would take the camera with it.
+ */
 export type DiyMode =
   | 'idle'
   | 'stretching'
   | 'selecting_direction'
-  | 'placing_bracket'
-  | 'placing_child'
-  | 'placing_bracket_faces';
-
-/**
- * A face picked on a profile while placing a bracket by clicking two faces.
- * `normal` is the outward unit normal (world, mm frame), `hit` the clicked
- * point on that face in mm.
- */
-export interface BracketFacePick {
-  profileId: string;
-  /** Dominant-axis face name, e.g. "+Z" — which face was double-clicked. */
-  face: string;
-  normal: { x: number; y: number; z: number };
-  hit: { x: number; y: number; z: number };
-}
+  | 'placing_bracket';
 
 /** Profile size → cross-section dimension (mm). */
 export const PROFILE_DIMS: Record<ProfileSize, number> = {

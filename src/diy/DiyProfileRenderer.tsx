@@ -1,27 +1,33 @@
-import { useMemo, Suspense, useState, useEffect, useCallback } from 'react';
+import { useMemo, Suspense, useState } from 'react';
 import * as THREE from 'three';
 import { useDiyStore } from '../store/diyStore';
-import { useModelStore } from '../store/modelStore';
 import { PROFILE_DIMS } from '../types/furniture';
-import type { BracketFacePick } from '../types/furniture';
-import { findCornerAt, eulerFromNormals } from './DiyCornerHints';
-import { fetchBracketRotation } from '../api/modelApi';
-import { logDiyBracket } from './diyLog';
+import type { FaceDir } from '../types/furniture';
 import { ProfileStl } from './ProfileStl';
-import { t } from '../i18n';
+import { useDiyMoveDrag, consumeJustDragged } from './useDiyMoveDrag';
+import { getFacePlane, snapToFace, getFreeAxis } from './diyFacePlane';
 
 const M = 0.001;
 
 /**
  * Box overlay with per-face hover highlight.
  * Hovered face = brighter blue.
+ *
+ * It is also the ONLY thing under the pointer that answers for a profile. The
+ * box is padded `M * 0.5` on each side and therefore encloses `ProfileStl`, so a
+ * ray from outside stops on the box first; `stopPropagation` then keeps the
+ * STL's own hit from being reported as a second one. Every face-shaped gesture
+ * in this file comes through here, which is why the callbacks are named for the
+ * face rather than for the box.
  */
 const FaceBox: React.FC<{
   size: [number, number, number];
   isSelected: boolean;
   hoveredFace: number;
   onHoverFace: (faceIdx: number) => void;
-}> = ({ size, isSelected, hoveredFace, onHoverFace }) => {
+  onFaceMove?: (e: any) => void;
+  onFaceOut?: () => void;
+}> = ({ size, isSelected, hoveredFace, onHoverFace, onFaceMove, onFaceOut }) => {
   const baseColor = isSelected ? '#5599cc' : '#335577';
   const hoverColor = isSelected ? '#aaddff' : '#6699bb';
 
@@ -44,8 +50,12 @@ const FaceBox: React.FC<{
         // BoxGeometry: each face has 2 triangles, faceIndex maps to face 0-5
         const fi = e.faceIndex != null ? Math.floor(e.faceIndex / 2) : -1;
         onHoverFace(fi);
+        onFaceMove?.(e);
       }}
-      onPointerOut={() => onHoverFace(-1)}
+      onPointerOut={() => {
+        onHoverFace(-1);
+        onFaceOut?.();
+      }}
     >
       <boxGeometry args={size} />
       {materials.map((mat, i) => (
@@ -60,8 +70,10 @@ const ProfileMesh: React.FC<{
   profile: { id: string; profileSize: string; length: number; position: { x: number; y: number; z: number }; direction: string };
   isSelected: boolean;
   onClick: (e: any) => void;
-  onDoubleClick?: (e: any) => void;
-}> = ({ profile: p, isSelected, onClick, onDoubleClick }) => {
+  onPointerDown?: (e: any) => void;
+  onFaceMove?: (e: any) => void;
+  onFaceOut?: () => void;
+}> = ({ profile: p, isSelected, onClick, onPointerDown, onFaceMove, onFaceOut }) => {
   const dim = PROFILE_DIMS[p.profileSize] ?? 30;
   const lenM = M * Math.max(10, p.length);
   const dimM = M * dim;
@@ -80,8 +92,20 @@ const ProfileMesh: React.FC<{
   const [hoveredFace, setHoveredFace] = useState(-1);
 
   return (
-    <group position={pos} onClick={onClick} onDoubleClick={onDoubleClick} name={p.id}>
-      <FaceBox size={hlSize} isSelected={isSelected} hoveredFace={hoveredFace} onHoverFace={setHoveredFace} />
+    <group
+      position={pos}
+      onClick={onClick}
+      onPointerDown={onPointerDown}
+      name={p.id}
+    >
+      <FaceBox
+        size={hlSize}
+        isSelected={isSelected}
+        hoveredFace={hoveredFace}
+        onHoverFace={setHoveredFace}
+        onFaceMove={onFaceMove}
+        onFaceOut={onFaceOut}
+      />
       <Suspense fallback={null}>
         <ProfileStl profileSize={p.profileSize} length={p.length} direction={p.direction} />
       </Suspense>
@@ -89,149 +113,21 @@ const ProfileMesh: React.FC<{
   );
 };
 
-/** Face info extracted from a raycast click on a profile mesh. */
-interface FaceClickInfo {
-  /** Dominant-axis face name, e.g. "+X". */
-  face: string;
-  /** Outward unit normal in world mm frame. */
-  normal: { x: number; y: number; z: number };
-  /** Hit position rounded to integer mm (used by child-profile placement). */
-  hitPos: { x: number; y: number; z: number };
-  /** Hit position at full precision mm (used by bracket face picking). */
-  hitRaw: { x: number; y: number; z: number };
-}
-
-function getFaceInfo(e: any): FaceClickInfo | null {
+/**
+ * Which of the six faces of the box the ray came back through, e.g. `"+Z"`.
+ *
+ * The hit normal is pushed through the target mesh's own `matrixWorld` — it
+ * arrives in LOCAL space — and then read for its DOMINANT axis only. The vector
+ * itself goes no further.
+ */
+function faceFromHit(e: any): FaceDir | null {
   const n = e.face?.normal?.clone();
   if (!n) return null;
   const wn = n.applyMatrix3(new THREE.Matrix3().getNormalMatrix((e.object as THREE.Mesh).matrixWorld)).normalize();
   const abs = [Math.abs(wn.x), Math.abs(wn.y), Math.abs(wn.z)];
   const mi = abs.indexOf(Math.max(...abs));
   const sgn = [wn.x, wn.y, wn.z][mi] > 0 ? '+' : '-';
-  const p = e.point as THREE.Vector3;
-  return {
-    face: `${sgn}${['X', 'Y', 'Z'][mi]}`,
-    normal: { x: wn.x, y: wn.y, z: wn.z },
-    hitPos: { x: Math.round(p.x * 1000), y: Math.round(p.y * 1000), z: Math.round(p.z * 1000) },
-    hitRaw: { x: p.x * 1000, y: p.y * 1000, z: p.z * 1000 },
-  };
-}
-
-/**
- * Manual two-face placement → compare against the auto corner-hint pipeline.
- *
- * Ground truth: the bracket is placed where the two clicked face planes meet.
- * We log the auto corner hint (findCornerAt) at the same joint, plus what the
- * backend returns for the same normals, so a mismatch between the two methods
- * is visible in the console.
- */
-async function runFaceComparison(first: BracketFacePick, second: BracketFacePick) {
-  const state = useDiyStore.getState();
-  const placed = state.brackets[state.brackets.length - 1];
-  if (!placed) return;
-
-  const corner = findCornerAt(state.profiles, placed.position);
-  const toDeg = (e: THREE.Euler) => ({
-    roll: +THREE.MathUtils.radToDeg(e.x).toFixed(2),
-    pitch: +THREE.MathUtils.radToDeg(e.y).toFixed(2),
-    yaw: +THREE.MathUtils.radToDeg(e.z).toFixed(2),
-  });
-
-  const delta = corner
-    ? {
-        x: +(placed.position.x - corner.position.x).toFixed(2),
-        y: +(placed.position.y - corner.position.y).toFixed(2),
-        z: +(placed.position.z - corner.position.z).toFixed(2),
-      }
-    : null;
-
-  // Dev-only comparison harness. Its keys are deliberately NOT dictionary
-  // entries: nothing here is drawn, so a translated key would only mean the log
-  // reads one way and the code that greps it reads another. English because the
-  // values beside these keys — `normal`, `rotation`, `Euler` — already are.
-  console.log(
-    '%c[corner-compare] manual face-pair vs auto corner hint',
-    'color:#ff8844;font-weight:bold',
-    {
-      'pos.manual(mm)': placed.position,
-      'pos.auto(mm)': corner?.position ?? 'no corner hint',
-      'delta(mm)': delta ?? 'no corner hint',
-      'face1.normal.manual': first.normal,
-      'face1.normal.auto': corner?.faceA ?? '—',
-      'face2.normal.manual': second.normal,
-      'face2.normal.auto': corner?.faceB ?? '—',
-      'euler.manual(deg)': placed.rotation,
-      'euler.auto(deg)': corner ? toDeg(eulerFromNormals(corner.faceA, corner.faceB)) : 'no corner hint',
-    },
-  );
-
-  // Show the auto-algorithm result as a translucent blue reference bracket
-  // beside the manual one, so the difference is visible in the viewport.
-  if (corner) {
-    const autoE = eulerFromNormals(corner.faceA, corner.faceB);
-    useDiyStore.getState().setAutoRefBracket({
-      id: 'auto-ref',
-      connectorId: 'corner_bracket',
-      position: { x: corner.position.x, y: corner.position.y, z: corner.position.z },
-      rotation: {
-        roll: THREE.MathUtils.radToDeg(autoE.x),
-        pitch: THREE.MathUtils.radToDeg(autoE.y),
-        yaw: THREE.MathUtils.radToDeg(autoE.z),
-      },
-      anchorPosition: { x: 0, y: 0, z: 0 },
-      anchorRotation: { roll: 0, pitch: 0, yaw: 0 },
-      connectedProfiles: [corner.profileIdA, corner.profileIdB],
-      enabled: true,
-      size: placed.size,
-    });
-  }
-
-  // Persistent record: position + pose + the two double-clicked faces.
-  const profOf = (id: string) => {
-    const p = state.profiles.find((q) => q.id === id);
-    return p
-      ? { id: p.id, size: p.profileSize, direction: p.direction, length: p.length, position: p.position }
-      : null;
-  };
-  logDiyBracket('bracket_placed', {
-    method: 'two_face_doubleclick',
-    position: placed.position,
-    rotation: placed.rotation,
-    size: placed.size,
-    faces: [
-      { ...first, profile: profOf(first.profileId) },
-      { ...second, profile: profOf(second.profileId) },
-    ],
-    connectedProfiles: placed.connectedProfiles,
-  });
-
-  // Cross-check: the backend given the same two normals must agree with the
-  // local euler — if not, the rotation convention differs somewhere.
-  try {
-    const res = await fetchBracketRotation(
-      [first.normal.x, first.normal.y, first.normal.z],
-      [second.normal.x, second.normal.y, second.normal.z],
-    );
-    const m = new THREE.Matrix4().set(
-      res.rotation_matrix[0][0], res.rotation_matrix[1][0], res.rotation_matrix[2][0], 0,
-      res.rotation_matrix[0][1], res.rotation_matrix[1][1], res.rotation_matrix[2][1], 0,
-      res.rotation_matrix[0][2], res.rotation_matrix[1][2], res.rotation_matrix[2][2], 0,
-      0, 0, 0, 1,
-    );
-    const be = new THREE.Euler().setFromRotationMatrix(m, 'XYZ');
-    const bdeg = toDeg(be);
-    const agree =
-      Math.abs(bdeg.roll - placed.rotation.roll) < 0.5 &&
-      Math.abs(bdeg.pitch - placed.rotation.pitch) < 0.5 &&
-      Math.abs(bdeg.yaw - placed.rotation.yaw) < 0.5;
-    console.log(
-      '%c[corner-compare] backend, same manual normals',
-      'color:#66ccff;font-weight:bold',
-      { 'backend.euler(deg)': bdeg, 'agreesWithManual': agree },
-    );
-  } catch (err) {
-    console.warn('[corner-compare] backend request failed', err);
-  }
+  return `${sgn}${['X', 'Y', 'Z'][mi]}` as FaceDir;
 }
 
 const DiyProfileRenderer: React.FC = () => {
@@ -239,49 +135,12 @@ const DiyProfileRenderer: React.FC = () => {
   const selId = useDiyStore((s) => s.selectedProfileId);
   const select = useDiyStore((s) => s.selectProfile);
   const startPlacingProfile = useDiyStore((s) => s.startPlacingProfile);
+  const updatePlacingPosition = useDiyStore((s) => s.updatePlacingPosition);
+  const cancelPlacing = useDiyStore((s) => s.cancelPlacing);
   const placingProfile = useDiyStore((s) => s.placingProfile);
-  const mode = useDiyStore((s) => s.mode);
-  const pickBracketFace = useDiyStore((s) => s.pickBracketFace);
-  const startBracketFacePicking = useDiyStore((s) => s.startBracketFacePicking);
-  const cancelBracketFacePicking = useDiyStore((s) => s.cancelBracketFacePicking);
-
-  // Escape cancels two-face bracket placement.
-  useEffect(() => {
-    if (mode !== 'placing_bracket_faces') return;
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') cancelBracketFacePicking();
-    };
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
-  }, [mode, cancelBracketFacePicking]);
-
-  const handleBracketFacePick = useCallback(
-    async (second: BracketFacePick) => {
-      const first = useDiyStore.getState().bracketFaceA;
-      const status = pickBracketFace(second);
-      // Module `t`, not the hook's: the message is composed here and stored in
-      // the store, so it is a value written at pick time rather than a label
-      // that re-renders. A hook handle captured in this `useCallback` would go
-      // stale the moment the language changed.
-      if (status === 'rejected') {
-        useModelStore.getState().setError(t('diy.errNotPerpendicular'));
-        return;
-      }
-      if (status === 'no_overlap') {
-        useModelStore.getState().setError(t('diy.errNoOverlap'));
-        return;
-      }
-      if (status === 'no_fit') {
-        useModelStore.getState().setError(t('diy.errNoFit'));
-        return;
-      }
-      if (status === 'placed' && first) {
-        useModelStore.getState().setError(null); // clear stale error banners
-        await runFaceComparison(first, second);
-      }
-    },
-    [pickBracketFace],
-  );
+  const hand = useDiyStore((s) => s.hand);
+  const movingPart = useDiyStore((s) => s.movingPart);
+  const beginMoveDrag = useDiyMoveDrag();
 
   if (profiles.length === 0) return null;
 
@@ -289,51 +148,96 @@ const DiyProfileRenderer: React.FC = () => {
     <group>
       {profiles.map((p) => {
         const isSel = selId === p.id;
-        const isPlacing = placingProfile?.parentId === p.id;
+        // The face this profile is currently offering to grow a child on. The
+        // ghost is transient — it lives exactly as long as the pointer rests on
+        // the face — so this is a hover state, not a mode.
+        const armedFace = placingProfile?.parentId === p.id ? placingProfile.face : null;
+
+        /**
+         * Put the child-profile ghost on the face under the pointer, or walk it
+         * along that face if it is already there.
+         *
+         * This replaces the old Shift+click. The gesture the user asked for is
+         * "hover the face, then click to place", and it is layered on the click
+         * that already means SELECT — so the ghost only ever appears on the
+         * profile that is ALREADY selected. Hovering any other bar does nothing,
+         * which is the price of not stealing the selection click.
+         *
+         * The snap is the same one the ghost used to do: 10 mm along the face,
+         * clamped a margin inside its edges, and locked to the parent's own axis
+         * on a side face (only `u` or only `v`). Doing it here rather than inside
+         * the ghost means the position the pointer produces and the position the
+         * store commits are one computation.
+         */
+        const armChild = (e: any) => {
+          if (hand) return;
+          if (movingPart) return;
+          e.stopPropagation();
+          const face = faceFromHit(e);
+          if (!face) return;
+
+          const fp = getFacePlane(p, face, PROFILE_DIMS[p.profileSize] ?? 30);
+          // `snapToFace` projects onto the face: the component along the normal
+          // is thrown away, so it does not matter that the hit landed on the
+          // padded highlight box rather than on the profile surface.
+          const snapped = snapToFace((e.point as THREE.Vector3).clone(), fp, getFreeAxis(fp, p.direction));
+          const pos = {
+            x: Math.round(snapped.x * 1000),
+            y: Math.round(snapped.y * 1000),
+            z: Math.round(snapped.z * 1000),
+          };
+
+          // `startPlacing` only on a real change of face — it resets the ghost,
+          // and a move within one face is a follow, not a new gesture.
+          if (armedFace === face) updatePlacingPosition(pos);
+          else startPlacingProfile(p.id, face, pos, p.profileSize);
+        };
+
+        /** Pointer left this profile: there is no face under it any more. */
+        const disarm = () => {
+          if (armedFace) cancelPlacing();
+        };
 
         const handleClick = (e: any) => {
           e.stopPropagation();
-          const info = getFaceInfo(e);
-          if (!info) return;
-
-          if (mode === 'placing_bracket_faces') {
-            // Skip the 2nd click of a double-click — onDoubleClick owns it.
-            if ((e.nativeEvent as PointerEvent)?.detail > 1) return;
-            void handleBracketFacePick({
-              profileId: p.id,
-              face: info.face,
-              normal: info.normal,
-              hit: info.hitRaw,
-            });
-            return;
-          }
+          // A part is in hand: this click belongs to the viewer, which places at
+          // the ghost. r3f's stopPropagation only stops other r3f handlers — it
+          // does not stop the DOM event reaching DiyViewer's own click handler —
+          // so the two placement paths have to be gated apart explicitly.
+          if (hand) return;
+          // The click that ends a move-drag is the drag's, not a selection toggle.
+          if (consumeJustDragged(p.id)) return;
+          if (!faceFromHit(e)) return;
 
           if (!isSel) { select(p.id); return; }
-          // If already placing, let DiyPlacingGhost handle confirm/cancel
-          if (placingProfile) return;
-          // Shift+Click face → enter placing mode
-          if (!e.nativeEvent?.shiftKey) return;
-          startPlacingProfile(p.id, info.face as any, info.hitPos, p.profileSize);
-        };
 
-        // Double-click a face starts two-face bracket placement and records
-        // that face as the first pick (the user's original "依次双击两个面").
-        const handleDoubleClick = (e: any) => {
-          e.stopPropagation();
-          if (mode !== 'idle') return;
-          const info = getFaceInfo(e);
-          if (!info) return;
-          startBracketFacePicking();
-          pickBracketFace({ profileId: p.id, face: info.face, normal: info.normal, hit: info.hitRaw });
+          // Selected: the click is the second half of the hover gesture, and the
+          // ghost is already sitting on the face under the pointer. Read it from
+          // the store rather than from this render's closure — the arm happened
+          // on pointerdown, one event ago, and that re-render may not have landed
+          // yet.
+          const st = useDiyStore.getState();
+          if (st.placingProfile?.parentId === p.id) st.confirmPlacingProfile();
         };
 
         return (
           <ProfileMesh
             key={p.id}
             profile={p}
-            isSelected={isSel || isPlacing}
+            isSelected={isSel}
             onClick={handleClick}
-            onDoubleClick={handleDoubleClick}
+            onFaceMove={isSel ? armChild : undefined}
+            onFaceOut={armedFace ? disarm : undefined}
+            // Only a part that is already selected may be dragged — see the
+            // rationale in `useDiyMoveDrag`.
+            //
+            // The press also arms the ghost, because a click with no pointer
+            // travel in between produces no `pointermove` at all: select a bar
+            // and click the same spot again without moving the mouse, and the
+            // hover would never have had its chance. A press that turns into a
+            // drag takes it back — `armChild` refuses while `movingPart` is set,
+            // and the ghost hides itself for the same reason.
+            onPointerDown={isSel ? (e) => { armChild(e); beginMoveDrag(e, { kind: 'profile', id: p.id }); } : undefined}
           />
         );
       })}

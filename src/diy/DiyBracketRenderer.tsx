@@ -5,6 +5,7 @@ import { ConnectorStl } from './DiyBracketStl';
 import { connectorById } from './connectors';
 import type { DiyConnector } from './connectors';
 import KitGroup from './DiyKitRenderer';
+import { useDiyMoveDrag, consumeJustDragged } from './useDiyMoveDrag';
 
 const M = 0.001;
 
@@ -52,8 +53,9 @@ const DiyBracketRenderer: React.FC = () => {
   const brackets = useDiyStore((s) => s.brackets);
   const selectedBracketId = useDiyStore((s) => s.selectedBracketId);
   const selectBracket = useDiyStore((s) => s.selectBracket);
-  const autoRefBracket = useDiyStore((s) => s.autoRefBracket);
   const kitInstances = useDiyStore((s) => s.kitInstances);
+  const hand = useDiyStore((s) => s.hand);
+  const beginMoveDrag = useDiyMoveDrag();
 
   // bracket id → the accessory kit bound to it. Single-valued by construction:
   // bindKit enforces one kit per bracket (a joint's seats are shared, so two
@@ -93,7 +95,16 @@ const DiyBracketRenderer: React.FC = () => {
                 THREE.MathUtils.degToRad(b.rotation.pitch),
                 THREE.MathUtils.degToRad(b.rotation.yaw),
               ]}
-              onClick={(e) => { e.stopPropagation(); selectBracket(isSel ? null : b.id); }}
+              onClick={(e) => {
+                e.stopPropagation();
+                // In hand → the viewer's click places at the ghost; the click
+                // ending a move-drag → the drag's, not a selection toggle.
+                if (hand) return;
+                if (consumeJustDragged(b.id)) return;
+                selectBracket(isSel ? null : b.id);
+              }}
+              // Only an already-selected bracket can be dragged.
+              onPointerDown={isSel ? (e) => beginMoveDrag(e, { kind: 'bracket', id: b.id }) : undefined}
             >
               {/* Anchor offset: local transform inside world transform */}
               <group
@@ -114,40 +125,6 @@ const DiyBracketRenderer: React.FC = () => {
             </group>
           );
         })}
-
-      {/* Auto-algorithm reference bracket (translucent blue) for comparing
-          against a manually placed bracket during debugging. Renders whatever
-          connector the reference carries (always cast in practice). */}
-      {autoRefBracket && (() => {
-        const acc = connectorById(autoRefBracket.connectorId);
-        const spec = wireframeSpec(acc, autoRefBracket.size);
-        return (
-          <group
-            position={[
-              M * autoRefBracket.position.x,
-              M * autoRefBracket.position.y,
-              M * autoRefBracket.position.z,
-            ]}
-            rotation={[
-              THREE.MathUtils.degToRad(autoRefBracket.rotation.roll),
-              THREE.MathUtils.degToRad(autoRefBracket.rotation.pitch),
-              THREE.MathUtils.degToRad(autoRefBracket.rotation.yaw),
-            ]}
-            renderOrder={6}
-          >
-            <mesh
-              position={[spec.pos[0] * M, spec.pos[1] * M, spec.pos[2] * M]}
-              renderOrder={6}
-            >
-              <boxGeometry args={[spec.args[0] * M, spec.args[1] * M, spec.args[2] * M]} />
-              <meshBasicMaterial color="#44aaff" wireframe transparent opacity={0.5} />
-            </mesh>
-            <Suspense fallback={null}>
-              <ConnectorStl url={acc.stlUrl} size={autoRefBracket.size} color="#44aaff" opacity={0.4} metalness={0.2} />
-            </Suspense>
-          </group>
-        );
-      })()}
     </group>
   );
 };

@@ -25,12 +25,6 @@ const DiyPage: React.FC = () => {
   const brackets = useDiyStore((s) => s.brackets);
   const screws = useDiyStore((s) => s.screws);
   const totalLength = profiles.reduce((sum, p) => sum + p.length, 0);
-  const mode = useDiyStore((s) => s.mode);
-  const bracketFaceA = useDiyStore((s) => s.bracketFaceA);
-  // No top-bar button for this any more: the corner ghosts are the way in, and
-  // the mode below is only ever entered by double-clicking two faces. The
-  // banner stays because that path can be left half-finished.
-  const isPickingFaces = mode === 'placing_bracket_faces';
   // The default name is written once, in the language the page was opened in.
   // It is the user's own data from then on (they can type over it), not a label
   // this app should keep re-translating behind their back.
@@ -144,13 +138,6 @@ const DiyPage: React.FC = () => {
         <main className="flex-1 relative">
           <DiyViewer />
           <DiyErrorOverlay />
-          {isPickingFaces && (
-            <div className="absolute top-3 left-1/2 -translate-x-1/2 z-30 pointer-events-none">
-              <div className="px-4 py-2 rounded-lg bg-amber-500/90 text-black text-sm font-medium shadow-lg">
-                {bracketFaceA ? t('diy.pickFace2') : t('diy.pickFace1')}
-              </div>
-            </div>
-          )}
         </main>
 
         {/* Right — Property Panel */}

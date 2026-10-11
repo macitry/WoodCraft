@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import type { DiyProfile, DiyScrewGhost, ScrewSize } from '../types/furniture';
+import type { ScrewFamily } from './fasteners';
 import { PROFILE_DIMS } from '../types/furniture';
 
 const M = 0.001;
@@ -9,15 +10,22 @@ const _probe = new THREE.Vector3();
 
 /**
  * Raycast a drag ray against every profile's axis-aligned OBB and return the
- * nearest face hit as a screw ghost — origin on the face plane, +Z oriented
- * INTO the profile (shaft direction).
+ * nearest face hit as a screw ghost — origin on the face plane and on the bar's
+ * centreline, +Z oriented INTO the profile (shaft direction).
  *
  * Returns null when the ray misses all profiles.
+ *
+ * `family` (which standard) is a parameter rather than something the caller
+ * stamps on afterwards because it is part of the ghost's identity, not a
+ * rendering choice: one size spans up to four standards, so a ghost carrying a
+ * size alone would be free to disagree with the card that produced it — exactly
+ * what the library's family-grouped cards must not do.
  */
 export function raycastScrewTarget(
   ray: THREE.Ray,
   profiles: DiyProfile[],
   size: ScrewSize,
+  family: ScrewFamily,
 ): DiyScrewGhost | null {
   let best: DiyScrewGhost | null = null;
   let bestDist = Infinity;
@@ -52,11 +60,33 @@ export function raycastScrewTarget(
     );
     const e = new THREE.Euler().setFromQuaternion(q, 'XYZ');
 
+    // Seat the screw on the profile's CENTRELINE.
+    //
+    // Of the three coordinates of the hit point, one is the face itself (the
+    // outward axis — always ±half the section, that is what makes it a face) and
+    // one runs along the bar (the profile's own axis). Those two ARE the screw's
+    // position and are kept. The third is the one that lets a screw sit anywhere
+    // across the face — 4 mm from one edge on this click and 11 mm from the other
+    // on the next — and it is thrown away in favour of the bar's centre.
+    //
+    // So a screw is a point on the centreline, on one face of one profile: the
+    // pointer picks the bar and the face, this function picks the seat, and the
+    // only thing left to choose afterwards is how far along the bar it sits —
+    // which is exactly the one degree of freedom `useDiyMoveDrag` slides.
+    const outwardAxis = outward.x !== 0 ? 0 : outward.y !== 0 ? 1 : 2;
+    const profileAxis = p.direction === 'X' ? 0 : p.direction === 'Y' ? 1 : 2;
+    const seat = [tmpHit.x, tmpHit.y, tmpHit.z];
+    const centre = [cx, cy, cz];
+    for (let i = 0; i < 3; i++) {
+      if (i === outwardAxis || i === profileAxis) continue;
+      seat[i] = centre[i];
+    }
+
     best = {
       position: {
-        x: Math.round(tmpHit.x * 1000),
-        y: Math.round(tmpHit.y * 1000),
-        z: Math.round(tmpHit.z * 1000),
+        x: Math.round(seat[0] * 1000),
+        y: Math.round(seat[1] * 1000),
+        z: Math.round(seat[2] * 1000),
       },
       rotation: {
         roll: THREE.MathUtils.radToDeg(e.x),
@@ -64,6 +94,7 @@ export function raycastScrewTarget(
         yaw: THREE.MathUtils.radToDeg(e.z),
       },
       size,
+      family,
       profileId: p.id,
     };
     bestDist = dist;

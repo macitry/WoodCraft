@@ -4,10 +4,11 @@ import { useDiyStore, DEFAULT_BRACKET_CONNECTOR_ID } from '../store/diyStore';
 import { ConnectorStl } from './DiyBracketStl';
 import { connectorById } from './connectors';
 import { logDiyBracket } from './diyLog';
-import { bracketAtHint, computeCornerHints, eulerFromNormals } from './diyCornerGeometry';
+import { bracketAtHint, eulerFromNormals } from './diyCornerGeometry';
+import { allCornerHints, freeCornerHints } from './diyBracketTarget';
 import type { CornerHint } from './diyCornerGeometry';
 
-// Re-export the pure geometry so existing callers (DiyProfileRenderer,
+// Re-export the pure geometry so existing callers (DiyViewer,
 // main-frame auto-placement) keep importing from this same module path.
 export { computeCornerHints, findCornerAt, eulerFromNormals } from './diyCornerGeometry';
 export type { CornerHint } from './diyCornerGeometry';
@@ -28,25 +29,34 @@ const HOT_COLOR = '#ffb380';
 const CornerHintGhost: React.FC<{
   hint: CornerHint;
   stlUrl: string;
-  /** False while another mode owns the click — see the gate in the parent. */
+  /** False while a mode owns the click — see the gate in the parent. */
   canPlace: boolean;
+  /**
+   * Highlighting is gated separately from clicking, and more loosely: a part in
+   * hand takes the click (the viewer places at the same corner) but must not
+   * take the highlight, because the highlight is the answer to "which corner am
+   * I about to fill".
+   */
+  canHover: boolean;
   onPlace: () => void;
-}> = ({ hint, stlUrl, canPlace, onPlace }) => {
+}> = ({ hint, stlUrl, canPlace, canHover, onPlace }) => {
   const [hovered, setHovered] = useState(false);
   const e = eulerFromNormals(hint.faceA, hint.faceB);
-  const hot = hovered && canPlace;
+  const hot = hovered && canHover;
 
   return (
     <group
       position={[hint.position.x * M, hint.position.y * M, hint.position.z * M]}
       rotation={[e.x, e.y, e.z]}
       renderOrder={5}
-      // A ghost that is not clickable carries NO handlers, so the ray passes
+      // A ghost that is not clickable carries NO click handler, so the ray passes
       // straight through it to the profile underneath. Attaching a handler that
       // decides not to act would swallow the click that the two-face pick and
-      // the profile selection are waiting for.
-      onPointerOver={canPlace ? (ev) => { ev.stopPropagation(); setHovered(true); } : undefined}
-      onPointerOut={canPlace ? () => setHovered(false) : undefined}
+      // the profile selection are waiting for. (`stopPropagation` here stops
+      // other r3f handlers only; it does not stop the DOM event that reaches
+      // DiyViewer, which is why the click gate has to exist as well.)
+      onPointerOver={canHover ? (ev) => { ev.stopPropagation(); setHovered(true); } : undefined}
+      onPointerOut={canHover ? () => setHovered(false) : undefined}
       onClick={canPlace ? (ev) => { ev.stopPropagation(); onPlace(); } : undefined}
     >
       {/* The armed connector, not a fixed bracket: a ghost that previewed one
@@ -69,29 +79,35 @@ const CornerHintGhost: React.FC<{
 const DiyCornerHints: React.FC = () => {
   const showCornerHints = useDiyStore((s) => s.showCornerHints);
   const profiles = useDiyStore((s) => s.profiles);
-  // During a two-face comparison the blue auto-reference bracket already shows
-  // the auto result — hide the orange previews to avoid overlap.
-  const autoRefBracket = useDiyStore((s) => s.autoRefBracket);
   const brackets = useDiyStore((s) => s.brackets);
-  const armedConnectorId = useDiyStore((s) => s.armedConnectorId);
+  const hand = useDiyStore((s) => s.hand);
+  const heldConnectorId = hand?.kind === 'connector' ? hand.connectorId : null;
+  // What the next bracket will be built from with an empty hand — the last
+  // connector the user chose or placed, not the factory default. Read here so
+  // the orange previews show the part a click would actually produce.
+  const lastConnectorId = useDiyStore((s) => s.lastConnectorId);
   const placeBracketAtHint = useDiyStore((s) => s.placeBracketAtHint);
+  const bindKit = useDiyStore((s) => s.bindKit);
+  const pickUpHand = useDiyStore((s) => s.pickUpHand);
   const mode = useDiyStore((s) => s.mode);
-  const placingProfile = useDiyStore((s) => s.placingProfile);
 
   const hints = useMemo(() => {
-    if (!showCornerHints || autoRefBracket) return [];
-    const all = computeCornerHints(profiles);
-    // Skip previews where a bracket is already placed at the same spot, so the
-    // preview does not draw on top of an existing (orange/placed) bracket.
+    if (!showCornerHints) return [];
+    // `freeCornerHints` skips the joints that already carry a bracket, so a
+    // preview is not drawn on top of an existing (orange/placed) bracket. That
+    // is also what keeps the two click targets disjoint: a spot with a bracket
+    // selects that bracket, a spot without one places a new one. Shared with the
+    // pointer-follow preview and the move-drag, so all three agree on which
+    // joints are on offer.
     //
-    // This is also what keeps the two click targets disjoint: a spot with a
-    // bracket selects that bracket, a spot without one places a new bracket.
-    const placed = brackets.filter((b) => b.enabled);
-    if (placed.length === 0) return all;
-    // `bracketAtHint` is the same "occupied" test the store's placement guard
-    // uses, so a corner can never be drawn as free and then refused as taken.
-    return all.filter((h) => !bracketAtHint(placed, h));
-  }, [showCornerHints, profiles, autoRefBracket, brackets]);
+    // A KIT is the exception, and it is not a small one: a kit BINDS to a
+    // bracket instead of replacing one, so the joints it wants are exactly the
+    // occupied ones. Filtering those out left the gesture with nothing to click
+    // on — a joint has its bracket from the moment it exists, so every kit would
+    // have been refused with "only on a corner" while sitting on one.
+    if (hand?.kind === 'kit') return allCornerHints(profiles);
+    return freeCornerHints(profiles, brackets);
+  }, [showCornerHints, profiles, brackets, hand]);
 
   // Persist every preview-mode hint set (position + pose) when the corner
   // preview turns on, or when the joint configuration changes.
@@ -131,16 +147,54 @@ const DiyCornerHints: React.FC = () => {
     };
   }, [hints]);
 
-  // Placement is only allowed when nothing else owns the click. In particular
-  // NOT while the two-face mode is picking: that mode's whole point is that a
-  // click lands on a face, and these ghosts sit right on top of the faces it
-  // wants.
-  const canPlace = mode === 'idle' && !placingProfile;
+  // Placement is only allowed when nothing else owns the click.
+  //
+  // A part in hand does NOT close these down: with a connector or a kit picked
+  // up, these ghosts ARE the click targets (`onPlace` below places what is in
+  // hand). The pointer-follow preview is drawn on the same set of joints, so
+  // the ghost and the target cannot disagree.
+  //
+  // The child-profile ghost does not close them down either, and it must not:
+  // it is armed by a hover now, and these spheres sit on the corners of the
+  // selected bar — the exact spots a hover passes through. They stay live
+  // because a click on one of them is the more specific intent, and r3f's
+  // `stopPropagation` in `onClick` is what makes the sphere win over the face
+  // underneath it.
+  const canPlace = mode === 'idle';
+  const canHover = mode === 'idle';
 
   // `connectorById` alone is wrong here: given null it falls back to the CAST
   // bracket, not to `DEFAULT_BRACKET_CONNECTOR_ID`. Resolving the default first
-  // keeps the preview and the placement the same part.
-  const preview = connectorById(armedConnectorId ?? DEFAULT_BRACKET_CONNECTOR_ID);
+  // keeps the preview and the placement the same part — and the SAME resolution
+  // order the store uses (`placeBracketAtHint`), so a preview cannot promise one
+  // part while the click places another.
+  const preview = connectorById(heldConnectorId ?? lastConnectorId ?? DEFAULT_BRACKET_CONNECTOR_ID);
+
+  /**
+   * A click on a joint places whatever is in hand there.
+   *
+   * Two cases, and the store's own rules decide both: a kit binds to the bracket
+   * on the joint (placing one first if the joint is bare, so the kit is never
+   * hung on a bracket that was not rotated into place); anything else — a held
+   * connector, or nothing held at all — places/swaps the bracket, and with an
+   * empty hand the store reaches for `lastConnectorId` itself.
+   */
+  const placeOn = (h: CornerHint) => {
+    if (hand?.kind === 'kit') {
+      // The occupying bracket is reused rather than replaced: `placeBracketAtHint`
+      // would swap its connector for the default, i.e. picking up a kit would
+      // silently throw away the connector the user chose.
+      const target = bracketAtHint(brackets.filter((b) => b.enabled), h)?.id
+        ?? placeBracketAtHint(h);
+      if (target) bindKit(hand.kitId, target);
+      // `bindKit` only binds — it places nothing, so it does not consume what is
+      // in hand the way the placement actions do. Without this the next click
+      // would bind a second kit.
+      pickUpHand(null);
+      return;
+    }
+    placeBracketAtHint(h, heldConnectorId ?? undefined);
+  };
 
   if (hints.length === 0) return null;
 
@@ -152,9 +206,8 @@ const DiyCornerHints: React.FC = () => {
           hint={h}
           stlUrl={preview.stlUrl}
           canPlace={canPlace}
-          // `?? undefined` not `?? default`: `placeBracketAtHint` applies the
-          // same default itself, so the null-ness is decided in one place.
-          onPlace={() => placeBracketAtHint(h, armedConnectorId ?? undefined)}
+          canHover={canHover}
+          onPlace={() => placeOn(h)}
         />
       ))}
     </group>

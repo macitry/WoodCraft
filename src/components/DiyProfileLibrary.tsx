@@ -6,12 +6,15 @@ import { useDiyStore } from '../store/diyStore';
 import ProfileStlPreview from './ProfileStlPreview';
 import { ScrewMesh, TNutMesh } from '../diy/FastenerStl';
 import { DEFAULT_SCREW_FAMILY, defaultScrewLength } from '../diy/fastenerDims';
+import { screwFamiliesFor, screwLengths } from '../diy/fasteners';
+import type { ScrewFamily } from '../diy/fasteners';
 import { CONNECTORS, connectorById } from '../diy/connectors';
 import type { DiyConnector } from '../diy/connectors';
-import type { ProfileSize, ScrewSize } from '../types/furniture';
+import type { DiyHand, ProfileSize, ScrewSize } from '../types/furniture';
 import { DEFAULT_BRACKET_STL_URL, PROFILE_DIMS } from '../types/furniture';
 import {
   JOINT_KITS,
+  SCREW_FAMILIES,
   SCREW_SERIES,
   accessoryKitById,
   jointFasteners,
@@ -22,7 +25,14 @@ import {
 import type { AccessoryKit, HardwareSpec, KitLayoutMap } from '../utils/accessoryKits';
 import { useKitLayoutFor, useKitLayoutStore } from '../store/kitLayoutStore';
 import { useT, hasKey } from '../i18n';
-import { connectorLabel, connectorDesc, hardwareName, kitName, kitDesc } from '../i18n/names';
+import {
+  connectorLabel,
+  connectorDesc,
+  hardwareName,
+  kitName,
+  kitDesc,
+  screwFamilyLabel,
+} from '../i18n/names';
 
 // ---------------------------------------------------------------------------
 // Data
@@ -45,15 +55,54 @@ const KIND_ICON: Record<DiyConnector['kind'], string> = {
   zinc: '└┘',
 };
 
-/** One card per thread size. The drag payload is a size, so a dropped screw
- *  starts on the default standard (DIN 7984 薄头) — its family and length are
- *  then editable in the property panel, which is where the full catalog of
- *  lengths is on offer. */
+/** One card per (standard, thread size) the catalog actually holds — the drag
+ *  payload carries both, so a card in the 沉头 group drops a countersunk screw.
+ *
+ *  Grouped by standard rather than listed as three sizes, because
+ *  「M4 / M5 / M6」 describes the app's *parameter*, not its shelf: the catalog's
+ *  smallest family (DIN 912) holds one size and its largest holds thirty-three
+ *  lengths, and a single M6 card said neither. The length is still picked after
+ *  placing, in the property panel, which is where the full run of lengths lives —
+ *  the card states which one that will be (`diy.screwCardLengths`) rather than
+ *  leaving it to be discovered.
+ *
+ *  Derived from `screwFamiliesFor` rather than written out, so this list cannot
+ *  outlive the catalog it describes: a standard that gains or loses a thread size
+ *  moves here on its own, and one the app holds none of disappears instead of
+ *  rendering a header over nothing. */
 const SCREW_SIZES: { id: ScrewSize; label: string }[] = [
   { id: 'M4', label: 'M4' },
   { id: 'M5', label: 'M5' },
   { id: 'M6', label: 'M6' },
 ];
+
+/** The standards, in the catalog's own order.
+ *
+ *  Recovered rather than retyped: `screwFamiliesFor` filters a fixed order list,
+ *  so whichever thread size spans the most standards hands back their order — the
+ *  widest row IS the catalog's. Same order as the property panel's standard row,
+ *  which asks the same function. */
+const SCREW_FAMILY_ORDER = SCREW_SIZES.map((s) => screwFamiliesFor(s.id)).reduce(
+  (widest, row) => (row.length > widest.length ? row : widest),
+);
+
+const SCREW_GROUPS = SCREW_FAMILY_ORDER.map((family) => ({
+  family,
+  sizes: SCREW_SIZES.filter((s) => screwFamiliesFor(s.id).includes(family)),
+})).filter((g) => g.sizes.length > 0);
+
+/** One hovered-id string identifies every card in this pane, screw cards
+ *  included — so a screw card's is its pair, and the reader below turns it back
+ *  into a part. Built through one pair of functions so the two directions cannot
+ *  drift. */
+const screwCardId = (family: ScrewFamily, size: ScrewSize) => `${family}|${size}`;
+const screwFromCardId = (id: string | null): { family: ScrewFamily; size: ScrewSize } | null => {
+  const [family, size] = (id ?? '').split('|');
+  const known = SCREW_GROUPS.some(
+    (g) => g.family === family && g.sizes.some((s) => s.id === size),
+  );
+  return known ? { family: family as ScrewFamily, size: size as ScrewSize } : null;
+};
 
 type TabId = 'profiles' | 'connectors' | 'screws' | 'kits';
 
@@ -154,8 +203,12 @@ const Bracket3DPreview: React.FC<{ connector: DiyConnector }> = ({ connector }) 
   </Canvas>
 );
 
-/** Auto-rotating screw mesh — rendered INSIDE the preview Canvas. */
-const RotatingScrewMesh: React.FC<{ size: ScrewSize }> = ({ size }) => {
+/** Auto-rotating screw mesh — rendered INSIDE the preview Canvas.
+ *
+ *  It draws the standard too, not just the size: with the cards grouped, a
+ *  preview showing a DIN 7984 while the hovered card says 沉头 would be the one
+ *  thing on screen contradicting the card. */
+const RotatingScrewMesh: React.FC<{ size: ScrewSize; family: ScrewFamily }> = ({ size, family }) => {
   const groupRef = useRef<THREE.Group>(null);
 
   useFrame((_, delta) => {
@@ -166,16 +219,16 @@ const RotatingScrewMesh: React.FC<{ size: ScrewSize }> = ({ size }) => {
   return (
     <group ref={groupRef} scale={0.001}>
       <ScrewMesh
-        family={DEFAULT_SCREW_FAMILY}
+        family={family}
         size={size}
-        length={defaultScrewLength(DEFAULT_SCREW_FAMILY, size)}
+        length={defaultScrewLength(family, size)}
       />
     </group>
   );
 };
 
 /** Small 3D canvas showing the screw, auto-rotating. */
-const Screw3DPreview: React.FC<{ size: ScrewSize }> = ({ size }) => (
+const Screw3DPreview: React.FC<{ size: ScrewSize; family: ScrewFamily }> = ({ size, family }) => (
   <Canvas
     camera={{ position: [0, 0.006, 0.045], fov: 35, near: 0.001, far: 0.3 }}
     style={{ width: '100%', height: '100%', background: '#f5f5f5', borderRadius: 4 }}
@@ -186,7 +239,7 @@ const Screw3DPreview: React.FC<{ size: ScrewSize }> = ({ size }) => (
     <directionalLight position={[1.5, 2.5, 2]} intensity={0.7} />
     <directionalLight position={[-1, -0.5, -1]} intensity={0.2} />
     <Suspense fallback={null}>
-      <RotatingScrewMesh size={size} />
+      <RotatingScrewMesh size={size} family={family} />
     </Suspense>
   </Canvas>
 );
@@ -299,43 +352,60 @@ const DiyProfileLibrary: React.FC = () => {
   const selScrewSize = useDiyStore(
     (s) => s.screws.find((sc) => sc.id === s.selectedScrewId)?.size ?? null,
   );
+  const selScrewFamily = useDiyStore(
+    (s) => s.screws.find((sc) => sc.id === s.selectedScrewId)?.family ?? null,
+  );
   // Cross-section the fit gate is judged against: the selected bracket's size
   // if one is selected, else the selected profile's. 0 = nothing selected, and
   // then no kit is greyed out (we have nothing to judge against).
   const selBracketSize = useDiyStore(
     (s) => s.brackets.find((b) => b.id === s.selectedBracketId)?.size ?? null,
   );
-  // The connector the next corner-click will drop. Arming is not a mode — it
-  // does not change what the pointer does, only which part the ghosts place.
-  const armedConnectorId = useDiyStore((s) => s.armedConnectorId);
-  const armConnector = useDiyStore((s) => s.armConnector);
+  // The part the next scene-click will place. Holding is not a mode — it does
+  // not change what the pointer does, only which part the ghosts place, and a
+  // click on the scene is the only thing that consumes it.
+  const hand = useDiyStore((s) => s.hand);
+  const pickUpHand = useDiyStore((s) => s.pickUpHand);
+  // The connector the next bracket will be built from — the last one chosen or
+  // placed. It outlives the hand on purpose (see `lastConnectorId` in the store),
+  // so this stays highlighted after a placement: the card is the answer to
+  // "which one am I placing", not only to "what am I holding".
+  const lastConnectorId = useDiyStore((s) => s.lastConnectorId);
 
-  const handleProfileDragStart = (e: React.DragEvent, size: ProfileSize) => {
-    e.dataTransfer.setData('application/diy-profile', size);
-    e.dataTransfer.effectAllowed = 'copy';
+  /** True while this card's part is the one in hand. */
+  const isHeld = (h: DiyHand): boolean => {
+    if (!hand) return false;
+    switch (h.kind) {
+      case 'profile': return hand.kind === 'profile' && hand.size === h.size;
+      case 'connector': return hand.kind === 'connector' && hand.connectorId === h.connectorId;
+      case 'screw':
+        return hand.kind === 'screw' && hand.size === h.size && hand.family === h.family;
+      case 'kit': return hand.kind === 'kit' && hand.kitId === h.kitId;
+    }
   };
 
-  const handleBracketDragStart = (e: React.DragEvent, connectorId: string) => {
-    // Carries the catalog id — DiyViewer reads it on drop so the placed
-    // bracket renders the dragged connector model.
-    e.dataTransfer.setData('application/diy-bracket', connectorId);
-    e.dataTransfer.effectAllowed = 'copy';
-  };
+  /**
+   * Card chrome. All four tabs share one treatment now: picking a part is the
+   * same gesture everywhere, so it has to look the same everywhere. Before this
+   * only the connector card had a held state, because only it could be armed.
+   *
+   * The argument is "is this card the one in play", which for connectors is
+   * wider than "is it in hand" — see the `current` flag at the call site.
+   */
+  const cardClass = (held: boolean) =>
+    `flex items-center gap-3 p-3 rounded-lg border bg-neutral-900/50 cursor-pointer
+     transition-colors group
+     ${held
+       ? 'border-wood-500 ring-1 ring-wood-500/40'
+       : 'border-neutral-800 hover:border-neutral-600'
+     }`;
 
-  const handleScrewDragStart = (e: React.DragEvent, size: ScrewSize) => {
-    // Size is carried in the type itself so DiyViewer can read it during
-    // dragover (getData only works on drop).
-    e.dataTransfer.setData(`application/diy-screw-${size}`, size);
-    e.dataTransfer.effectAllowed = 'copy';
-  };
-
-  const handleKitDragStart = (e: React.DragEvent, kitId: string) => {
-    // Like the bracket payload: the kit id rides on the drag so DiyViewer can
-    // resolve it on drop. A kit is meaningless without a corner joint to bind
-    // to, so the drop handler refuses anything but a valid corner ghost.
-    e.dataTransfer.setData('application/diy-kit', kitId);
-    e.dataTransfer.effectAllowed = 'copy';
-  };
+  /** The corner badge: an invitation to pick up, a tick once in hand. */
+  const cardBadge = (held: boolean) => (
+    <span className={`text-xs ${held ? 'text-wood-400' : 'text-neutral-700'}`}>
+      {held ? '✓' : '+'}
+    </span>
+  );
 
   const handleMouseEnter = (id: string) => setHoveredId(id);
 
@@ -360,8 +430,13 @@ const DiyProfileLibrary: React.FC = () => {
   const previewConnector = connectorById(
     CONNECTORS.find((c) => c.id === hoveredId)?.id ?? selConnectorId ?? CONNECTORS[0].id,
   );
-  const previewScrewSize: ScrewSize =
-    SCREW_SIZES.find((x) => x.id === hoveredId)?.id ?? selScrewSize ?? SCREW_SIZES[0].id;
+  // A screw card identifies itself as `family|size` — the size alone is
+  // ambiguous now that three standards hold an M6, and the strip has to draw the
+  // one the card is offering.
+  const hoveredScrew = screwFromCardId(hoveredId);
+  const previewScrewSize: ScrewSize = hoveredScrew?.size ?? selScrewSize ?? SCREW_SIZES[0].id;
+  const previewScrewFamily: ScrewFamily =
+    hoveredScrew?.family ?? selScrewFamily ?? DEFAULT_SCREW_FAMILY;
   const previewKit =
     DIY_KITS.find((k) => k.id === hoveredId) ?? DIY_KITS[0];
   // Cross-section the Kits tab greys cards against; null = nothing selected.
@@ -375,7 +450,10 @@ const DiyProfileLibrary: React.FC = () => {
         ? `${connectorLabel(previewConnector)} · ${previewConnector.dim}`
         : activeTab === 'kits'
           ? `${kitName(previewKit)} · ${kitLineNames(previewKit.id, layouts).join(' + ')}`
-          : t('diy.captionScrew', { size: previewScrewSize });
+          : t('diy.captionScrew', {
+              std: SCREW_FAMILIES[previewScrewFamily].std,
+              size: previewScrewSize,
+            });
 
   return (
     <div className="flex flex-col h-full min-h-0">
@@ -409,7 +487,7 @@ const DiyProfileLibrary: React.FC = () => {
             <span className="text-[8px]">{previewOpen ? '▼' : '▶'}</span>
             <span>{t('diy.previewStrip')}</span>
           </button>
-          <span className="text-[10px] text-neutral-600 truncate">{previewCaption}</span>
+          <span data-preview-caption className="text-[10px] text-neutral-600 truncate">{previewCaption}</span>
         </div>
         {/* Body stays mounted (display toggled) so WebGL contexts survive
             collapse; the three tab Canvases each fill the strip. */}
@@ -430,7 +508,7 @@ const DiyProfileLibrary: React.FC = () => {
             className="absolute inset-0"
             style={{ display: activeTab === 'screws' ? 'block' : 'none' }}
           >
-            <Screw3DPreview size={previewScrewSize} />
+            <Screw3DPreview size={previewScrewSize} family={previewScrewFamily} />
           </div>
           <div
             className="absolute inset-0"
@@ -445,75 +523,75 @@ const DiyProfileLibrary: React.FC = () => {
       <div className="flex-1 min-h-0 overflow-y-auto p-3 space-y-2">
         {activeTab === 'profiles' && (
           <>
-            <p className="text-[10px] text-neutral-600 px-1">{t('diy.dragProfileHint')}</p>
-            {SIZES.map((s) => (
-              <div
-                key={s.id}
-                draggable
-                onDragStart={(e) => handleProfileDragStart(e, s.id)}
-                onMouseEnter={() => handleMouseEnter(s.id)}
-                onMouseLeave={handleMouseLeave}
-                className="flex items-center gap-3 p-3 rounded-lg border border-neutral-800
-                  hover:border-neutral-600 bg-neutral-900/50 cursor-grab active:cursor-grabbing
-                  transition-colors group"
-              >
+            <p className="text-[10px] text-neutral-600 px-1">{t('diy.pickProfileHint')}</p>
+            {SIZES.map((s) => {
+              const held = isHeld({ kind: 'profile', size: s.id });
+              return (
                 <div
-                  className="w-10 h-10 rounded flex-shrink-0 border-2 flex items-center justify-center font-mono text-[10px]"
-                  style={{
-                    borderColor: s.color,
-                    backgroundColor: s.color + '20',
-                    color: s.color,
-                  }}
+                  key={s.id}
+                  data-diy-card={`profile:${s.id}`}
+                  data-diy-card-held={held ? '1' : '0'}
+                  onMouseEnter={() => handleMouseEnter(s.id)}
+                  onMouseLeave={handleMouseLeave}
+                  onClick={() => pickUpHand({ kind: 'profile', size: s.id })}
+                  className={cardClass(held)}
                 >
-                  {PROFILE_DIMS[s.id]}²
-                </div>
-                <div className="flex-1 min-w-0">
-                  <div className="text-sm text-neutral-200 group-hover:text-white font-medium">
-                    {s.label}
+                  <div
+                    className="w-10 h-10 rounded flex-shrink-0 border-2 flex items-center justify-center font-mono text-[10px]"
+                    style={{
+                      borderColor: s.color,
+                      backgroundColor: s.color + '20',
+                      color: s.color,
+                    }}
+                  >
+                    {PROFILE_DIMS[s.id]}²
                   </div>
-                  <div className="text-[10px] text-neutral-500">{s.desc}</div>
+                  <div className="flex-1 min-w-0">
+                    <div className="text-sm text-neutral-200 group-hover:text-white font-medium">
+                      {s.label}
+                    </div>
+                    <div className="text-[10px] text-neutral-500">{s.desc}</div>
+                  </div>
+                  {cardBadge(held)}
                 </div>
-                <span className="text-neutral-700 text-xs">⠿</span>
-              </div>
-            ))}
+              );
+            })}
 
             {/* Help */}
             <div className="mt-4 p-3 rounded-lg bg-neutral-900/50 border border-neutral-800 text-neutral-500 text-[10px] space-y-1">
-              <p>{t('diy.helpDragProfileRoot')}</p>
-              <p>{t('diy.helpShiftClickFace')}</p>
+              <p>{t('diy.helpPickProfileRoot')}</p>
+              <p>{t('diy.helpHoverFace')}</p>
               <p>{t('diy.helpDragArrow')}</p>
-              <p>{t('diy.helpDoubleClickFace')}</p>
+              <p>{t('diy.helpMove')}</p>
             </div>
           </>
         )}
 
         {activeTab === 'connectors' && (
           <>
-            <p className="text-[10px] text-neutral-600 px-1">{t('diy.dragConnectorHint')}</p>
+            <p className="text-[10px] text-neutral-600 px-1">{t('diy.pickConnectorHint')}</p>
             {CONNECTORS.map((c) => {
-              // Armed = clicking a corner ghost drops THIS connector. Clicking
-              // the armed card again puts it back down (`armConnector` toggles),
-              // so the card is a two-state switch rather than a one-way mode.
-              const armed = armedConnectorId === c.id;
+              // Held = clicking the scene's corner ghosts drops THIS connector.
+              // Clicking the held card again puts it back down (`pickUpHand`
+              // toggles), so the card is a two-state switch, not a one-way mode.
+              const held = isHeld({ kind: 'connector', connectorId: c.id });
+              // Highlighted for the whole time this connector is the one in play,
+              // not just while it is in hand — a placement releases the hand, and
+              // the card going dark at that moment is exactly the "it reverted to
+              // the default" reading the user reported.
+              const current = lastConnectorId === c.id;
               return (
               <div
                 key={c.id}
                 data-connector-card={c.id}
-                data-connector-armed={armed ? '1' : '0'}
-                draggable
-                onDragStart={(e) => handleBracketDragStart(e, c.id)}
+                data-diy-card={`connector:${c.id}`}
+                data-connector-armed={held ? '1' : '0'}
+                data-connector-current={current ? '1' : '0'}
+                data-diy-card-held={held ? '1' : '0'}
                 onMouseEnter={() => handleMouseEnter(c.id)}
                 onMouseLeave={handleMouseLeave}
-                // A real HTML5 drag does not fire `click`, so arming and
-                // dragging share the card without fighting.
-                onClick={() => armConnector(c.id)}
-                className={`flex items-center gap-3 p-3 rounded-lg border
-                  bg-neutral-900/50 cursor-grab active:cursor-grabbing
-                  transition-colors group
-                  ${armed
-                    ? 'border-wood-500 ring-1 ring-wood-500/40'
-                    : 'border-neutral-800 hover:border-neutral-600'
-                  }`}
+                onClick={() => pickUpHand({ kind: 'connector', connectorId: c.id })}
+                className={cardClass(held || current)}
               >
                 <span
                   className="w-10 h-10 rounded flex-shrink-0 border-2 flex items-center justify-center text-[15px]"
@@ -534,7 +612,7 @@ const DiyProfileLibrary: React.FC = () => {
                     {c.dim} · {connectorDesc(c)}
                   </div>
                 </div>
-                <span className="text-neutral-700 text-xs">⠿</span>
+                {cardBadge(held)}
               </div>
               );
             })}
@@ -543,43 +621,67 @@ const DiyProfileLibrary: React.FC = () => {
             <div className="mt-4 p-3 rounded-lg bg-neutral-900/50 border border-neutral-800 text-neutral-500 text-[10px] space-y-1">
               <p>{t('diy.helpClickCorner')}</p>
               <p>{t('diy.helpHoverCard')}</p>
-              <p>{t('diy.helpDragCard')}</p>
-              <p>{t('diy.helpDoubleClickPair')}</p>
+              <p>{t('diy.helpPickCardAgain')}</p>
+              <p>{t('diy.helpMove')}</p>
             </div>
           </>
         )}
 
         {activeTab === 'screws' && (
           <>
-            <p className="text-[10px] text-neutral-600 px-1">{t('diy.dragScrewHint')}</p>
-            {SCREW_SIZES.map((s) => (
-              <div
-                key={s.id}
-                draggable
-                onDragStart={(e) => handleScrewDragStart(e, s.id)}
-                onMouseEnter={() => handleMouseEnter(s.id)}
-                onMouseLeave={handleMouseLeave}
-                className="flex items-center gap-3 p-3 rounded-lg border border-neutral-800
-                  hover:border-neutral-600 bg-neutral-900/50 cursor-grab active:cursor-grabbing
-                  transition-colors group"
-              >
-                <div className="w-10 h-10 rounded flex-shrink-0 border border-neutral-600 bg-neutral-800/60 flex items-center justify-center font-mono text-[11px] text-neutral-300">
-                  {s.id}
-                </div>
-                <div className="flex-1 min-w-0">
-                  <div className="text-sm text-neutral-200 group-hover:text-white font-medium">
-                    {s.label}
+            <p className="text-[10px] text-neutral-600 px-1">{t('diy.pickScrewHint')}</p>
+            {SCREW_GROUPS.map((group) => {
+              const std = SCREW_FAMILIES[group.family];
+              return (
+                <div key={group.family} data-screw-group={group.family} className="space-y-2">
+                  {/* The standard, as the workshop says it (DIN 7984) with the
+                      catalog's own name for the head beside it. */}
+                  <div className="flex items-baseline gap-2 px-1 pt-2">
+                    <span className="text-[11px] font-medium text-neutral-400">{std.std}</span>
+                    <span className="text-[10px] text-neutral-600 truncate">
+                      {screwFamilyLabel(group.family, std.label)}
+                    </span>
                   </div>
-                  <div className="text-[10px] text-neutral-500">{t('diy.screwCardDesc', { d: s.id.slice(1) })}</div>
+                  {group.sizes.map((s) => {
+                    const held = isHeld({ kind: 'screw', size: s.id, family: group.family });
+                    return (
+                    <div
+                      key={s.id}
+                      data-screw-card={screwCardId(group.family, s.id)}
+                      data-diy-card={`screw:${group.family}:${s.id}`}
+                      data-diy-card-held={held ? '1' : '0'}
+                      onMouseEnter={() => handleMouseEnter(screwCardId(group.family, s.id))}
+                      onMouseLeave={handleMouseLeave}
+                      onClick={() => pickUpHand({ kind: 'screw', size: s.id, family: group.family })}
+                      className={cardClass(held)}
+                    >
+                      <div className="w-10 h-10 rounded flex-shrink-0 border border-neutral-600 bg-neutral-800/60 flex items-center justify-center font-mono text-[11px] text-neutral-300">
+                        {s.id}
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <div className="text-sm text-neutral-200 group-hover:text-white font-medium">
+                          {s.label}
+                        </div>
+                        <div className="text-[10px] text-neutral-500">
+                          {t('diy.screwCardLengths', {
+                            part: `${s.id}×${defaultScrewLength(group.family, s.id)}`,
+                            n: screwLengths(group.family, s.id).length,
+                          })}
+                        </div>
+                      </div>
+                      {cardBadge(held)}
+                    </div>
+                    );
+                  })}
                 </div>
-                <span className="text-neutral-700 text-xs">⠿</span>
-              </div>
-            ))}
+              );
+            })}
 
             {/* Help */}
             <div className="mt-4 p-3 rounded-lg bg-neutral-900/50 border border-neutral-800 text-neutral-500 text-[10px] space-y-1">
-              <p>{t('diy.helpDragScrew')}</p>
+              <p>{t('diy.helpPickScrew')}</p>
               <p>{t('diy.helpClickScrew')}</p>
+              <p>{t('diy.helpMove')}</p>
             </div>
           </>
         )}
@@ -587,26 +689,30 @@ const DiyProfileLibrary: React.FC = () => {
         {activeTab === 'kits' && (
           <>
             <p className="text-[10px] text-neutral-600 px-1">
-              {t('diy.kitsDragHint')}
+              {t('diy.pickKitsHint')}
             </p>
             {DIY_KITS.map((k) => {
               const reason = fitMm === null ? null : kitFitReason(k, fitMm);
               const blocked = reason !== null;
               const parts = kitLineNames(k.id, layouts);
+              const held = isHeld({ kind: 'kit', kitId: k.id });
               return (
                 <div
                   key={k.id}
                   data-kit={k.id}
+                  data-diy-card={`kit:${k.id}`}
                   data-kit-blocked={blocked ? '1' : '0'}
-                  draggable={!blocked}
-                  onDragStart={(e) => !blocked && handleKitDragStart(e, k.id)}
+                  data-diy-card-held={held ? '1' : '0'}
                   onMouseEnter={() => handleMouseEnter(k.id)}
                   onMouseLeave={handleMouseLeave}
+                  // A blocked card is inert rather than a click that does
+                  // nothing: the tooltip already says which sizes it wants.
+                  onClick={blocked ? undefined : () => pickUpHand({ kind: 'kit', kitId: k.id })}
                   title={reason ?? kitDesc(k)}
                   className={`flex items-center gap-3 p-3 rounded-lg border transition-colors group
                     ${blocked
                       ? 'border-neutral-800/50 bg-neutral-900/20 opacity-40 cursor-not-allowed'
-                      : 'border-neutral-800 hover:border-neutral-600 bg-neutral-900/50 cursor-grab active:cursor-grabbing'
+                      : cardClass(held)
                     }`}
                 >
                   <span
@@ -626,14 +732,14 @@ const DiyProfileLibrary: React.FC = () => {
                       <div className="text-[10px] text-amber-600/80">{reason}</div>
                     )}
                   </div>
-                  {!blocked && <span className="text-neutral-700 text-xs">⠿</span>}
+                  {!blocked && cardBadge(held)}
                 </div>
               );
             })}
 
             {/* Help */}
             <div className="mt-4 p-3 rounded-lg bg-neutral-900/50 border border-neutral-800 text-neutral-500 text-[10px] space-y-1">
-              <p>{t('diy.helpKitDrag')}</p>
+              <p>{t('diy.helpPickKit')}</p>
               <p>{t('diy.helpKitCancel')}</p>
               <p>{t('diy.helpKitNuts')}</p>
               <p className="pt-1 text-neutral-600">{t('diy.helpKitTune')}</p>

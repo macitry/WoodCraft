@@ -15,7 +15,7 @@ export const zh = {
   // --- structure tree -----------------------------------------------------
   'diy.profileRow': '型材-{n}',
   'diy.kitRow': '角码-{n}',
-  'diy.noProfiles': '暂无型材 — 从「元件库」tab 拖入型材',
+  'diy.noProfiles': '暂无型材 — 在「元件库」tab 点选型材，再点场景放置',
   'diy.kitsSection': '组合',
   'diy.deleteKit': '删除组合',
 
@@ -27,8 +27,6 @@ export const zh = {
   'diy.mode.stretching': '拉伸',
   'diy.mode.selecting_direction': '选择延伸方向',
   'diy.mode.placing_bracket': '放置角码',
-  'diy.mode.placing_child': '放置子型材',
-  'diy.mode.placing_bracket_faces': '角码 · 两面对齐',
   'diy.stretchHint': '拉伸：滚动滚轮或拖动箭头手柄',
   'diy.growHint': '点击方向箭头来延伸新型材',
   'diy.unknownKit': '未知组合：{id}',
@@ -79,25 +77,28 @@ export const zh = {
   'diy.editConnector': '编辑 {label}',
 
   // --- viewer -------------------------------------------------------------
-  'diy.dropHint': '从元件库拖入型材或角码到此处',
+  'diy.dropHint': '点选元件库里的零件，虚影跟随鼠标，再点场景放置',
   'diy.kitOnlyOnCorner': '组合只能放在型材角点上',
   'diy.kitPlaceFailed': '组合放置失败',
+
+  // --- viewport toolbar ---------------------------------------------------
+  // The four view labels are the shared `view.*` keys, not twins of these.
+  'diy.showGrid': '网格',
+  // The backdrop picker: the trigger, then one name per `DIY_BACKGROUNDS` entry.
+  'diy.background': '背景',
+  'diy.bgNavy': '深蓝',
+  'diy.bgGraphite': '石墨',
+  'diy.bgSlate': '石板',
+  'diy.bgEmber': '暖褐',
+  'diy.bgMist': '薄雾',
+  'diy.bgStudio': '影棚白',
 
   // --- direction arrows ---------------------------------------------------
   'diy.pickDirection': '选择延伸方向',
 
-  // --- left pane tabs + face-picking banner --------------------------------
+  // --- left pane tabs ------------------------------------------------------
   'diy.leftStructure': '结构树',
   'diy.leftLibrary': '元件库',
-  'diy.pickFace1': '点选第 1 个角码安装面(或双击任意型材面直接开始) · Esc 取消',
-  'diy.pickFace2': '已选第 1 面(绿色标记) — 再点选第 2 个垂直的型材面 · Esc 取消',
-
-  // --- why a face pair was refused -----------------------------------------
-  // These reach the user through the error banner, so they are sentences the
-  // reader sees rather than diagnostics for the console.
-  'diy.errNotPerpendicular': '两个面必须相互垂直(90°)。角码安装在两个互相垂直的型材面上,请点另一个垂直的面。',
-  'diy.errNoOverlap': '这两个面没有相交区域,请点相邻的两个型材面。',
-  'diy.errNoFit': '这个位置的面不够放角码:角码会伸出型材。请换一个离型材端部更远的位置。',
 
   // --- profile library ----------------------------------------------------
   'diy.tabProfiles': '型材',
@@ -108,25 +109,28 @@ export const zh = {
   'diy.expandPreview': '展开预览',
   'diy.previewStrip': '3D 预览',
   'diy.captionProfile': '型材 {size} · {dim}×{dim}mm',
-  'diy.captionScrew': '螺丝 {size}',
-  'diy.dragProfileHint': '把型材拖入场景',
-  'diy.dragConnectorHint': '点一下选中连接件，再点橙色角点放置（也可以直接拖到角上）',
-  'diy.dragScrewHint': '把螺丝拖到型材面上',
-  'diy.kitsDragHint': '拖到角点上 —— 组合只附着于已有角码，螺丝数量自动跟随',
-  'diy.screwCardDesc': 'Ø{d} · 内六角薄头',
-  'diy.helpDragProfileRoot': '拖拽型材 → 放置根型材',
-  'diy.helpShiftClickFace': 'Shift+点击型材面 → 延伸新型材',
+  'diy.captionScrew': '螺丝 {std} {size}',
+  'diy.pickProfileHint': '点一下拿在手上，虚影跟随鼠标，再点场景放下',
+  'diy.pickConnectorHint': '点一下拿在手上，再点场景里的橙色角点放置；放下后卡片仍是当前所选，可继续放同款',
+  'diy.pickScrewHint': '点一下拿在手上，再点型材面放置',
+  'diy.pickKitsHint': '点一下拿在手上，再点角点放置 —— 组合只附着于已有角码，螺丝数量自动跟随',
+  // On a screw card, under the thread size. `{part}` is the size at the length
+  // the placement will use and `{n}` is how many lengths the catalog holds for
+  // it — the card is a standard + thread, and this line is where the choice it
+  // does NOT make (length) is named rather than discovered later in the panel.
+  'diy.screwCardLengths': '默认 {part} · 共 {n} 档长度',
+  'diy.helpPickProfileRoot': '点选型材 → 再点场景放置根型材',
+  'diy.helpHoverFace': '选中型材后，悬浮它的某个面 → 单击放下子型材',
   'diy.helpDragArrow': '拖拽箭头 → 拉伸',
-  'diy.helpDoubleClickFace': '双击型材面 → 紫色目标',
   'diy.helpClickCorner': '点卡片选中连接件 → 点橙色角点放置',
   'diy.helpHoverCard': '悬停卡片 → 模型 3D 预览',
-  'diy.helpDragCard': '拖拽卡片 → 拖到角点上安装',
-  'diy.helpDoubleClickPair': '双击一对型材面 → 放置内置角码',
-  'diy.armBanner': '已选「{name}」 — 点橙色角点放置 · Esc 取消',
-  'diy.helpDragScrew': '拖拽螺丝 → 型材面，自动吸附',
+  'diy.helpPickCardAgain': '再点同一张卡片 → 放回手里',
+  'diy.handBanner': '已拿住「{name}」 — 在场景中点击放置 · Esc 取消',
+  'diy.helpPickScrew': '点选螺丝 → 再点型材面，自动吸附',
   'diy.helpClickScrew': '点击螺丝 → 在右侧面板编辑规格',
-  'diy.helpKitDrag': '拖拽组合 → 实心角点（虚线幽灵出现时松手）',
-  'diy.helpKitCancel': 'Esc 或点空白 → 取消',
+  'diy.helpPickKit': '点选组合 → 再点实心角点',
+  'diy.helpKitCancel': 'Esc → 放回手里',
+  'diy.helpMove': '已选中的零件可直接按住拖动',
   'diy.helpKitNuts': 'T 型螺母默认装入；它们压在型材槽内，正常视角被型材挡住，可在右侧关闭',
   'diy.helpKitTune': '微调改的是组合定义本身，所有角点同步',
 
@@ -151,7 +155,7 @@ export const en: Record<DiyKey, string> = {
 
   'diy.profileRow': 'Profile-{n}',
   'diy.kitRow': 'Bracket-{n}',
-  'diy.noProfiles': 'No profiles yet — drag a profile in from the Components tab',
+  'diy.noProfiles': 'No profiles yet — pick a profile on the Components tab, then click the scene',
   'diy.kitsSection': 'Kits',
   'diy.deleteKit': 'Delete kit',
 
@@ -162,8 +166,6 @@ export const en: Record<DiyKey, string> = {
   'diy.mode.stretching': 'stretching',
   'diy.mode.selecting_direction': 'selecting direction',
   'diy.mode.placing_bracket': 'placing bracket',
-  'diy.mode.placing_child': 'placing child',
-  'diy.mode.placing_bracket_faces': 'bracket · two faces',
   'diy.stretchHint': 'Stretch: scroll the mouse wheel or drag the gizmo handles',
   'diy.growHint': 'Click a direction arrow to grow a new profile',
   'diy.unknownKit': 'Unknown kit: {id}',
@@ -212,21 +214,24 @@ export const en: Record<DiyKey, string> = {
 
   'diy.editConnector': 'Edit {label}',
 
-  'diy.dropHint': 'Drag a profile or bracket from the library here',
+  'diy.dropHint': 'Pick a part in the library, then click the scene to place it',
   'diy.kitOnlyOnCorner': 'A kit can only be placed on a corner between profiles',
   'diy.kitPlaceFailed': 'Failed to place the kit',
+
+  'diy.showGrid': 'Grid',
+
+  'diy.background': 'Background',
+  'diy.bgNavy': 'Navy',
+  'diy.bgGraphite': 'Graphite',
+  'diy.bgSlate': 'Slate',
+  'diy.bgEmber': 'Ember',
+  'diy.bgMist': 'Mist',
+  'diy.bgStudio': 'Studio',
 
   'diy.pickDirection': 'Pick growth direction',
 
   'diy.leftStructure': 'Structure',
   'diy.leftLibrary': 'Library',
-  'diy.pickFace1': 'Click the first face to mount the bracket on (or double-click any profile face to start) · Esc to cancel',
-  'diy.pickFace2': 'Face 1 picked (green marker) — now click the second, perpendicular profile face · Esc to cancel',
-
-  'diy.errNotPerpendicular': 'The two faces have to be perpendicular (90°). A bracket sits on two mutually perpendicular profile faces — click the other perpendicular one.',
-  'diy.errNoOverlap': 'These two faces do not overlap anywhere. Click two adjacent profile faces.',
-  'diy.errNoFit': 'There is not enough room on this face for a bracket — it would stick out past the profile. Pick a spot further from the end of the profile.',
-
   'diy.tabProfiles': 'Profiles',
   'diy.tabConnectors': 'Connectors',
   'diy.tabScrews': 'Screws',
@@ -235,27 +240,25 @@ export const en: Record<DiyKey, string> = {
   'diy.expandPreview': 'Expand preview',
   'diy.previewStrip': '3D preview',
   'diy.captionProfile': 'Profile {size} · {dim}×{dim}mm',
-  'diy.captionScrew': 'Screw {size}',
-  'diy.dragProfileHint': 'Drag a profile into the scene',
-  'diy.dragConnectorHint':
-    'Click a connector to pick it, then click an orange corner (or just drag it onto a corner)',
-  'diy.dragScrewHint': 'Drag a screw onto a profile face',
-  'diy.kitsDragHint':
-    'Drag onto a corner — a kit attaches to an existing bracket, and the screw count follows automatically',
-  'diy.screwCardDesc': 'Ø{d} · low-head socket',
-  'diy.helpDragProfileRoot': 'Drag profile → place root',
-  'diy.helpShiftClickFace': 'Shift+Click face → grow new',
+  'diy.captionScrew': 'Screw {std} {size}',
+  'diy.pickProfileHint': 'Click to pick one up, then click the scene to drop it',
+  'diy.pickConnectorHint': 'Click to pick one up, then click an orange corner in the scene; the card stays selected afterwards, so more corners keep placing the same one',
+  'diy.pickScrewHint': 'Click to pick one up, then click a profile face',
+  'diy.pickKitsHint':
+    'Click to pick one up, then click a corner — a kit attaches to an existing bracket, and the screw count follows automatically',
+  'diy.screwCardLengths': '{part} default · {n} lengths',
+  'diy.helpPickProfileRoot': 'Pick a profile → click the scene to place a root',
+  'diy.helpHoverFace': 'With a profile selected, hover one of its faces → click places the child',
   'diy.helpDragArrow': 'Drag arrow → stretch',
-  'diy.helpDoubleClickFace': 'Double-click face → purple target',
   'diy.helpClickCorner': 'Click a card to pick a connector → click an orange corner',
   'diy.helpHoverCard': 'Hover card → 3D preview of the model',
-  'diy.helpDragCard': 'Drag card → drop on a corner to mount',
-  'diy.helpDoubleClickPair': 'Double-click a face pair places the built-in bracket',
-  'diy.armBanner': '"{name}" in hand — click an orange corner · Esc to cancel',
-  'diy.helpDragScrew': 'Drag screw → profile face, snaps to face',
+  'diy.helpPickCardAgain': 'Click the same card again → put it back',
+  'diy.handBanner': '"{name}" in hand — click the scene to place · Esc to cancel',
+  'diy.helpPickScrew': 'Pick a screw → click a profile face, snaps to face',
   'diy.helpClickScrew': 'Click screw → edit spec in right panel',
-  'diy.helpKitDrag': 'Drag kit → solid corner (release when the ghost appears)',
-  'diy.helpKitCancel': 'Esc or click empty space → cancel',
+  'diy.helpPickKit': 'Pick a kit → click a solid corner',
+  'diy.helpKitCancel': 'Esc → put it back',
+  'diy.helpMove': 'A selected part can be dragged with the pointer to move it',
   'diy.helpKitNuts': 'T-nuts are mounted by default; they sit inside the profile slot, so the profile hides them from most angles — toggle them on the right',
   'diy.helpKitTune': 'Tuning edits the kit definition itself and syncs to every corner',
 

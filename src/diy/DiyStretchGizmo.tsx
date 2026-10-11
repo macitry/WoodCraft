@@ -11,6 +11,7 @@ const DiyStretchGizmo: React.FC = () => {
   const selectedProfileId = useDiyStore((s) => s.selectedProfileId);
   const profiles = useDiyStore((s) => s.profiles);
   const updateProfileLength = useDiyStore((s) => s.updateProfileLength);
+  const setDimension = useDiyStore((s) => s.setDimension);
   const controlsRef = useDiyStore((s) => s.controlsRef);
 
   const dragRef = useRef(false);
@@ -65,6 +66,12 @@ const DiyStretchGizmo: React.FC = () => {
       raycaster.ray.intersectPlane(plane, hit0);
       const startDist = hit0 ? fixedEnd.distanceTo(hit0) / M : startLen;
 
+      // The dimension annotation is published on the first move that actually
+      // changes the length, not on the press. A click on the arrow that goes
+      // nowhere is not a height change, and an annotation for a gesture the user
+      // did not make would then sit beside the post until they clicked elsewhere.
+      let lastLen = startLen;
+
       const onMove = (ev: PointerEvent) => {
         if (!dragRef.current) return;
         ev.preventDefault();
@@ -83,6 +90,9 @@ const DiyStretchGizmo: React.FC = () => {
           const delta = curDist - startDist; // 1:1 mouse tracking
           const rawLen = Math.max(10, Math.round(startLen + delta));
           const newLen = Math.round(rawLen / 10) * 10; // snap to 10mm
+          if (newLen === lastLen) return;
+          lastLen = newLen;
+          setDimension({ profileId: profile.id, kind: 'length' });
           updateProfileLength(profile.id, newLen);
         }
       };
@@ -99,7 +109,7 @@ const DiyStretchGizmo: React.FC = () => {
       canvas.addEventListener('pointerup', onUp);
       canvas.addEventListener('pointerleave', onUp);
     },
-    [profile, gl, camera, pos, axVec, halfLen, len, updateProfileLength, raycaster, plane, controlsRef],
+    [profile, gl, camera, pos, axVec, halfLen, len, updateProfileLength, setDimension, raycaster, plane, controlsRef],
   );
 
   if (!profile) return null;

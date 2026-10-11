@@ -5,14 +5,16 @@ import { useDiyStore } from '../store/diyStore';
 const M = 0.001;
 
 /**
- * Semi-transparent wireframe cube shown at the nearest corner snap point
- * while the user drags a bracket from the sidebar over the 3D viewport.
+ * Semi-transparent wireframe cube shown at the nearest snap target while a
+ * connector or a kit is in hand.
  *
- * Renders nothing when no drag is active or no valid snap target.
+ * Renders nothing when nothing is held, or when the pointer is not over a valid
+ * snap target.
  */
 const DiyBracketPlacementGhost: React.FC = () => {
   const ghostBracket = useDiyStore((s) => s.ghostBracket);
-  const isDraggingBracket = useDiyStore((s) => s.isDraggingBracket);
+  const hand = useDiyStore((s) => s.hand);
+  const holdingBracket = hand?.kind === 'connector' || hand?.kind === 'kit';
 
   const geometry = useMemo(() => {
     if (!ghostBracket) return null;
@@ -20,7 +22,7 @@ const DiyBracketPlacementGhost: React.FC = () => {
     return new THREE.BoxGeometry(s, s, s);
   }, [ghostBracket]);
 
-  if (!isDraggingBracket || !ghostBracket || !geometry) return null;
+  if (!holdingBracket || !ghostBracket || !geometry) return null;
 
   const pos: [number, number, number] = [
     M * ghostBracket.position.x,

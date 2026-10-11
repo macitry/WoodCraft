@@ -7,18 +7,27 @@ import type {
   DiyBracket,
   DiyScrew,
   DiyScrewGhost,
+  DiyProfileGhost,
+  DiyHand,
+  DiyDimension,
+  DiyMovingPart,
   DiyMode,
   ProfileSize,
   AxisDir,
   FaceDir,
-  BracketFacePick,
   DiyKitInstance,
+  ViewPreset,
 } from '../types/furniture';
 import { DEFAULT_BRACKET_STL_URL, PROFILE_DIMS } from '../types/furniture';
 import { CAST_CONNECTOR, CONNECTORS } from '../diy/connectors';
-import { DEFAULT_SCREW_FAMILY, defaultScrewLength } from '../diy/fastenerDims';
-import { jointFitInfo, cornerBracketFits } from '../diy/diyJointGeometry';
+import { defaultScrewLength } from '../diy/fastenerDims';
+import { jointFitInfo } from '../diy/diyJointGeometry';
 import { bracketAtHint, eulerFromNormals } from '../diy/diyCornerGeometry';
+import {
+  readBackground,
+  writeBackground,
+  type DiyBackgroundId,
+} from '../diy/diyBackgrounds';
 import type { CornerHint } from '../diy/diyCornerGeometry';
 import { accessoryKitById } from '../utils/accessoryKits';
 
@@ -28,6 +37,16 @@ function uid(): string {
 }
 /** Stable per-profile creation sequence (structure-tree numbering). */
 let _seq = 0;
+
+/**
+ * Length a root profile is created with (mm).
+ *
+ * Exported because the placement ghost draws the post that is about to be made:
+ * a literal in each place would let the preview stand 120 mm tall and the click
+ * produce 100. The child-profile length is a separate literal in the store — it
+ * has its own ghost, and the two never mix.
+ */
+export const ROOT_PROFILE_LENGTH = 100;
 
 /**
  * The connector a newly placed bracket gets — the same part the main
@@ -43,14 +62,13 @@ export const DEFAULT_BRACKET_CONNECTOR_ID =
   CONNECTORS.find((c) => c.stlUrl === DEFAULT_BRACKET_STL_URL)?.id ?? CAST_CONNECTOR.id;
 
 /**
- * A corner bracket for a pair of mounting faces — the ONE builder behind every
- * way a bracket gets placed at a joint: a dropped drag, a manual two-face pick,
- * and a click on a corner hint.
+ * A corner bracket for a pair of mounting faces — the ONE builder behind
+ * placing a bracket at a joint.
  *
- * `pickBracketFace` used to inline this rotation/rounding block. Copying it a
- * third time for the corner-click path is how the three entrances drift into
- * placing subtly different parts at subtly different poses, which is the exact
- * complaint that started this rewrite.
+ * The manual two-face pick (since removed) and `moveBracket` used to inline
+ * this rotation/rounding block. Copying it again for the corner-click path is
+ * how the entrances drift into placing subtly different parts at subtly
+ * different poses, which is the exact complaint that started this rewrite.
  */
 function jointBracket(opts: {
   idA: string;
@@ -129,6 +147,21 @@ function bracketFaces(b: DiyBracket): [{ x: number; y: number; z: number }, { x:
   ];
 }
 
+/**
+ * Whether two hands hold the same part.
+ *
+ * Compared by the field that names the part rather than as objects: the cards
+ * build a fresh literal on every click, so identity would never match and
+ * "click the same card twice to put it down" would never fire.
+ */
+function sameHand(a: DiyHand, b: DiyHand): boolean {
+  if (a.kind === 'profile' && b.kind === 'profile') return a.size === b.size;
+  if (a.kind === 'connector' && b.kind === 'connector') return a.connectorId === b.connectorId;
+  if (a.kind === 'screw' && b.kind === 'screw') return a.size === b.size && a.family === b.family;
+  if (a.kind === 'kit' && b.kind === 'kit') return a.kitId === b.kitId;
+  return false;
+}
+
 interface DiyState {
   profiles: DiyProfile[];
   brackets: DiyBracket[];
@@ -173,19 +206,92 @@ interface DiyState {
   controlsRef: MutableRefObject<OrbitControlsImpl | null> | null;
   setControlsRef: (ref: MutableRefObject<OrbitControlsImpl | null>) => void;
 
-  // ---- Bracket drag-and-drop placement ----
-  /** True while a bracket is being dragged from the sidebar over the 3D view. */
-  isDraggingBracket: boolean;
-  /** Ghost bracket shown at the nearest corner snap point during drag (mm). */
+  // ---- Drag-to-move a placed part ----
+  /**
+   * The part currently being dragged, or null.
+   *
+   * OrbitControls is suppressed while this is set (see `DiyScene`), so it is the
+   * one flag that says "this gesture is a move, not a camera orbit". Only an
+   * already-SELECTED part can start one: with the viewport full of profiles,
+   * letting any left-drag grab whatever is under it would make orbiting the
+   * camera a way to drag the assembly apart.
+   */
+  movingPart: DiyMovingPart | null;
+  setMovingPart: (part: DiyMovingPart | null) => void;
+
+  /**
+   * The dimension annotation to draw beside a part, or null.
+   *
+   * Published by the two gestures that change a height, at the moment the height
+   * actually changes — `DiyStretchGizmo` for a stretch, the profile branch of
+   * `useDiyMoveDrag` for a child sliding up its post. It is NOT withdrawn when
+   * the drag ends: a height just set with the mouse is a number you want to keep
+   * reading while you let go of the button. It leaves with the SELECTION instead
+   * (see `selectProfile`, and `DiyDimension`'s render gate), which is one rule
+   * rather than two — and it is the rule the user asked for.
+   */
+  dimension: DiyDimension | null;
+  setDimension: (dimension: DiyDimension | null) => void;
+  /**
+   * Translate a profile by a delta in mm, bringing everything that rides on it:
+   * its descendant profiles, every bracket bolted to one of them (with any kit
+   * bound to that bracket), and every screw mounted on one of them.
+   *
+   * A subtree has to move rigidly or the assembly comes apart on screen — the
+   * children would stay behind while their parent slides out from under them,
+   * and `removeProfile` is the only other action that knows which ids travel
+   * with a profile.
+   */
+  translateProfile: (id: string, delta: { x: number; y: number; z: number }) => void;
+  /**
+   * Re-seat a bracket on a corner, keeping its identity.
+   *
+   * Position, rotation and size all come from the hint, exactly as
+   * `placeBracketAtHint` derives them for a new bracket — a moved bracket and a
+   * placed one have to end up posed the same way. The id, connector and enabled
+   * flag are the bracket's own and survive; `auto` goes back to true because the
+   * app is choosing this pose again.
+   */
+  moveBracket: (id: string, hint: CornerHint) => void;
+
+  // ---- What the pointer is holding (see `DiyHand`) ----
+  /** The part picked from the library and not yet placed, or null. */
+  hand: DiyHand | null;
+  /**
+   * Pick a part up, or put it back down. Passing the hand that is already held
+   * clears it (clicking the same card twice is how you change your mind);
+   * passing null always clears, so Escape cannot be defeated by a comparison.
+   */
+  pickUpHand: (hand: DiyHand | null) => void;
+
+  // ---- Ghost previews (one per kind that has a pose to preview) ----
+  /**
+   * Ghost bracket/kit at the nearest snap target (mm), drawn while a connector
+   * or a kit is in hand.
+   *
+   * Nothing is "dragged" any more — this follows the pointer, and the click that
+   * commits it is the one that places. Null = nothing valid under the pointer,
+   * and then a click places nothing.
+   */
   ghostBracket: { position: { x: number; y: number; z: number }; size: number; profileId: string } | null;
-  /** Called when the user starts dragging a bracket over the 3D viewport. */
-  startDraggingBracket: () => void;
-  /** Update ghost position (mouse move during drag). Null = no valid snap target. */
+  /** Update ghost position (pointer move while a connector/kit is in hand). */
   updateGhostBracket: (data: { position: { x: number; y: number; z: number }; size: number; profileId: string } | null) => void;
   /**
-   * Drop: place an UNORIENTED bracket at the ghost position.
+   * The connector the NEXT bracket is built from when nobody names one.
    *
-   * This is the fallback for a drop with no joint under it. Anything that lands
+   * Placing releases what is in hand, so without this the click AFTER a
+   * placement falls back to `DEFAULT_BRACKET_CONNECTOR_ID`: the user picks a
+   * connector, places one, places a second, and the second is the cast default —
+   * the choice they made silently expires between two placements. The choice
+   * outlives the hand instead. It is set when a connector card is picked up and
+   * by every bracket placement, and only another choice replaces it.
+   */
+  lastConnectorId: string | null;
+
+  /**
+   * Place an UNORIENTED bracket at the ghost position.
+   *
+   * This is the fallback for a click with no joint under it. Anything that lands
    * on a real joint goes through `placeBracketAtHint` instead — it takes the
    * corner's own faces and size, so position, rotation and size all agree by
    * construction. There is deliberately no way to pass those in here: a second
@@ -195,22 +301,16 @@ interface DiyState {
     /** Connector catalog id to stamp on the new bracket. */
     connectorId?: string;
   }) => void;
-  /** Cancel the drag (left viewport / Escape). */
-  cancelDraggingBracket: () => void;
-
-  // ---- Screw drag-and-drop placement ----
-  /** True while a screw is being dragged from the sidebar over the 3D view. */
-  isDraggingScrew: boolean;
-  /** Ghost screw shown on the hovered profile face during drag (mm + deg). */
+  /** Ghost screw shown on the hovered profile face (mm + deg). */
   ghostScrew: DiyScrewGhost | null;
-  /** Called when the user starts dragging a screw over the 3D viewport. */
-  startDraggingScrew: () => void;
-  /** Update ghost during mouse move. Null = no valid face under cursor. */
+  /** Update ghost on pointer move. Null = no valid face under cursor. */
   updateGhostScrew: (data: DiyScrewGhost | null) => void;
-  /** Drop: place the screw at the ghost position. */
+  /** Place the screw at the ghost position. */
   placeScrew: (patch?: { length?: number }) => void;
-  /** Cancel the screw drag. */
-  cancelDraggingScrew: () => void;
+  /** Ghost root profile on the ground plane while a profile is in hand (mm). */
+  ghostProfile: DiyProfileGhost | null;
+  /** Update the profile ghost on pointer move. */
+  updateGhostProfile: (data: DiyProfileGhost | null) => void;
 
   // Screw CRUD
   addScrew: (s: DiyScrew) => void;
@@ -218,39 +318,7 @@ interface DiyState {
   removeScrew: (id: string) => void;
   selectScrew: (id: string | null) => void;
 
-  // ---- Bracket two-face placement (manual: pick two perpendicular faces) ----
-  /** First picked face while placing a bracket by clicking two faces. */
-  bracketFaceA: BracketFacePick | null;
-  /** Enter two-face bracket placement mode (clear any first pick). */
-  startBracketFacePicking: () => void;
-  /**
-   * Register a picked face. With no first pick yet, stores it (returns 'first').
-   * Otherwise validates perpendicularity and places the bracket at the line
-   * where the two face planes meet. Returns the outcome for the caller to
-   * surface errors.
-   */
-  pickBracketFace: (info: BracketFacePick) => 'first' | 'placed' | 'rejected' | 'no_overlap' | 'no_fit';
-  /** Cancel two-face bracket placement. */
-  cancelBracketFacePicking: () => void;
-  /**
-   * Auto-algorithm reference bracket rendered translucent blue next to a
-   * manually placed bracket, so the two can be compared side by side.
-   */
-  autoRefBracket: DiyBracket | null;
-  setAutoRefBracket: (b: DiyBracket | null) => void;
-
-  // ---- Corner-hint click placement ----
-  /**
-   * The connector the next corner-hint click will place, or null for the
-   * default bracket. Arming is NOT a mode: it changes nothing about what the
-   * pointer does, only which part the orange hints would drop if clicked.
-   */
-  armedConnectorId: string | null;
-  /**
-   * Arm a connector. Passing the already-armed id disarms it (clicking the
-   * card twice is how you put it back down); passing null always clears.
-   */
-  armConnector: (id: string | null) => void;
+  // ---- Corner-hint placement ----
   /**
    * Place a bracket at a computed corner hint, using the LOCAL euler solution
    * (`eulerFromNormals`) rather than the backend.
@@ -323,6 +391,55 @@ interface DiyState {
   /** Whether to show corner-hint wireframes (toggled by sidebar Connectors tab). */
   showCornerHints: boolean;
   setShowCornerHints: (v: boolean) => void;
+
+  // ---- The viewport's own view controls (see `DiyToolbar`) ----
+  /**
+   * Draw the ground grid. On by default: it is the reference the placement ghost
+   * lands on, so turning it off is a deliberate choice rather than a starting
+   * state. It lives here, next to `showCornerHints`, for the same reason — the
+   * scene reads it without a prop threaded through the Canvas.
+   */
+  showGrid: boolean;
+  setShowGrid: (v: boolean) => void;
+
+  /**
+   * The backdrop the parts are drawn on (see `diyBackgrounds`), remembered
+   * across reloads.
+   *
+   * The SCENE does not read this — the canvas is transparent and the value is
+   * the CSS background of the stage div behind it (`DiyViewer`). That is why it
+   * is a string of CSS and not a colour: three of the six presets are gradients,
+   * and a gradient is one thing the browser already knows how to paint. The
+   * grid colours that belong with it are the scene's half of the same choice,
+   * and the scene does read those.
+   */
+  background: DiyBackgroundId;
+  /** Writes through to storage: the choice is a preference, not a scratch pad,
+   *  so there is no separate "save" and no way to set one without the other. */
+  setBackground: (id: DiyBackgroundId) => void;
+
+  /**
+   * The standard view the camera was last sent to, or null once the user takes
+   * the camera back by orbiting.
+   *
+   * Null is not "no view" — the camera is always somewhere — it is "not one of
+   * the four, any more". The toolbar's active highlight hangs off it, and a
+   * highlight left on 俯视 after the user has orbited round to the back would be
+   * a label about a view they are no longer looking at.
+   */
+  viewPreset: ViewPreset | null;
+  /**
+   * Bumped by EVERY preset click, including one on the preset already showing.
+   *
+   * The Configurator guards its flight with a "has the preset changed" check, so
+   * clicking 前视 twice does nothing there. Here a second click is a real
+   * request — "put me back on this view" after orbiting away — and the value
+   * alone cannot express it, so the change signal is the counter.
+   */
+  viewNonce: number;
+  setViewPreset: (p: ViewPreset) => void;
+  /** The user has taken the camera back: drop the highlight, fly nowhere. */
+  clearViewPreset: () => void;
 }
 
 export const useDiyStore = create<DiyState>((set, get) => ({
@@ -344,7 +461,7 @@ export const useDiyStore = create<DiyState>((set, get) => ({
       id: uid(),
       seq: ++_seq,
       profileSize: size,
-      length: 100,
+      length: ROOT_PROFILE_LENGTH,
       position: pos,
       direction: dir,
       parentId: null,
@@ -355,6 +472,10 @@ export const useDiyStore = create<DiyState>((set, get) => ({
       profiles: [...s.profiles, p],
       selectedProfileId: p.id,
       cameraFocus: { x: pos.x * 0.001, y: pos.y * 0.001, z: pos.z * 0.001 },
+      // Placing consumes what was in hand, so the next click lands on the new
+      // post (select it, then drag it) rather than stamping another one.
+      hand: null,
+      ghostProfile: null,
     }));
     return p;
   },
@@ -438,7 +559,17 @@ export const useDiyStore = create<DiyState>((set, get) => ({
     }));
   },
 
-  selectProfile: (id) => set({ selectedProfileId: id, selectedBracketId: null, selectedScrewId: null, selectedKitId: null }),
+  // Selection is what the dimension annotation hangs from: it says "this is the
+  // part I am working on", and the number beside it says how tall it is. Picking
+  // anything at all — a new profile, a bracket, an empty patch of ground —
+  // withdraws it, so the annotation can never outlive the moment it belongs to.
+  selectProfile: (id) => set({
+    selectedProfileId: id,
+    selectedBracketId: null,
+    selectedScrewId: null,
+    selectedKitId: null,
+    dimension: null,
+  }),
 
   setStretchProfile: (id, end) =>
     set({ stretchProfileId: id, stretchEnd: end, mode: id ? 'stretching' : 'idle' }),
@@ -596,11 +727,8 @@ export const useDiyStore = create<DiyState>((set, get) => ({
   controlsRef: null,
   setControlsRef: (ref) => set({ controlsRef: ref }),
 
-  // ---- Bracket drag-and-drop ----
-  isDraggingBracket: false,
+  // ---- Ghosts, selection bookkeeping ----
   ghostBracket: null,
-  bracketFaceA: null,
-  autoRefBracket: null,
   placingProfile: null,
   cameraFocus: null,
 
@@ -609,18 +737,47 @@ export const useDiyStore = create<DiyState>((set, get) => ({
   showCornerHints: false,
   setShowCornerHints: (v) => set({ showCornerHints: v }),
 
-  startDraggingBracket: () => set({ isDraggingBracket: true, ghostBracket: null }),
+  showGrid: true,
+  setShowGrid: (v) => set({ showGrid: v }),
+
+  // Read once, at the store's creation: a preference that only changes when the
+  // user changes it does not need re-reading, and reading it here is what lets
+  // every component take the resolved value straight off the store.
+  background: readBackground(),
+  setBackground: (id) => {
+    writeBackground(id);
+    set({ background: id });
+  },
+
+  // `perspective` is not a placeholder: it is the view the scene opens on, so the
+  // toolbar starts with the button that describes what is actually on screen
+  // lit up, rather than with nothing lit up until the first click.
+  viewPreset: 'perspective',
+  viewNonce: 0,
+  setViewPreset: (p) => set((s) => ({
+    viewPreset: p,
+    viewNonce: s.viewNonce + 1,
+    // A preset click is a deliberate camera move, so it cancels the auto-zoom
+    // that follows a placement. That zoom is driven per-frame from
+    // `cameraFocus`, and two writers on the same camera means the flight wins
+    // for 700 ms and is then snatched back to the placement distance. Clearing
+    // the flag here is half the fix — `DiyScene` drops the ref the frame loop
+    // actually reads (see its preset effect).
+    cameraFocus: null,
+  })),
+  clearViewPreset: () => set({ viewPreset: null }),
 
   updateGhostBracket: (data) => set({ ghostBracket: data }),
 
   placeBracket: (patch?: { connectorId?: string }) => {
-    const { ghostBracket, profiles } = get();
+    const { ghostBracket, profiles, lastConnectorId } = get();
     if (!ghostBracket) return;
     const parent = profiles.find((p) => p.id === ghostBracket.profileId);
     const size = ghostBracket.size;
+    const connectorId = patch?.connectorId ?? lastConnectorId ?? DEFAULT_BRACKET_CONNECTOR_ID;
     const bracket: DiyBracket = {
       id: uid(),
-      connectorId: patch?.connectorId ?? DEFAULT_BRACKET_CONNECTOR_ID,
+      connectorId,
       position: ghostBracket.position,
       rotation: { roll: 0, pitch: 0, yaw: 0 },
       anchorPosition: { x: 0, y: 0, z: 0 },
@@ -640,27 +797,133 @@ export const useDiyStore = create<DiyState>((set, get) => ({
       selectedProfileId: null,
       selectedScrewId: null,
       selectedKitId: null,
-      isDraggingBracket: false,
+      hand: null,
       ghostBracket: null,
-      autoRefBracket: null,
+      // The fallback path's placement counts as a choice too: whatever went
+      // down here is what a second click — with the hand now empty — must
+      // produce again.
+      lastConnectorId: connectorId,
     }));
   },
 
-  cancelDraggingBracket: () => set({ isDraggingBracket: false, ghostBracket: null }),
-
-  // ---- Bracket two-face placement ----
-  startBracketFacePicking: () =>
-    set({ mode: 'placing_bracket_faces', bracketFaceA: null, autoRefBracket: null }),
-  cancelBracketFacePicking: () =>
-    set({ mode: 'idle', bracketFaceA: null, autoRefBracket: null }),
-  setAutoRefBracket: (b) => set({ autoRefBracket: b }),
-
-  armedConnectorId: null,
-  armConnector: (id) =>
+  hand: null,
+  lastConnectorId: null,
+  pickUpHand: (next) =>
     set((s) => ({
-      // Same id again = put it down. `id === null` must clear unconditionally
+      // Same part again = put it down. `null` must clear unconditionally
       // (Escape), so it cannot go through the same comparison.
-      armedConnectorId: id !== null && s.armedConnectorId === id ? null : id,
+      hand: next !== null && s.hand !== null && sameHand(next, s.hand) ? null : next,
+      // Picking a connector IS the choice, whether or not it gets placed —
+      // putting one down again (Escape, or clicking the card twice) must not
+      // quietly forget it and send the next bracket back to the default.
+      lastConnectorId: next?.kind === 'connector' ? next.connectorId : s.lastConnectorId,
+      // The ghosts belong to whatever was in hand a moment ago: a bracket ghost
+      // left over from a connector would keep previewing a corner for a part the
+      // user has already put back down.
+      ghostBracket: null,
+      ghostScrew: null,
+      ghostProfile: null,
+    })),
+
+  // ---- Drag-to-move a placed part ----
+  movingPart: null,
+  setMovingPart: (part) => set({ movingPart: part }),
+
+  dimension: null,
+  setDimension: (dimension) => set({ dimension }),
+
+  translateProfile: (id, delta) =>
+    set((s) => {
+      // The profile and everything that hangs off it — the same set
+      // `removeProfile` computes, for the same reason. A subtree that did not
+      // move rigidly would come apart on screen.
+      const moving = new Set([id, ...get().getDescendantIds(id)]);
+
+      const parent = s.profiles.find((p) => p.id === id)?.parentId;
+      const parentProfile = parent ? s.profiles.find((p) => p.id === parent) : null;
+
+      return {
+        profiles: s.profiles.map((p) => {
+          if (!moving.has(p.id)) return p;
+          const moved = {
+            ...p,
+            position: {
+              x: p.position.x + delta.x,
+              y: p.position.y + delta.y,
+              z: p.position.z + delta.z,
+            },
+          };
+          // `parentOffset` records where this profile sits along its PARENT's
+          // axis. A moved child is no longer where that number says it is, and
+          // the only consumer (`updateProfileSize`) would then shift it about a
+          // stale centre. Recomputed for the dragged profile only: its
+          // descendants travelled rigidly with it, so theirs still hold.
+          if (p.id === id && parentProfile) {
+            const ax = parentProfile.direction.toLowerCase() as 'x' | 'y' | 'z';
+            return { ...moved, parentOffset: Math.round(moved.position[ax] - parentProfile.position[ax]) };
+          }
+          return moved;
+        }),
+        // A bracket is bolted to the profiles it connects, in world coordinates
+        // — it has no parent to follow. Any bracket touching a moved profile
+        // travels, including one bridging the subtree and the rest of the frame:
+        // leaving it behind would pull it off the very faces it mounts on.
+        brackets: s.brackets.map((b) =>
+          b.connectedProfiles.some((pid) => moving.has(pid))
+            ? {
+                ...b,
+                position: {
+                  x: b.position.x + delta.x,
+                  y: b.position.y + delta.y,
+                  z: b.position.z + delta.z,
+                },
+              }
+            : b,
+        ),
+        // Screws are positioned on a face in world coordinates, and they carry
+        // the profile they are mounted on as `profileId` — so the same rule.
+        screws: s.screws.map((sc) =>
+          moving.has(sc.profileId)
+            ? {
+                ...sc,
+                position: {
+                  x: sc.position.x + delta.x,
+                  y: sc.position.y + delta.y,
+                  z: sc.position.z + delta.z,
+                },
+              }
+            : sc,
+        ),
+      };
+    }),
+
+  moveBracket: (id, hint) =>
+    set((s) => ({
+      brackets: s.brackets.map((b) => {
+        if (b.id !== id) return b;
+        // The same pose `placeBracketAtHint` builds through `jointBracket`, with
+        // the connector id resolved the same way — a moved bracket and a placed
+        // one have to land posed identically.
+        const eul = eulerFromNormals(hint.faceA, hint.faceB);
+        return {
+          ...b,
+          position: {
+            x: Math.round(hint.position.x * 100) / 100,
+            y: Math.round(hint.position.y * 100) / 100,
+            z: Math.round(hint.position.z * 100) / 100,
+          },
+          rotation: {
+            roll: THREE.MathUtils.radToDeg(eul.x),
+            pitch: THREE.MathUtils.radToDeg(eul.y),
+            yaw: THREE.MathUtils.radToDeg(eul.z),
+          },
+          connectedProfiles: [hint.profileIdA, hint.profileIdB],
+          size: hint.size,
+          // The app is choosing this pose again, so a later resize may re-fit it
+          // — the same restoration `auto` performs for a freshly placed bracket.
+          auto: true,
+        };
+      }),
     })),
 
   placeBracketAtHint: (hint, connectorId) => {
@@ -675,19 +938,25 @@ export const useDiyStore = create<DiyState>((set, get) => ({
     // The click path cannot reach this branch: `DiyCornerHints` filters its
     // previews by the same `SAME_CORNER_MM`, so a click is only ever offered on a
     // free corner.
+    //
+    // Resolved once, for both branches, and from the user's last choice before
+    // the factory default — see `lastConnectorId`. A bare corner click (nothing
+    // in hand) is the common case here, and it is the one that used to hand back
+    // the cast bracket a placement after the user had picked something else.
+    const chosen = connectorId ?? get().lastConnectorId ?? DEFAULT_BRACKET_CONNECTOR_ID;
     const sitting = bracketAtHint(get().brackets, hint);
     if (sitting) {
       set((s) => ({
         brackets: s.brackets.map((b) =>
-          b.id === sitting.id ? { ...b, connectorId: connectorId ?? DEFAULT_BRACKET_CONNECTOR_ID } : b,
+          b.id === sitting.id ? { ...b, connectorId: chosen } : b,
         ),
         selectedBracketId: sitting.id,
         selectedProfileId: null,
         selectedScrewId: null,
         selectedKitId: null,
-        isDraggingBracket: false,
+        hand: null,
         ghostBracket: null,
-        autoRefBracket: null,
+        lastConnectorId: chosen,
       }));
       return sitting.id;
     }
@@ -699,7 +968,7 @@ export const useDiyStore = create<DiyState>((set, get) => ({
       faceB: hint.faceB,
       size: hint.size,
       position: hint.position,
-      connectorId: connectorId ?? DEFAULT_BRACKET_CONNECTOR_ID,
+      connectorId: chosen,
     });
     set((s) => ({
       brackets: [...s.brackets, bracket],
@@ -708,80 +977,38 @@ export const useDiyStore = create<DiyState>((set, get) => ({
       selectedProfileId: null,
       selectedScrewId: null,
       selectedKitId: null,
-      // The drag path routes its drop through here when it lands on a joint, so
-      // this has to finish the drag the way `placeBracket` does. A click has no
-      // drag to finish and these are already at rest.
-      isDraggingBracket: false,
+      // A click on a joint goes through here too, so this has to clear the hand
+      // and the ghost exactly the way `placeBracket` does — the fallback path
+      // must not be the only one that puts the part down.
+      hand: null,
       ghostBracket: null,
-      autoRefBracket: null,
+      lastConnectorId: chosen,
     }));
     return bracket.id;
   },
 
-  pickBracketFace: (info) => {
-    const s = get();
-    if (!s.bracketFaceA) {
-      set({ bracketFaceA: info });
-      return 'first';
-    }
-    const a = s.bracketFaceA;
-
-    // The two mounting faces of a corner bracket are perpendicular.
-    const dotN =
-      a.normal.x * info.normal.x +
-      a.normal.y * info.normal.y +
-      a.normal.z * info.normal.z;
-    if (Math.abs(dotN) > 0.05) return 'rejected';
-
-    // Position = CENTER of the joint, independent of where the mouse clicked.
-    // Shared with the auto preview (computeCornerHints), so a manual two-face
-    // placement always lands exactly on a preview bracket.
-    const pa = s.profiles.find((p) => p.id === a.profileId);
-    const pb = s.profiles.find((p) => p.id === info.profileId);
-    if (!pa || !pb) return 'rejected';
-    const fit = jointFitInfo(pa, a.normal, pb, info.normal);
-    if (!fit) return 'no_overlap';
-
-    const dimOf = (id: string) => {
-      const p = s.profiles.find((q) => q.id === id);
-      return p ? (PROFILE_DIMS[p.profileSize] ?? 30) : 30;
-    };
-    const size = Math.max(dimOf(a.profileId), dimOf(info.profileId));
-
-    // Reject a placement whose mounting faces don't have enough room for the
-    // bracket (joint too close to a profile end, or a too-short profile) — the
-    // bracket would visibly stick out past the profile.
-    if (!cornerBracketFits(fit, size)) return 'no_fit';
-
-    // Manual two-face placement drops the same default bracket a corner hint
-    // does — the two ways in must not place different parts. Both go through
-    // `jointBracket`, so they cannot even if someone edits one of them later.
-    const bracket = jointBracket({
-      idA: a.profileId,
-      idB: info.profileId,
-      faceA: a.normal,
-      faceB: info.normal,
-      size,
-      position: fit.position,
-    });
-
-    set((st) => ({
-      brackets: [...st.brackets, bracket],
-      selectedBracketId: bracket.id,
-      bracketFaceA: null,
-      mode: 'idle',
-    }));
-    return 'placed';
-  },
-
-  // ---- Click-to-place child profile ----
+  // ---- Hover-to-place child profile ----
+  //
+  // Deliberately NOT a `mode`. Arming is now a hover: it happens and un-happens
+  // every time the pointer crosses a selected bar, and anything keyed on `mode`
+  // would flicker with it. Two examples that would break loudly — the property
+  // panel prints the mode, and `DiyScene` takes the camera away during a mode —
+  // so a hover that set one would freeze the view whenever the pointer rested
+  // on the wrong bar.
   startPlacingProfile: (parentId, face, pos, size) =>
-    set({ placingProfile: { parentId, face, position: pos, size }, mode: 'placing_child' }),
+    set({ placingProfile: { parentId, face, position: pos, size } }),
 
   updatePlacingPosition: (pos) =>
-    set((s) => ({
-      placingProfile: s.placingProfile ? { ...s.placingProfile, position: pos } : null,
-    })),
+    set((s) => {
+      const cur = s.placingProfile;
+      if (!cur) return {};
+      // The snap quantises to 10 mm, so most pointer moves do not move the
+      // ghost. Returning the same object is what keeps a hover from re-rendering
+      // every profile in the scene on every mouse event.
+      const p = cur.position;
+      if (p.x === pos.x && p.y === pos.y && p.z === pos.z) return {};
+      return { placingProfile: { ...cur, position: pos } };
+    }),
 
   confirmPlacingProfile: () => {
     const { placingProfile, profiles } = get();
@@ -821,14 +1048,19 @@ export const useDiyStore = create<DiyState>((set, get) => ({
     set((s) => ({
       profiles: [...s.profiles, child],
       selectedProfileId: child.id,
+      // No `mode` to restore — see `startPlacingProfile`. The child becomes the
+      // selection, so the ghost is gone by the same rule it always was: it
+      // belongs to the selected profile, and that is now this child.
       placingProfile: null,
-      mode: 'idle',
       cameraFocus: { x: childPos.x * 0.001, y: childPos.y * 0.001, z: childPos.z * 0.001 },
     }));
     return child;
   },
 
-  cancelPlacing: () => set({ placingProfile: null, mode: 'idle' }),
+  // Clears the ghost only. `mode` is left alone on purpose: this is now called
+  // from a pointer-out, and forcing `'idle'` there would cancel an unrelated
+  // gesture (a stretch in progress) because the pointer happened to leave a bar.
+  cancelPlacing: () => set({ placingProfile: null }),
 
   // Brackets
   addBracket: (b) =>
@@ -920,13 +1152,12 @@ export const useDiyStore = create<DiyState>((set, get) => ({
   setShowKitFasteners: (v) => set({ showKitFasteners: v }),
   setShowKitNuts: (v) => set({ showKitNuts: v }),
 
-  // ---- Screw drag-and-drop ----
-  isDraggingScrew: false,
+  // ---- Screw ghost ----
   ghostScrew: null,
-
-  startDraggingScrew: () => set({ isDraggingScrew: true, ghostScrew: null }),
+  ghostProfile: null,
 
   updateGhostScrew: (data) => set({ ghostScrew: data }),
+  updateGhostProfile: (data) => set({ ghostProfile: data }),
 
   placeScrew: (patch) => {
     const { ghostScrew } = get();
@@ -936,11 +1167,14 @@ export const useDiyStore = create<DiyState>((set, get) => ({
       position: ghostScrew.position,
       rotation: ghostScrew.rotation,
       size: ghostScrew.size,
-      // The drag payload carries a size only, so the screw lands on the app's
-      // default standard at the catalog's default length for it — the same pair
-      // the placement ghost draws.
-      family: DEFAULT_SCREW_FAMILY,
-      length: patch?.length ?? defaultScrewLength(DEFAULT_SCREW_FAMILY, ghostScrew.size),
+      // The standard comes from the dragged card, so a card in the 沉头 group
+      // lands a countersunk screw. The LENGTH is still the app's default: the
+      // card picks a standard and a thread, and the length is the one thing left
+      // for the property panel. Both expressions match the placement ghost's
+      // (see DiyScrewPlacementGhost), which is what keeps the ghost from
+      // promising something the drop does not produce.
+      family: ghostScrew.family,
+      length: patch?.length ?? defaultScrewLength(ghostScrew.family, ghostScrew.size),
       profileId: ghostScrew.profileId,
       enabled: true,
     };
@@ -950,12 +1184,10 @@ export const useDiyStore = create<DiyState>((set, get) => ({
       // Mutual selection: placing a screw deselects any profile/bracket.
       selectedProfileId: null,
       selectedBracketId: null,
-      isDraggingScrew: false,
+      hand: null,
       ghostScrew: null,
     }));
   },
-
-  cancelDraggingScrew: () => set({ isDraggingScrew: false, ghostScrew: null }),
 
   // Screws CRUD
   addScrew: (s) =>
