@@ -1,4 +1,4 @@
-import { useState, useRef, useMemo, Suspense } from 'react';
+import { Fragment, useState, useRef, useMemo, Suspense } from 'react';
 import { Canvas, useFrame, useLoader } from '@react-three/fiber';
 import { STLLoader } from 'three-stdlib';
 import * as THREE from 'three';
@@ -53,7 +53,17 @@ const KIND_ICON: Record<DiyConnector['kind'], string> = {
   // Die-cast zinc, the same └┘ shape as the cast aluminium brackets it sits beside
   // — a cover IS an angle from the outside, which is the entire point of one.
   zinc: '└┘',
+  // A 三通件 is a cube, not an angle: three profiles butt into it, one per
+  // mounting face, and nothing is bolted across a corner. Different glyph
+  // because it is a different part.
+  node: '▣',
 };
+
+/** Where the 三通件 group starts in the connector list — the catalog's own order
+ *  (the bake script appends them after the angles), so the group header is placed
+ *  by finding the first node rather than by a hard-coded index that the next
+ *  catalog addition would silently move. */
+const FIRST_NODE_ID = CONNECTORS.find((c) => c.kind === 'node')?.id ?? null;
 
 /** One card per (standard, thread size) the catalog actually holds — the drag
  *  payload carries both, so a card in the 沉头 group drops a countersunk screw.
@@ -560,7 +570,7 @@ const DiyProfileLibrary: React.FC = () => {
             {/* Help */}
             <div className="mt-4 p-3 rounded-lg bg-neutral-900/50 border border-neutral-800 text-neutral-500 text-[10px] space-y-1">
               <p>{t('diy.helpPickProfileRoot')}</p>
-              <p>{t('diy.helpHoverFace')}</p>
+              <p>{t('diy.helpDblFace')}</p>
               <p>{t('diy.helpDragArrow')}</p>
               <p>{t('diy.helpMove')}</p>
             </div>
@@ -581,8 +591,23 @@ const DiyProfileLibrary: React.FC = () => {
               // the default" reading the user reported.
               const current = lastConnectorId === c.id;
               return (
+              <Fragment key={c.id}>
+              {/* Two families share this tab and they are not interchangeable: an
+                  angle goes on a joint, a 三通件 goes on the ground. Without the
+                  header the second group reads as eight more angles — and the
+                  placement gesture, which is the one thing that differs, is
+                  exactly what a user would get wrong. */}
+              {FIRST_NODE_ID === c.id && (
+                <div data-connector-group="node" className="px-1 pt-3 pb-0.5">
+                  <div className="text-[11px] font-medium text-neutral-400">{t('diy.groupNode')}</div>
+                  {/* Stacked rather than inline: at this column width the note
+                      is longer than the space beside the label, and a truncated
+                      one would drop the wording that is the whole point of the
+                      note — "joints not wired up yet". */}
+                  <div className="text-[10px] text-neutral-600 leading-tight">{t('diy.groupNodeNote')}</div>
+                </div>
+              )}
               <div
-                key={c.id}
                 data-connector-card={c.id}
                 data-diy-card={`connector:${c.id}`}
                 data-connector-armed={held ? '1' : '0'}
@@ -614,12 +639,14 @@ const DiyProfileLibrary: React.FC = () => {
                 </div>
                 {cardBadge(held)}
               </div>
+              </Fragment>
               );
             })}
 
             {/* Help */}
             <div className="mt-4 p-3 rounded-lg bg-neutral-900/50 border border-neutral-800 text-neutral-500 text-[10px] space-y-1">
               <p>{t('diy.helpClickCorner')}</p>
+              <p>{t('diy.helpPlaceNode')}</p>
               <p>{t('diy.helpHoverCard')}</p>
               <p>{t('diy.helpPickCardAgain')}</p>
               <p>{t('diy.helpMove')}</p>

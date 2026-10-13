@@ -43,6 +43,27 @@ export const zh = {
   'cat.1.46.204.2828A.label': '角件盖板 28x28',
   'cat.1.46.204.2828A.desc': '角件盖板 · 锌合金',
 
+  // --- 三通件 (CORNER_PIECE, kind 'node') ---------------------------------
+  // Labelled by edge length, in the series' own 20/30/40/50 numbering. The
+  // finish rides in the desc rather than the label, the same way the grey/black
+  // pairs of every other family in this file are distinguished.
+  'cat.1.48.221.label': '三通角块 20',
+  'cat.1.48.221.desc': '立方角块 · 铝 · 银灰',
+  'cat.1.48.221.2.label': '三通角块 20',
+  'cat.1.48.221.2.desc': '立方角块 · 铝 · 黑',
+  'cat.1.48.331.label': '三通角块 30',
+  'cat.1.48.331.desc': '立方角块 · 铝 · 银灰',
+  'cat.1.48.331.2.label': '三通角块 30',
+  'cat.1.48.331.2.desc': '立方角块 · 铝 · 黑',
+  'cat.1.48.441.label': '三通角块 40',
+  'cat.1.48.441.desc': '立方角块 · 铝 · 银灰',
+  'cat.1.48.441.2.label': '三通角块 40',
+  'cat.1.48.441.2.desc': '立方角块 · 铝 · 黑',
+  'cat.1.48.551.label': '三通角块 50',
+  'cat.1.48.551.desc': '立方角块 · 铝 · 银灰',
+  'cat.1.48.551.2.label': '三通角块 50',
+  'cat.1.48.551.2.desc': '立方角块 · 铝 · 黑',
+
   // --- board surfaces (`TABLETOP_TEXTURES`) ------------------------------
   'tex.oak.label': '橡木',
   'tex.oak.note': '直纹 · 年轮细密，导管孔在光下发暗',
@@ -144,6 +165,23 @@ export const en: Record<CatalogKey, string> = {
   'cat.1.46.204.2828.2.desc': 'Zinc alloy · angle · powder-coated · triangular rib',
   'cat.1.46.204.2828A.label': 'Angle cover 28x28',
   'cat.1.46.204.2828A.desc': 'Corner cover · zinc alloy',
+
+  'cat.1.48.221.label': 'Three-way cube 20',
+  'cat.1.48.221.desc': 'Corner cube · aluminium · silver',
+  'cat.1.48.221.2.label': 'Three-way cube 20',
+  'cat.1.48.221.2.desc': 'Corner cube · aluminium · black',
+  'cat.1.48.331.label': 'Three-way cube 30',
+  'cat.1.48.331.desc': 'Corner cube · aluminium · silver',
+  'cat.1.48.331.2.label': 'Three-way cube 30',
+  'cat.1.48.331.2.desc': 'Corner cube · aluminium · black',
+  'cat.1.48.441.label': 'Three-way cube 40',
+  'cat.1.48.441.desc': 'Corner cube · aluminium · silver',
+  'cat.1.48.441.2.label': 'Three-way cube 40',
+  'cat.1.48.441.2.desc': 'Corner cube · aluminium · black',
+  'cat.1.48.551.label': 'Three-way cube 50',
+  'cat.1.48.551.desc': 'Corner cube · aluminium · silver',
+  'cat.1.48.551.2.label': 'Three-way cube 50',
+  'cat.1.48.551.2.desc': 'Corner cube · aluminium · black',
 
   'tex.oak.label': 'Oak',
   'tex.oak.note': 'Straight grain · tight rings, pores darken in the light',

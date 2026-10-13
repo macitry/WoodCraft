@@ -7,7 +7,7 @@ import * as THREE from 'three';
 import { useDiyStore } from '../store/diyStore';
 import type { DiyBracket } from '../types/furniture';
 import { useConnectorGeometry } from './DiyBracketStl';
-import { CONNECTORS, connectorById } from './connectors';
+import { JOINT_CONNECTORS, connectorById } from './connectors';
 import { useT } from '../i18n';
 import { connectorLabel } from '../i18n/names';
 
@@ -144,6 +144,8 @@ const BracketEditor: React.FC<{
 
   const cls = "w-20 px-1.5 py-0.5 text-xs bg-neutral-900 border border-neutral-700 rounded text-neutral-200 text-right tabular-nums focus:border-wood-600 focus:outline-none";
 
+  const cc = connectorById(bracket.connectorId);
+
   return (
     <div className="space-y-4 text-xs">
       <Section label={t('diy.model')}>
@@ -154,7 +156,10 @@ const BracketEditor: React.FC<{
             onChange={(e) => onUpdate({ connectorId: e.target.value })}
             className="max-w-[13rem] px-1.5 py-1 text-xs bg-neutral-900 border border-neutral-700 rounded text-neutral-200 focus:border-wood-600 focus:outline-none cursor-pointer"
           >
-            {CONNECTORS.map((c) => (
+            {/* Joint connectors plus — for a 三通件 already in the scene — the
+                node itself, so the select does not render blank. See
+                JOINT_CONNECTORS. */}
+            {(cc.kind === 'node' ? [...JOINT_CONNECTORS, cc] : JOINT_CONNECTORS).map((c) => (
               <option key={c.id} value={c.id}>
                 {connectorLabel(c)} · {c.dim}
               </option>

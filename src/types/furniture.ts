@@ -363,6 +363,21 @@ export interface DiyProfileGhost {
   direction: AxisDir;
 }
 
+/** Ghost bracket/kit shown at the pose a click would place.
+ *
+ *  Two live cases share the shape because they share the placement path: an
+ *  angle bracket or a kit is previewed on the joint under the pointer, and a
+ *  三通件 on the ground where the pointer is. `profileId` is what tells them
+ *  apart downstream — `''` means no parent, so `placeBracket` records no
+ *  `connectedProfiles` and the part is a free node rather than a joint. */
+export interface DiyBracketGhost {
+  position: { x: number; y: number; z: number };
+  /** Cube edge the ghost is drawn at (mm): the joint's profile size, or the
+   *  node's own edge. */
+  size: number;
+  profileId: string;
+}
+
 /**
  * The part the pointer is holding — picked from the library, not yet placed.
  *
@@ -389,18 +404,22 @@ export interface DiyMovingPart {
 }
 
 /**
- * The live dimension annotation drawn beside a part, CAD-fashion, while a height
- * is being set.
+ * The live dimension annotation drawn beside a part, CAD-fashion, while one of
+ * its measurements is being set.
  *
  * `length` measures the profile along its OWN axis — its two end faces, which for
- * a post is its height. `height` measures the vertical distance from the ground
- * plane up to the profile's axis, which is what a rail sliding up its post is
- * choosing. Both, for a post, are "the height" — which one is on screen is what
- * says which gesture put it there.
+ * a post is its height. It is what the stretch handle is changing.
+ *
+ * `anchor` measures a child that is sliding along the parent it is bolted to,
+ * against that PARENT's two ends: how far the child sits from one end and how far
+ * from the other. The ground is not the datum — the bar the child hangs off is,
+ * which is both what a fitter measures from and the only reading that stays
+ * meaningful when the parent is not vertical. `profileId` is the CHILD's; the
+ * parent is found through its `parentId`.
  */
 export interface DiyDimension {
   profileId: string;
-  kind: 'length' | 'height';
+  kind: 'length' | 'anchor';
 }
 
 /**

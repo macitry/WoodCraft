@@ -3,6 +3,7 @@ import { useThree } from '@react-three/fiber';
 import * as THREE from 'three';
 import { useDiyStore } from '../store/diyStore';
 import { cornerHintUnderPointer, freeCornerHints } from './diyBracketTarget';
+import { connectorById } from './connectors';
 import { PROFILE_DIMS } from '../types/furniture';
 import type { DiyMovingPart } from '../types/furniture';
 
@@ -62,6 +63,7 @@ export function useDiyMoveDrag() {
   const setMovingPart = useDiyStore((s) => s.setMovingPart);
   const translateProfile = useDiyStore((s) => s.translateProfile);
   const moveBracket = useDiyStore((s) => s.moveBracket);
+  const updateBracket = useDiyStore((s) => s.updateBracket);
   const updateScrew = useDiyStore((s) => s.updateScrew);
   const setDimension = useDiyStore((s) => s.setDimension);
   const controlsRef = useDiyStore((s) => s.controlsRef);
@@ -106,8 +108,12 @@ export function useDiyMoveDrag() {
     const startScrew = part.kind === 'screw'
       ? st.screws.find((s) => s.id === part.id) ?? null
       : null;
+    const startBracket = part.kind === 'bracket'
+      ? st.brackets.find((b) => b.id === part.id) ?? null
+      : null;
     if (part.kind === 'profile' && !startProfile) return;
     if (part.kind === 'screw' && !startScrew) return;
+    if (part.kind === 'bracket' && !startBracket) return;
 
     // A CHILD profile is bolted to a face of its parent, so it may travel in one
     // direction only: along the parent's axis. That is the sole direction that
@@ -163,6 +169,35 @@ export function useDiyMoveDrag() {
     }
     const startHit = new THREE.Vector3();
     haveStart = startProfile ? rayAt(startX, startY).intersectPlane(plane, startHit) !== null : false;
+
+    // ---- a 三通件 is dragged across the ground, like a root profile --------
+    //
+    // It is the one bracket with no joint to snap to: `freeCornerHints` offers
+    // the free joints and `moveBracket` re-derives a two-face pose from the one
+    // under the pointer, neither of which means anything for a cube dropped
+    // where the user put it. So it gets the profile's rule instead — track the
+    // pointer on a horizontal plane through the part's own centre, snap the
+    // centre to the grid, keep the height.
+    //
+    // `nodeBracket` is non-null exactly when the drag may proceed, the same
+    // single-flag shape the screw slide above uses, so `applyBracket` cannot be
+    // reached with a half-built setup.
+    const nodeBracket = startBracket && connectorById(startBracket.connectorId).kind === 'node'
+      ? startBracket
+      : null;
+    const nodePlane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0);
+    const nodeStartHit = new THREE.Vector3();
+    if (nodeBracket) {
+      nodePlane.setFromNormalAndCoplanarPoint(
+        new THREE.Vector3(0, 1, 0),
+        new THREE.Vector3(
+          nodeBracket.position.x * M,
+          nodeBracket.position.y * M,
+          nodeBracket.position.z * M,
+        ),
+      );
+      if (!rayAt(startX, startY).intersectPlane(nodePlane, nodeStartHit)) return;
+    }
 
     // ---- a screw slides along the axis of the profile it is mounted on ------
     //
@@ -234,6 +269,8 @@ export function useDiyMoveDrag() {
     let applied = { x: 0, y: 0, z: 0 };
     /** Where `updateScrew` last put the screw, along its one axis (mm). */
     let lastScrew = startScrew && screwAxis ? startScrew.position[screwAxis] : 0;
+    /** Where `updateBracket` last put a dragged 三通件, on the ground (mm). */
+    let lastNode = { x: nodeBracket ? nodeBracket.position.x : 0, z: nodeBracket ? nodeBracket.position.z : 0 };
     let dragging = false;
 
     const applyProfile = (ev: PointerEvent) => {
@@ -287,6 +324,24 @@ export function useDiyMoveDrag() {
     };
 
     const applyBracket = (ev: PointerEvent) => {
+      if (nodeBracket) {
+        const hit = new THREE.Vector3();
+        if (!rayAt(ev.clientX, ev.clientY).intersectPlane(nodePlane, hit)) return;
+        // Snapped like a placed node, and measured against the SNAPSHOT position
+        // rather than the live one — the same reason `applyProfile` keeps a
+        // delta: a total measured against a part that has already moved drags
+        // further every frame.
+        const x = Math.round((nodeBracket.position.x + (hit.x - nodeStartHit.x) * 1000) / GRID_MM) * GRID_MM;
+        const z = Math.round((nodeBracket.position.z + (hit.z - nodeStartHit.z) * 1000) / GRID_MM) * GRID_MM;
+        if (x === lastNode.x && z === lastNode.z) return;
+        lastNode = { x, z };
+        // x/z only: the ground plane has no height in it, and a node sits where
+        // it was dropped. Height is the property panel's, not this gesture's.
+        updateBracket(part.id, {
+          position: { x, y: nodeBracket.position.y, z },
+        });
+        return;
+      }
       const st = useDiyStore.getState();
       // The joints the bracket may move to: free ones, plus the one it is
       // sitting on (which is not free — it is the bracket's own).
@@ -352,14 +407,18 @@ export function useDiyMoveDrag() {
         // anything that cares that a part is mid-flight can see it.
         setMovingPart(part);
         if (controlsRef?.current) controlsRef.current.enabled = false;
-        // A child travelling up or down a vertical parent is choosing a HEIGHT,
-        // and that is the number worth showing: how far off the ground the rail
-        // ends up. The other two slide directions are not heights — a rail
-        // sliding along a horizontal beam keeps whatever height it was placed at
-        // — so they publish nothing, and a root profile dragged across the
-        // ground never changes height at all.
-        if (part.kind === 'profile' && slideAxis === 'y') {
-          setDimension({ profileId: part.id, kind: 'height' });
+        // Any sliding child is choosing where it SITS ON ITS PARENT, and the two
+        // numbers worth showing are its distances to that parent's ends — not a
+        // height above the floor. The floor is only the datum for the one case
+        // where the parent happens to be vertical, and it is the wrong datum even
+        // there: a rail pinned 40 mm from the top of its post reads as "40 from
+        // the top", but as a height it reads as 560, which is a number nobody
+        // asked for and which changes if the post is later made taller.
+        //
+        // A root profile dragged across the ground publishes nothing: it has no
+        // parent, so it has no second end to be measured against.
+        if (part.kind === 'profile' && slideAxis) {
+          setDimension({ profileId: part.id, kind: 'anchor' });
         }
       }
       ev.preventDefault();
@@ -383,5 +442,5 @@ export function useDiyMoveDrag() {
     canvas.addEventListener('pointermove', onMove);
     canvas.addEventListener('pointerup', onUp);
     canvas.addEventListener('pointerleave', onUp);
-  }, [camera, gl, setMovingPart, translateProfile, moveBracket, updateScrew, setDimension, controlsRef]);
+  }, [camera, gl, setMovingPart, translateProfile, moveBracket, updateBracket, updateScrew, setDimension, controlsRef]);
 }

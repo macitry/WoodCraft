@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { useDiyStore } from '../store/diyStore';
 import { PROFILE_DIMS, PROFILE_SIZES } from '../types/furniture';
 import type { DiyBracket, DiyProfile, DiyScrew, ProfileSize, ScrewSize } from '../types/furniture';
-import { CONNECTORS, connectorById } from './connectors';
+import { JOINT_CONNECTORS, connectorById } from './connectors';
 import {
   DEFAULT_SCREW_FAMILY,
   headText,
@@ -368,7 +368,13 @@ const BracketProps: React.FC<{ bracket: DiyBracket }> = ({ bracket }) => {
             onChange={(e) => updateBracket(bracket.id, { connectorId: e.target.value })}
             className="w-full px-1.5 py-1 text-xs bg-neutral-900 border border-neutral-700 rounded text-neutral-200 focus:border-wood-600 focus:outline-none cursor-pointer"
           >
-            {CONNECTORS.map((c) => (
+            {/* Joint connectors only. A 三通件 is not one — swapping a cube in
+                here would leave it wearing this joint's two-face rotation and
+                following profiles it is not bolted to. Its own parts stay
+                listed so a node already in the scene still shows what it is
+                (a select whose value is missing from its options renders
+                blank). See JOINT_CONNECTORS. */}
+            {(cc.kind === 'node' ? [...JOINT_CONNECTORS, cc] : JOINT_CONNECTORS).map((c) => (
               <option key={c.id} value={c.id}>
                 {connectorLabel(c)} · {c.dim}
               </option>
@@ -389,77 +395,90 @@ const BracketProps: React.FC<{ bracket: DiyBracket }> = ({ bracket }) => {
           tree. Both facts are why this lives in the bracket's own panel.
           The fit check is against the BRACKET's size (the seats are its holes),
           so a 2020 bracket greys out every kit the catalog ships. */}
-      <Section label={t('diy.kitSection')}>
-        {boundKit ? (
-          <>
-            <Row label={t('diy.kitLabel')}>
-              {boundKitDef ? kitName(boundKitDef) : t('diy.unknownKit', { id: boundKit.kitId })}
-            </Row>
-            {/* Warn, never unbind: shrinking the profile under a kit is the
-                user's own edit, and silently deleting their hardware would be
-                losing data behind their back. */}
-            {boundFitReason && (
-              <div data-diy-kit-warn={bracket.id} className="text-[10px] text-amber-500/90 px-1">{boundFitReason}</div>
-            )}
-            <button
-              data-diy-remove-kit={bracket.id}
-              onClick={() => removeKitInstance(boundKit.id)}
-              className="mt-1 w-full px-2 py-1 text-[10px] rounded border border-neutral-700 text-neutral-300 hover:border-red-700 hover:text-red-300 transition-colors cursor-pointer"
-            >
-              {t('diy.removeKit')}
-            </button>
-          </>
-        ) : (
-          <div className="text-[10px] text-neutral-600 px-1">{t('diy.noKit')}</div>
-        )}
-
-        <button
-          data-diy-add-kit={bracket.id}
-          onClick={() => setKitListOpen((v) => !v)}
-          className="mt-1 w-full px-2 py-1 text-[10px] rounded border border-neutral-700 text-neutral-300 hover:border-wood-600 hover:text-wood-200 transition-colors cursor-pointer"
-        >
-          {t('diy.addKit')}
-        </button>
-
-        {kitListOpen && (
-          <div className="mt-1 space-y-1">
-            {/* Same rule the store enforces by REPLACING rather than adding —
-                said up front, because the button's label cannot show it. */}
-            <p className="text-[10px] text-neutral-600 px-1">{t('diy.kitOnePerJoint')}</p>
-            {JOINT_KITS.map((k) => {
-              const reason = kitFitReason(k, bracket.size);
-              const blocked = reason !== null;
-              return (
-                <button
-                  key={k.id}
-                  data-diy-kit-choice={k.id}
-                  data-diy-kit-blocked={blocked ? '1' : '0'}
-                  disabled={blocked}
-                  title={reason ?? kitDesc(k)}
-                  onClick={() => {
-                    bindKit(k.id, bracket.id);
-                    // `bindKit` selects the kit it just bound, which would swap
-                    // this panel out for the kit panel mid-click. Put the
-                    // selection back on the bracket: the user is editing a
-                    // bracket and the result is what they want to look at.
-                    selectBracket(bracket.id);
-                    setKitListOpen(false);
-                  }}
-                  className={`w-full px-2 py-1 text-left text-[11px] rounded border transition-colors
-                    ${
-                      blocked
-                        ? 'border-neutral-800/50 text-neutral-600 cursor-not-allowed'
-                        : 'border-neutral-800 text-neutral-300 hover:border-wood-600 hover:text-wood-100 cursor-pointer'
-                    }`}
-                >
-                  {kitName(k)}
-                  <span className="ml-1 text-neutral-500">×{k.boltsPerJoint}</span>
-                </button>
-              );
-            })}
+      {cc.kind === 'node' ? (
+        // A 三通件 has no bolt-on seats: `holePatternFor` falls back to the
+        // angle bracket's hole pattern scaled by extent, so a kit bound to a
+        // cube would draw hardware bolted to holes the cube does not have. The
+        // section says so instead of offering a "+ Kit" that produces exactly
+        // that — the same edge the Model menu above closes, from the other side.
+        <Section label={t('diy.kitSection')}>
+          <div data-diy-kit-none={bracket.id} className="text-[10px] text-neutral-600 px-1">
+            {t('diy.noKitNode')}
           </div>
-        )}
-      </Section>
+        </Section>
+      ) : (
+        <Section label={t('diy.kitSection')}>
+          {boundKit ? (
+            <>
+              <Row label={t('diy.kitLabel')}>
+                {boundKitDef ? kitName(boundKitDef) : t('diy.unknownKit', { id: boundKit.kitId })}
+              </Row>
+              {/* Warn, never unbind: shrinking the profile under a kit is the
+                  user's own edit, and silently deleting their hardware would be
+                  losing data behind their back. */}
+              {boundFitReason && (
+                <div data-diy-kit-warn={bracket.id} className="text-[10px] text-amber-500/90 px-1">{boundFitReason}</div>
+              )}
+              <button
+                data-diy-remove-kit={bracket.id}
+                onClick={() => removeKitInstance(boundKit.id)}
+                className="mt-1 w-full px-2 py-1 text-[10px] rounded border border-neutral-700 text-neutral-300 hover:border-red-700 hover:text-red-300 transition-colors cursor-pointer"
+              >
+                {t('diy.removeKit')}
+              </button>
+            </>
+          ) : (
+            <div className="text-[10px] text-neutral-600 px-1">{t('diy.noKit')}</div>
+          )}
+
+          <button
+            data-diy-add-kit={bracket.id}
+            onClick={() => setKitListOpen((v) => !v)}
+            className="mt-1 w-full px-2 py-1 text-[10px] rounded border border-neutral-700 text-neutral-300 hover:border-wood-600 hover:text-wood-200 transition-colors cursor-pointer"
+          >
+            {t('diy.addKit')}
+          </button>
+
+          {kitListOpen && (
+            <div className="mt-1 space-y-1">
+              {/* Same rule the store enforces by REPLACING rather than adding —
+                  said up front, because the button's label cannot show it. */}
+              <p className="text-[10px] text-neutral-600 px-1">{t('diy.kitOnePerJoint')}</p>
+              {JOINT_KITS.map((k) => {
+                const reason = kitFitReason(k, bracket.size);
+                const blocked = reason !== null;
+                return (
+                  <button
+                    key={k.id}
+                    data-diy-kit-choice={k.id}
+                    data-diy-kit-blocked={blocked ? '1' : '0'}
+                    disabled={blocked}
+                    title={reason ?? kitDesc(k)}
+                    onClick={() => {
+                      bindKit(k.id, bracket.id);
+                      // `bindKit` selects the kit it just bound, which would swap
+                      // this panel out for the kit panel mid-click. Put the
+                      // selection back on the bracket: the user is editing a
+                      // bracket and the result is what they want to look at.
+                      selectBracket(bracket.id);
+                      setKitListOpen(false);
+                    }}
+                    className={`w-full px-2 py-1 text-left text-[11px] rounded border transition-colors
+                      ${
+                        blocked
+                          ? 'border-neutral-800/50 text-neutral-600 cursor-not-allowed'
+                          : 'border-neutral-800 text-neutral-300 hover:border-wood-600 hover:text-wood-100 cursor-pointer'
+                      }`}
+                  >
+                    {kitName(k)}
+                    <span className="ml-1 text-neutral-500">×{k.boltsPerJoint}</span>
+                  </button>
+                );
+              })}
+            </div>
+          )}
+        </Section>
+      )}
 
       <Section label={t('diy.worldPos')}>
         {(['x','y','z'] as const).map((ax) => (

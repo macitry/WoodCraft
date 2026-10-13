@@ -1,7 +1,7 @@
 import { useRef, useCallback, useEffect, useState } from 'react';
 import { Canvas } from '@react-three/fiber';
 import { useDiyStore, ROOT_PROFILE_LENGTH } from '../store/diyStore';
-import type { ProfileSize, AxisDir, DiyHand, DiyProfileGhost } from '../types/furniture';
+import type { ProfileSize, AxisDir, DiyHand, DiyProfileGhost, DiyBracketGhost } from '../types/furniture';
 import { PROFILE_DIMS } from '../types/furniture';
 import { findCornerAt } from './DiyCornerHints';
 import { bracketAtHint } from './diyCornerGeometry';
@@ -128,7 +128,7 @@ const DiyViewer: React.FC = () => {
   }, [kitHint]);
 
   // Escape puts the part back down, the same key that cancels every other DIY
-  // gesture — and the same key `DiyPlacingGhost` listens for.
+  // gesture.
   useEffect(() => {
     if (!hand) return;
     const onKey = (e: KeyboardEvent) => {
@@ -185,6 +185,39 @@ const DiyViewer: React.FC = () => {
   }, []);
 
   /**
+   * Ghost for a 三通件: free placement on the ground, at the pointer.
+   *
+   * The one connector that is NOT a joint part, and therefore the one that gets
+   * a pointer-following ghost like a profile instead of a corner preview like an
+   * angle. Three profiles butt into a cube, one per face, so there is no pair of
+   * mounting faces to solve an orientation from and no corner to snap to — the
+   * part is dropped where the user puts it and moved afterwards by dragging.
+   *
+   * `y = ext/2` rests the baked mesh on the ground: the eight cubes are baked
+   * centred on their own origin (see the bake script's PRESETS), so half an edge
+   * is what lifts one clear of y=0. `size = extMm` keeps `ConnectorStl`'s
+   * ext→size scale at 1:1, i.e. a 30 cube is drawn 30 mm across, and leaves the
+   * bracket's own `size` meaning what the property panel says it does.
+   */
+  const nodeGhostAt = useCallback((ray: THREE.Ray, connectorId: string): DiyBracketGhost | null => {
+    const hit = new THREE.Vector3();
+    if (!ray.intersectPlane(GROUND_PLANE, hit)) return null;
+    const ext = connectorById(connectorId).extMm;
+    return {
+      position: {
+        x: Math.round(hit.x * 1000 / GRID_MM) * GRID_MM,
+        y: ext / 2,
+        z: Math.round(hit.z * 1000 / GRID_MM) * GRID_MM,
+      },
+      size: ext,
+      // No parent, so `placeBracket` records no joint — a node is not bolted to
+      // anything, and `connectedProfiles: []` is what every joint rule already
+      // reads as "the solver never posed this one".
+      profileId: '',
+    };
+  }, []);
+
+  /**
    * Ghost for a connector or a kit: the joint the pointer is over.
    *
    * Only a joint. A bracket has no meaningful pose anywhere else, and the
@@ -224,7 +257,19 @@ const DiyViewer: React.FC = () => {
   const trackGhost = useCallback((clientX: number, clientY: number) => {
     const held = useDiyStore.getState().hand;
     if (!held) return;
-    if (held.kind === 'connector' || held.kind === 'kit') {
+    // A 三通件 follows the pointer like a profile; every other connector — and a
+    // kit — previews the joint under it. Which of the two a held connector is
+    // depends on the catalog entry, so it is asked rather than assumed.
+    if (held.kind === 'connector') {
+      if (connectorById(held.connectorId).kind === 'node') {
+        const ray = getMouseRay(clientX, clientY);
+        if (ray) updateGhostBracket(nodeGhostAt(ray, held.connectorId));
+      } else {
+        updateBracketGhostAt(clientX, clientY);
+      }
+      return;
+    }
+    if (held.kind === 'kit') {
       updateBracketGhostAt(clientX, clientY);
       return;
     }
@@ -232,7 +277,7 @@ const DiyViewer: React.FC = () => {
     if (!ray) return;
     if (held.kind === 'profile') updateGhostProfile(profileGhostAt(ray, held.size));
     else updateGhostScrew(raycastScrewTarget(ray, profilesRef.current, held.size, held.family));
-  }, [getMouseRay, profileGhostAt, updateBracketGhostAt, updateGhostScrew, updateGhostProfile]);
+  }, [getMouseRay, profileGhostAt, nodeGhostAt, updateBracketGhostAt, updateGhostScrew, updateGhostProfile, updateGhostBracket]);
 
   // ---- event handlers ----
 
@@ -335,11 +380,31 @@ const DiyViewer: React.FC = () => {
         addRootProfile(held.size, ghost.position, ghost.direction);
         return;
       }
-      case 'connector':
-        // Deliberately empty. A bracket is placed by clicking one of the orange
-        // corner ghosts, which are meshes at the joints and own that click —
-        // placing it here as well would place two.
+      case 'connector': {
+        // An angle bracket is placed by clicking one of the orange corner
+        // ghosts, which are meshes at the joints and own that click — placing it
+        // here as well would place two. Nothing more to do for one.
+        if (connectorById(held.connectorId).kind !== 'node') return;
+        // A 三通件 has no corner to own its click: it goes where the pointer is.
+        // The ghost is normally there — the pointer had to move over the scene
+        // to get here — but a click straight out of the sidebar never fired a
+        // pointermove, so fall back to the click's own ray, exactly as the
+        // profile case above does.
+        //
+        // Deliberately NOT `placeBracketAtGhost`: that path looks for a joint
+        // under the ghost and would hand a cube the two-face pose of the nearest
+        // corner. A node is placed by the store's unoriented path, which is what
+        // leaves `connectedProfiles` empty — see `nodeGhostAt`.
+        const ghost = useDiyStore.getState().ghostBracket
+          ?? (() => {
+            const ray = getMouseRay(e.clientX, e.clientY);
+            return ray ? nodeGhostAt(ray, held.connectorId) : null;
+          })();
+        if (!ghost) return;
+        updateGhostBracket(ghost);
+        placeBracket({ connectorId: held.connectorId });
         return;
+      }
       case 'kit':
         // Only reached when the click missed every corner ghost: a corner click
         // binds the kit and clears the hand, so by the time this handler runs
@@ -353,7 +418,8 @@ const DiyViewer: React.FC = () => {
         placeScrew();
         return;
     }
-  }, [addRootProfile, getMouseRay, profileGhostAt, placeBracketAtGhost, placeKitAtGhost, placeScrew]);
+  }, [addRootProfile, getMouseRay, profileGhostAt, nodeGhostAt, updateGhostBracket, placeBracket,
+      placeBracketAtGhost, placeKitAtGhost, placeScrew]);
 
   /** What is in hand, in words — the banner names the part the click will place. */
   const handLabel = (h: DiyHand): string => {

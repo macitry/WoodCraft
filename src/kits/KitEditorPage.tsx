@@ -18,7 +18,7 @@ import {
   tNutName,
 } from '../utils/accessoryKits';
 import type { HardwareKind, LocalFastener } from '../utils/accessoryKits';
-import { CONNECTORS, connectorByStlUrl } from '../diy/connectors';
+import { JOINT_CONNECTORS, connectorByStlUrl } from '../diy/connectors';
 import { DEFAULT_BRACKET_STL_URL } from '../types/furniture';
 import type { ScrewSize } from '../types/furniture';
 import { DEFAULT_SCREW_FAMILY, defaultScrewLength } from '../diy/fastenerDims';
@@ -134,11 +134,13 @@ const KitEditorPage: FC = () => {
   // to offer is the PATTERN, not the connector: `holePatternFor` reads only
   // `extMm`, and the catalog has several sizes with matching extents. Editing
   // the pattern is what actually happens; naming the connector is just how the
-  // user gets there. CONNECTORS already lists the cast bracket first.
+  // user gets there. JOINT_CONNECTORS already lists the cast bracket first, and
+  // leaves out the 三通件: a cube has no seat pattern to author, and each one
+  // would come back with its own scaled copy of the default.
   const cSig = holePatternSignature(holePatternFor(cc.stlUrl));
   const patternGroups = useMemo(() => {
-    const bySig = new Map<string, typeof CONNECTORS>();
-    for (const c of CONNECTORS) {
+    const bySig = new Map<string, typeof JOINT_CONNECTORS>();
+    for (const c of JOINT_CONNECTORS) {
       const sig = holePatternSignature(holePatternFor(c.stlUrl));
       const list = bySig.get(sig);
       if (list) list.push(c);

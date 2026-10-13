@@ -13,7 +13,6 @@ import DiyBracketPlacementGhost from './DiyBracketPlacementGhost';
 import DiyScrewRenderer from './DiyScrewRenderer';
 import DiyScrewPlacementGhost from './DiyScrewPlacementGhost';
 import DiyProfilePlacementGhost from './DiyProfilePlacementGhost';
-import DiyPlacingGhost from './DiyPlacingGhost';
 import DiyCornerHints from './DiyCornerHints';
 import { fitPreset } from './diyViewFit';
 import { backgroundById } from './diyBackgrounds';
@@ -33,12 +32,11 @@ const DiyScene: React.FC<DiySceneProps> = ({ onCameraReady }) => {
   const setControlsRef = useDiyStore((s) => s.setControlsRef);
   const movingPart = useDiyStore((s) => s.movingPart);
   // What is IN HAND is deliberately absent: holding a ghost must not cost the
-  // user the ability to orbit and look at where it would land. Neither is the
-  // child-profile ghost, for the same reason it is no longer a mode: it is armed
-  // by a HOVER, so tying the camera to it would freeze the view whenever the
-  // pointer came to rest on the selected bar. Only the one gesture that tracks
-  // the pointer 1:1 — dragging a part already on the assembly — takes the camera
-  // away.
+  // user the ability to orbit and look at where it would land. Neither does
+  // growing a child out of a face — that gesture is a double-click, over the
+  // moment the second click lands, so there is no held state and nothing for the
+  // camera to be tied to. Only the one gesture that tracks the pointer 1:1 —
+  // dragging a part already on the assembly — takes the camera away.
   const orbitDisabled = movingPart !== null;
   const cameraFocus = useDiyStore((s) => s.cameraFocus);
   const clearCameraFocus = useDiyStore((s) => s.clearCameraFocus);
@@ -237,7 +235,6 @@ const DiyScene: React.FC<DiySceneProps> = ({ onCameraReady }) => {
       <DiyBracketPlacementGhost />
       <DiyScrewPlacementGhost />
       <DiyProfilePlacementGhost />
-      <DiyPlacingGhost />
     </>
   );
 };

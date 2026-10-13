@@ -34,6 +34,7 @@ export const zh = {
   'diy.kitLabel': '组合',
   'diy.addKit': '＋ 组合',
   'diy.noKit': '未挂组合',
+  'diy.noKitNode': '三通件没有可上五金的座 —— 整套五金的孔位是按角码排的',
   'diy.removeKit': '移除组合',
   'diy.kitOnePerJoint': '每处角码只能挂一套组合 —— 另选一套会替换当前的',
   'diy.scopeLabel': '作用域',
@@ -120,9 +121,10 @@ export const zh = {
   // does NOT make (length) is named rather than discovered later in the panel.
   'diy.screwCardLengths': '默认 {part} · 共 {n} 档长度',
   'diy.helpPickProfileRoot': '点选型材 → 再点场景放置根型材',
-  'diy.helpHoverFace': '选中型材后，悬浮它的某个面 → 单击放下子型材',
+  'diy.helpDblFace': '双击型材的某个面 → 在该面上长出一根子型材',
   'diy.helpDragArrow': '拖拽箭头 → 拉伸',
   'diy.helpClickCorner': '点卡片选中连接件 → 点橙色角点放置',
+  'diy.helpPlaceNode': '三通件不受角点限制 → 点场景地面放置',
   'diy.helpHoverCard': '悬停卡片 → 模型 3D 预览',
   'diy.helpPickCardAgain': '再点同一张卡片 → 放回手里',
   'diy.handBanner': '已拿住「{name}」 — 在场景中点击放置 · Esc 取消',
@@ -140,6 +142,11 @@ export const zh = {
   'diy.kind.pa': '尼龙',
   'diy.kind.steel': '钢',
   'diy.kind.zinc': '锌合金',
+  'diy.kind.node': '三通件',
+
+  // --- the 三通件 group header in the connector tab -------------------------
+  'diy.groupNode': '三通件',
+  'diy.groupNodeNote': '立方角块 · 点地面自由放置，暂不接管接头关系',
 } as const;
 
 export type DiyKey = keyof typeof zh;
@@ -173,6 +180,7 @@ export const en: Record<DiyKey, string> = {
   'diy.kitLabel': 'Kit',
   'diy.addKit': '+ Kit',
   'diy.noKit': 'No kit',
+  'diy.noKitNode': 'A three-way cube has no seats for hardware — the hole patterns are authored for angle brackets',
   'diy.removeKit': 'Remove kit',
   'diy.kitOnePerJoint': 'One kit per bracket — choosing another replaces the current one',
   'diy.scopeLabel': 'Scope',
@@ -248,9 +256,10 @@ export const en: Record<DiyKey, string> = {
     'Click to pick one up, then click a corner — a kit attaches to an existing bracket, and the screw count follows automatically',
   'diy.screwCardLengths': '{part} default · {n} lengths',
   'diy.helpPickProfileRoot': 'Pick a profile → click the scene to place a root',
-  'diy.helpHoverFace': 'With a profile selected, hover one of its faces → click places the child',
+  'diy.helpDblFace': 'Double-click a face of a profile → grows a child on that face',
   'diy.helpDragArrow': 'Drag arrow → stretch',
   'diy.helpClickCorner': 'Click a card to pick a connector → click an orange corner',
+  'diy.helpPlaceNode': 'Three-way nodes are not tied to corners → click the ground',
   'diy.helpHoverCard': 'Hover card → 3D preview of the model',
   'diy.helpPickCardAgain': 'Click the same card again → put it back',
   'diy.handBanner': '"{name}" in hand — click the scene to place · Esc to cancel',
@@ -267,4 +276,8 @@ export const en: Record<DiyKey, string> = {
   'diy.kind.pa': 'Nylon PA',
   'diy.kind.steel': 'Steel',
   'diy.kind.zinc': 'Zinc alloy',
+  'diy.kind.node': 'Three-way node',
+
+  'diy.groupNode': 'Three-way nodes',
+  'diy.groupNodeNote': 'Corner cubes · free placement on the ground; joints not wired up yet',
 };

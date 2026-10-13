@@ -5,11 +5,12 @@ import type { DiyProfile, FaceDir } from '../types/furniture';
  * The plane of one face of a profile, and the two tangents that span it.
  *
  * Extracted from `DiyPlacingGhost` when child placement stopped being a
- * Shift+click and became a hover. Two components need the same geometry now:
- * the renderer, which turns the pointer's hit point into the child's position,
- * and the ghost, which draws the child where that position is. They have to
- * agree to the millimetre, so they share one implementation rather than one
- * calling the other's convention.
+ * Shift+click and became a hover; the ghost is gone now (a double-click on the
+ * face grows the child directly, `DiyProfileRenderer`), and this is the last
+ * piece of that path still in use. It is what turns the pointer's hit point on
+ * the padded highlight box into a position ON the face — the component along the
+ * normal is dropped, so the 0.25 mm the box sits proud of the surface never
+ * reaches the store.
  */
 
 const M = 0.001;
@@ -84,10 +85,14 @@ export function getFacePlane(profile: DiyProfile, face: FaceDir, dim: number): F
   return { centre, normal, u, v, halfU, halfV, quaternion };
 }
 
-export type FreeAxis = 'u' | 'v' | 'both';
+/**
+ * How much of a face the pointer is allowed to slide a child across.
+ * `'none'` = neither tangent: the child is pinned to the face centre.
+ */
+export type FreeAxis = 'u' | 'v' | 'none';
 
 /** Clamp + snap a world-space point to the face plane (10 mm grid).
- *  `freeAxis` controls which tangent(s) are free to move; the other is locked to 0. */
+ *  `freeAxis` controls which tangent is free to move; the other is locked to 0. */
 export function snapToFace(pWorld: THREE.Vector3, fp: FacePlane, freeAxis: FreeAxis): THREE.Vector3 {
   const rel = pWorld.clone().sub(fp.centre);
   let u = rel.dot(fp.u);
@@ -103,10 +108,12 @@ export function snapToFace(pWorld: THREE.Vector3, fp: FacePlane, freeAxis: FreeA
     v = THREE.MathUtils.clamp(v, -fp.halfV + margin, fp.halfV - margin);
     v = Math.round(v / 0.01) * 0.01;
   } else {
-    u = THREE.MathUtils.clamp(u, -fp.halfU + margin, fp.halfU - margin);
-    v = THREE.MathUtils.clamp(v, -fp.halfV + margin, fp.halfV - margin);
-    u = Math.round(u / 0.01) * 0.01;
-    v = Math.round(v / 0.01) * 0.01;
+    // An end face: the child continues the parent, so the only placement that
+    // lines up is the face centre. Its cross-section IS this face — a 3030 child
+    // on a 3030 end face — so any lateral offset the pointer asked for would
+    // hang the child over the edge it is supposed to sit on.
+    u = 0;
+    v = 0;
   }
   return fp.centre.clone().addScaledVector(fp.u, u).addScaledVector(fp.v, v);
 }
@@ -119,5 +126,5 @@ export function getFreeAxis(fp: FacePlane, parentDir: 'X' | 'Y' | 'Z'): FreeAxis
   const THRESH = 0.99;
   if (uDot > THRESH) return 'u';
   if (vDot > THRESH) return 'v';
-  return 'both'; // end face — neither tangent aligns with parent direction
+  return 'none'; // end face — neither tangent aligns with parent direction
 }

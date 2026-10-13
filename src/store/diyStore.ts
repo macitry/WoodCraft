@@ -8,6 +8,7 @@ import type {
   DiyScrew,
   DiyScrewGhost,
   DiyProfileGhost,
+  DiyBracketGhost,
   DiyHand,
   DiyDimension,
   DiyMovingPart,
@@ -222,13 +223,13 @@ interface DiyState {
   /**
    * The dimension annotation to draw beside a part, or null.
    *
-   * Published by the two gestures that change a height, at the moment the height
-   * actually changes — `DiyStretchGizmo` for a stretch, the profile branch of
-   * `useDiyMoveDrag` for a child sliding up its post. It is NOT withdrawn when
-   * the drag ends: a height just set with the mouse is a number you want to keep
-   * reading while you let go of the button. It leaves with the SELECTION instead
-   * (see `selectProfile`, and `DiyDimension`'s render gate), which is one rule
-   * rather than two — and it is the rule the user asked for.
+   * Published by the two gestures that set one of a part's measurements, at the
+   * moment it actually changes — `DiyStretchGizmo` for a stretch, the profile
+   * branch of `useDiyMoveDrag` for a child sliding along its parent. It is NOT
+   * withdrawn when the drag ends: a size just set with the mouse is a number you
+   * want to keep reading while you let go of the button. It leaves with the
+   * SELECTION instead (see `selectProfile`, and `DiyDimension`'s render gate),
+   * which is one rule rather than two — and it is the rule the user asked for.
    */
   dimension: DiyDimension | null;
   setDimension: (dimension: DiyDimension | null) => void;
@@ -271,11 +272,12 @@ interface DiyState {
    *
    * Nothing is "dragged" any more — this follows the pointer, and the click that
    * commits it is the one that places. Null = nothing valid under the pointer,
-   * and then a click places nothing.
+   * and then a click places nothing. A 三通件 uses the same field for its own
+   * ground-following ghost, with `profileId: ''` — see `DiyBracketGhost`.
    */
-  ghostBracket: { position: { x: number; y: number; z: number }; size: number; profileId: string } | null;
+  ghostBracket: DiyBracketGhost | null;
   /** Update ghost position (pointer move while a connector/kit is in hand). */
-  updateGhostBracket: (data: { position: { x: number; y: number; z: number }; size: number; profileId: string } | null) => void;
+  updateGhostBracket: (data: DiyBracketGhost | null) => void;
   /**
    * The connector the NEXT bracket is built from when nobody names one.
    *
@@ -332,22 +334,21 @@ interface DiyState {
    */
   placeBracketAtHint: (hint: CornerHint, connectorId?: string) => string | null;
 
-  // ---- Click-to-place child profile (方案 B) ----
-  /** Ghost shown while placing a child profile on a face (mm). */
-  placingProfile: {
-    parentId: string;
-    face: FaceDir;
-    position: { x: number; y: number; z: number };
-    size: ProfileSize;
-  } | null;
-  /** Enter placing mode: click a face of a selected profile. */
-  startPlacingProfile: (parentId: string, face: FaceDir, pos: { x: number; y: number; z: number }, size: ProfileSize) => void;
-  /** Mouse move during placing — update ghost position. */
-  updatePlacingPosition: (pos: { x: number; y: number; z: number }) => void;
-  /** Click again — confirm and create the child profile. */
-  confirmPlacingProfile: () => DiyProfile | null;
-  /** Escape — cancel placing. */
-  cancelPlacing: () => void;
+  // ---- Double-click a face to grow a child profile ----
+  /**
+   * Grow a child profile out of one face of `parentId`, centred on `pos` (mm).
+   *
+   * One action instead of the old start/update/confirm trio: the gesture is a
+   * double-click, so there is no preview phase between the pointer landing on a
+   * face and the child existing. Nothing can observe a half-armed state because
+   * there is no longer one to observe.
+   */
+  extendFromFace: (
+    parentId: string,
+    face: FaceDir,
+    pos: { x: number; y: number; z: number },
+    size: ProfileSize,
+  ) => DiyProfile | null;
 
   // Bracket actions
   addBracket: (b: DiyBracket) => void;
@@ -729,7 +730,6 @@ export const useDiyStore = create<DiyState>((set, get) => ({
 
   // ---- Ghosts, selection bookkeeping ----
   ghostBracket: null,
-  placingProfile: null,
   cameraFocus: null,
 
   clearCameraFocus: () => set({ cameraFocus: null }),
@@ -987,80 +987,54 @@ export const useDiyStore = create<DiyState>((set, get) => ({
     return bracket.id;
   },
 
-  // ---- Hover-to-place child profile ----
+  // ---- Double-click a face to grow a child profile ----
   //
-  // Deliberately NOT a `mode`. Arming is now a hover: it happens and un-happens
-  // every time the pointer crosses a selected bar, and anything keyed on `mode`
-  // would flicker with it. Two examples that would break loudly — the property
-  // panel prints the mode, and `DiyScene` takes the camera away during a mode —
-  // so a hover that set one would freeze the view whenever the pointer rested
-  // on the wrong bar.
-  startPlacingProfile: (parentId, face, pos, size) =>
-    set({ placingProfile: { parentId, face, position: pos, size } }),
-
-  updatePlacingPosition: (pos) =>
-    set((s) => {
-      const cur = s.placingProfile;
-      if (!cur) return {};
-      // The snap quantises to 10 mm, so most pointer moves do not move the
-      // ghost. Returning the same object is what keeps a hover from re-rendering
-      // every profile in the scene on every mouse event.
-      const p = cur.position;
-      if (p.x === pos.x && p.y === pos.y && p.z === pos.z) return {};
-      return { placingProfile: { ...cur, position: pos } };
-    }),
-
-  confirmPlacingProfile: () => {
-    const { placingProfile, profiles } = get();
-    if (!placingProfile) return null;
-    const parent = profiles.find((p) => p.id === placingProfile.parentId);
+  // Deliberately NOT a `mode`, and no longer a hover either. Nothing is armed
+  // before the gesture: the double-click both decides the face and commits the
+  // child in one event. A hover state has to be cleared by something — pointer
+  // out, a drag starting, a selection change — and every one of those is a case
+  // where the ghost could outlive the pointer that made it.
+  extendFromFace: (parentId, face, pos, size) => {
+    const { profiles } = get();
+    const parent = profiles.find((p) => p.id === parentId);
     if (!parent) return null;
 
     const faceToDir: Record<string, AxisDir> = {
       '+X': 'X', '-X': 'X', '+Y': 'Y', '-Y': 'Y', '+Z': 'Z', '-Z': 'Z',
     };
-    const childDir = faceToDir[placingProfile.face] ?? 'Y';
-    const childLen = 100; // default child length (same as ghost)
+    const childDir = faceToDir[face] ?? 'Y';
+    const childLen = 100; // default child length
     const halfLen = childLen / 2;
 
-    // Child centre = ghost position + half length pushed out along face normal
-    const sign = placingProfile.face.startsWith('+') ? 1 : -1;
-    const axis = placingProfile.face[1].toLowerCase() as 'x' | 'y' | 'z';
-    const childPos = { ...placingProfile.position };
+    // Child centre = the picked point + half length pushed out along the normal
+    const sign = face.startsWith('+') ? 1 : -1;
+    const axis = face[1].toLowerCase() as 'x' | 'y' | 'z';
+    const childPos = { ...pos };
     childPos[axis] += sign * halfLen;
 
     // Parent offset along parent's axis
     const parentAxis = parent.direction.toLowerCase() as 'x' | 'y' | 'z';
-    const offset = Math.round(placingProfile.position[parentAxis] - parent.position[parentAxis]);
+    const offset = Math.round(pos[parentAxis] - parent.position[parentAxis]);
 
     const child: DiyProfile = {
       id: uid(),
       seq: ++_seq,
-      profileSize: placingProfile.size,
+      profileSize: size,
       length: childLen,
       position: childPos,
       direction: childDir,
-      parentId: placingProfile.parentId,
-      parentFace: placingProfile.face,
+      parentId,
+      parentFace: face,
       parentOffset: offset,
     };
 
     set((s) => ({
       profiles: [...s.profiles, child],
       selectedProfileId: child.id,
-      // No `mode` to restore — see `startPlacingProfile`. The child becomes the
-      // selection, so the ghost is gone by the same rule it always was: it
-      // belongs to the selected profile, and that is now this child.
-      placingProfile: null,
       cameraFocus: { x: childPos.x * 0.001, y: childPos.y * 0.001, z: childPos.z * 0.001 },
     }));
     return child;
   },
-
-  // Clears the ghost only. `mode` is left alone on purpose: this is now called
-  // from a pointer-out, and forcing `'idle'` there would cancel an unrelated
-  // gesture (a stretch in progress) because the pointer happened to leave a bar.
-  cancelPlacing: () => set({ placingProfile: null }),
 
   // Brackets
   addBracket: (b) =>

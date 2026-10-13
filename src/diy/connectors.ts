@@ -3,8 +3,13 @@
 // DIY editor under the "Connectors" tab. Each part is normalized to the DIY
 // mounting frame: inner faces on the x=0/y=0 planes, legs +x/+y, z centred,
 // extents in mm.
+//
+// kind "node" is the 三通件 (CORNER_PIECE) family: cubes that profiles butt
+// into, not angle brackets. They are baked into the same centred frame as
+// everything else (see PRESETS), so they place as free-standing parts; the
+// two mounting faces a bracket is solved against do not apply to them.
 
-export type ConnectorKind = 'cast' | 'alu' | 'pa' | 'steel' | 'zinc';
+export type ConnectorKind = 'cast' | 'alu' | 'pa' | 'steel' | 'zinc' | 'node';
 
 export interface DiyConnector {
   /** Catalog id — carried in the drag payload and stored on DiyBracket.connectorId. */
@@ -172,7 +177,108 @@ export const CONNECTORS: DiyConnector[] = [
     extMm: 28,
     boxMm: { min: [0, 0, -14], max: [28, 28, 14] },
   },
+  {
+    id: '1.48.221',
+    label: 'Corner Cube 20',
+    desc: '三通角块 · 立方 · 灰',
+    dim: '20x20x20',
+    kind: 'node',
+    stlUrl: '/connectors/1.48.221.stl',
+    color: '#bfc4c9',
+    extMm: 20,
+    boxMm: { min: [-10, -10, -10], max: [10, 10, 10] },
+  },
+  {
+    id: '1.48.221.2',
+    label: 'Corner Cube 20',
+    desc: '三通角块 · 立方 · 黑',
+    dim: '20x20x20',
+    kind: 'node',
+    stlUrl: '/connectors/1.48.221.2.stl',
+    color: '#3a3a3a',
+    extMm: 20,
+    boxMm: { min: [-10, -10, -10], max: [10, 10, 10] },
+  },
+  {
+    id: '1.48.331',
+    label: 'Corner Cube 30',
+    desc: '三通角块 · 立方 · 灰',
+    dim: '30x30x30',
+    kind: 'node',
+    stlUrl: '/connectors/1.48.331.stl',
+    color: '#bfc4c9',
+    extMm: 30,
+    boxMm: { min: [-15, -15, -15], max: [15, 15, 15] },
+  },
+  {
+    id: '1.48.331.2',
+    label: 'Corner Cube 30',
+    desc: '三通角块 · 立方 · 黑',
+    dim: '30x30x30',
+    kind: 'node',
+    stlUrl: '/connectors/1.48.331.2.stl',
+    color: '#3a3a3a',
+    extMm: 30,
+    boxMm: { min: [-15, -15, -15], max: [15, 15, 15] },
+  },
+  {
+    id: '1.48.441',
+    label: 'Corner Cube 40',
+    desc: '三通角块 · 立方 · 灰',
+    dim: '40x40x40',
+    kind: 'node',
+    stlUrl: '/connectors/1.48.441.stl',
+    color: '#bfc4c9',
+    extMm: 40,
+    boxMm: { min: [-20, -20, -20], max: [20, 20, 20] },
+  },
+  {
+    id: '1.48.441.2',
+    label: 'Corner Cube 40',
+    desc: '三通角块 · 立方 · 黑',
+    dim: '40x40x40',
+    kind: 'node',
+    stlUrl: '/connectors/1.48.441.2.stl',
+    color: '#3a3a3a',
+    extMm: 40,
+    boxMm: { min: [-20, -20, -20], max: [20, 20, 20] },
+  },
+  {
+    id: '1.48.551',
+    label: 'Corner Cube 50',
+    desc: '三通角块 · 立方 · 灰',
+    dim: '50x50x50',
+    kind: 'node',
+    stlUrl: '/connectors/1.48.551.stl',
+    color: '#bfc4c9',
+    extMm: 50,
+    boxMm: { min: [-25, -25, -25], max: [25, 25, 25] },
+  },
+  {
+    id: '1.48.551.2',
+    label: 'Corner Cube 50',
+    desc: '三通角块 · 立方 · 黑',
+    dim: '50x50x50',
+    kind: 'node',
+    stlUrl: '/connectors/1.48.551.2.stl',
+    color: '#3a3a3a',
+    extMm: 50,
+    boxMm: { min: [-25, -25, -25], max: [25, 25, 25] },
+  },
 ];
+
+/**
+ * The catalog entries a JOINT can be built from — everything except the 三通件
+ * (kind 'node').
+ *
+ * A node is a free part: it has no pair of mounting faces to be solved against,
+ * so it is placed where the pointer is and never swapped into an existing joint.
+ * The joint solvers read this list rather than `CONNECTORS` — the replace
+ * pickers, and the kit editor's per-pattern groups. Offering a cube in any of
+ * them would produce a part posed as an angle bracket: a rotation derived from
+ * two faces it does not have, following profiles it is not bolted to.
+ */
+export const JOINT_CONNECTORS: DiyConnector[] = CONNECTORS.filter((c) => c.kind !== 'node');
 
 /**
  * Angle covers (盖板) — catalog parts whose whole job is to hide a joint.

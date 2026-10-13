@@ -35,30 +35,50 @@ const ARROW_R = 0.012;
  *  and a very distant one does not push it off the screen. */
 const K_MIN = 0.5;
 const K_MAX = 5;
+/** A measured stretch shorter than this is not drawn at all (mm). A child pushed
+ *  flush with the end of its parent closes one of the two gaps of its chain to
+ *  nothing, and a zero-length dimension line with two arrowheads on it is a
+ *  smudge over the joint rather than a reading. */
+const MIN_SPAN_MM = 0.5;
+
+/** One measured stretch, in mm, along the axis the annotation is drawn on, with
+ *  the zero at the near end of the bar being measured against. */
+interface Span {
+  from: number;
+  to: number;
+}
 
 /**
- * A live dimension annotation beside a profile, in the manner of a CAD drawing:
+ * A live dimension annotation beside a part, in the manner of a CAD drawing:
  * a dimension line with an arrowhead at each end, thin extension lines running
  * back to the two things being measured, and the number in the middle.
  *
- * It measures one of two spans (`DiyDimension`):
+ * There are two kinds, and the difference between them is the DATUM:
  *
  * - `length` — the profile's own two end faces, which for a post is its height.
- *   Drawn while the stretch handle is being dragged (`DiyStretchGizmo`).
- * - `height` — the ground plane up to the profile's axis, which is the choice a
- *   rail makes while it slides up its post (`useDiyMoveDrag`).
+ *   Published while the stretch handle is being dragged (`DiyStretchGizmo`).
+ * - `anchor` — a child sliding along the parent it is bolted to, measured
+ *   against that parent's two ends: how far the child sits from one end, and how
+ *   far from the other. Two spans, drawn as a chain (`useDiyMoveDrag`).
+ *
+ * The ground is deliberately not a datum. It was, for the vertical half of the
+ * `anchor` case, and it is the wrong one twice over: a rail pinned 40 mm below
+ * the top of its post reads as "40 from the top" and as "560 from the floor",
+ * and only the first of those is the number the user is choosing — the second
+ * even changes if the post is made taller. It is also a datum that does not
+ * exist at all for a child sliding along a horizontal beam, which is why that
+ * slide used to show nothing.
  *
  * WHICH ONE IS ON SCREEN IS DECIDED BY THE STORE, and so is how long it lives:
  * the annotation belongs to a SELECTED profile (`selectProfile` clears it), so
  * letting go of the mouse does not take the number away, but clicking anything
  * else does. See `diyStore.dimension`.
  *
- * Everything except the span itself is recomputed against the camera every
+ * Everything except the spans themselves is recomputed against the camera every
  * frame, which is what puts the line off to the SCREEN-RIGHT of the measured
  * axis (`side` below) rather than at a fixed world offset that would bury it in
- * the solid from half the viewing angles — and, for the vertical cases, what
- * keeps the line horizontal on screen, lying beside the post the way a drawing
- * has it.
+ * the solid from half the viewing angles — and, for a vertical axis, what keeps
+ * the line horizontal on screen, lying beside the post the way a drawing has it.
  */
 const DiyDimension: React.FC = () => {
   const camera = useThree((s) => s.camera);
@@ -68,9 +88,12 @@ const DiyDimension: React.FC = () => {
 
   const groupRef = useRef<THREE.Group>(null);
   const lineRef = useRef<THREE.LineSegments>(null);
-  const tipARef = useRef<THREE.Mesh>(null);
-  const tipBRef = useRef<THREE.Mesh>(null);
-  const labelRef = useRef<THREE.Group>(null);
+  const tipARefs = useRef<(THREE.Mesh | null)[]>([]);
+  const tipBRefs = useRef<(THREE.Mesh | null)[]>([]);
+  const labelRefs = useRef<(THREE.Group | null)[]>([]);
+  /** The frame's standoff + span signature, so the vertex rewrite runs when the
+   *  scales change or a span is rebuilt — and not on every other frame. */
+  const appliedKey = useRef('');
 
   const profileId = dimension?.profileId ?? null;
   const kind = dimension?.kind ?? 'length';
@@ -79,42 +102,89 @@ const DiyDimension: React.FC = () => {
   const profile = profileId && profileId === selectedProfileId
     ? profiles.find((p) => p.id === profileId) ?? null
     : null;
+  // For a slide, the child carries the parent's id and the parent carries the
+  // axis, the length and the origin — a rail sliding along a 600 mm beam is
+  // positioned against THAT beam, not against its own 300 mm of length.
+  const parent = kind === 'anchor' && profile?.parentId
+    ? profiles.find((p) => p.id === profile.parentId) ?? null
+    : null;
 
-  const axis: 'x' | 'y' | 'z' = kind === 'height'
-    ? 'y'
-    : (profile?.direction.toLowerCase() as 'x' | 'y' | 'z' | undefined) ?? 'y';
+  /** The bar the annotation is drawn against — the part itself, or a child's parent. */
+  const datum = kind === 'anchor' ? parent : profile;
+  const axis = (datum?.direction.toLowerCase() ?? 'y') as 'x' | 'y' | 'z';
 
-  /** What the label reads, in mm. */
-  const span = !profile ? 0
-    : kind === 'height' ? Math.max(0, profile.position.y)
-    : Math.max(1, profile.length);
-  /** The same span in the scene's units, which is what the drawing is built in. */
-  const spanM = span * M;
+  const spans = useMemo<Span[]>(() => {
+    if (!datum || !profile) return [];
+    if (kind === 'anchor') {
+      const L = datum.length;
+      // Where the child's centre sits on the parent, measured from the parent's
+      // near end.
+      const c = profile.position[axis] - datum.position[axis] + L / 2;
+      // The child runs ACROSS the parent on every axis that slides — it is
+      // butted into a SIDE face, so its own direction is not the parent's — and
+      // the stretch of it that consumes the parent's length is therefore its
+      // cross-section, not its length.
+      const thick = profile.direction.toLowerCase() === axis
+        ? profile.length
+        : PROFILE_DIMS[profile.profileSize] ?? 30;
+      const half = thick / 2;
+      // Both ends of the parent are the datum, so the child gets a number on
+      // each side of it: the two gaps a fitter setting this joint would measure.
+      return [
+        { from: 0, to: Math.max(0, c - half) },
+        { from: Math.min(L, c + half), to: L },
+      ];
+    }
+    // A stretch: the profile's own two end faces. The 1 mm floor keeps the
+    // drawing alive for a profile squeezed to nothing, where a dimension line
+    // collapsing to a point would leave two arrowheads on top of each other.
+    return [{ from: 0, to: Math.max(1, datum.length) }];
+  }, [datum, profile, kind, axis]);
 
-  // The far end of the span, as an offset back from the profile's own position.
-  // `length` is centred on that position, so it backs off half of it; `height`
-  // is measured up from the ground, so it backs off the whole of it — which is
-  // precisely what puts the first extension line on the floor.
-  const back = kind === 'height' ? span : span / 2;
-  const ax = (profile?.position.x ?? 0) - (axis === 'x' ? back : 0);
-  const ay = (profile?.position.y ?? 0) - (axis === 'y' ? back : 0);
-  const az = (profile?.position.z ?? 0) - (axis === 'z' ? back : 0);
+  // Degenerate spans are dropped rather than drawn: see MIN_SPAN_MM. With a
+  // single span this is always the one span, so nothing changes for a stretch.
+  const drawn = useMemo(
+    () => spans.filter((s) => s.to - s.from > MIN_SPAN_MM),
+    [spans],
+  );
+  const spanKey = drawn.map((s) => `${s.from}/${s.to}`).join('|');
 
-  const dim = (profile ? PROFILE_DIMS[profile.profileSize] : null) ?? 30;
-  // How far the part itself reaches sideways toward the camera: the section is
-  // square, so the worst case is its diagonal, and below that distance an
-  // annotation would start inside the metal.
-  const reach = (dim * M * 0.5) * Math.SQRT2 + 0.004;
+  // The world point the drawing's origin sits on: the near end of the bar being
+  // measured against. `length` is centred on the profile's own position, so it
+  // backs off half of it.
+  const back = (datum?.length ?? 0) / 2;
+  const ox = (datum?.position.x ?? 0) - (axis === 'x' ? back : 0);
+  const oy = (datum?.position.y ?? 0) - (axis === 'y' ? back : 0);
+  const oz = (datum?.position.z ?? 0) - (axis === 'z' ? back : 0);
+
+  // How far the metal reaches sideways toward the camera: the section is square,
+  // so the worst case is its diagonal, and below that distance an annotation
+  // would start inside the solid. A sliding child's own section counts too — a
+  // 4040 rail on a 2020 post is the wide thing at this joint.
+  const datumSec = datum ? PROFILE_DIMS[datum.profileSize] ?? 30 : 30;
+  const childSec = kind === 'anchor' && profile ? PROFILE_DIMS[profile.profileSize] ?? 30 : 0;
+  const reach = Math.max(datumSec, childSec) * M * 0.5 * Math.SQRT2 + 0.004;
 
   // The drawing in its own frame: +X is the lateral offset, +Y runs along the
-  // measured axis. Built once per span — the frame loop below only rewrites the
-  // three x-coordinates that the zoom scale moves, which is cheaper than
-  // rebuilding a geometry every frame and keeps the shape in one place.
-  const verts = useMemo(() => new Float32Array([
-    INNER, 0, 0, OFF * 1.15, 0, 0,               // extension line at the near end
-    INNER, spanM, 0, OFF * 1.15, spanM, 0,       // ...and at the far end
-    OFF, 0, 0, OFF, spanM, 0,                    // the dimension line itself
-  ]), [spanM]);
+  // measured axis. One block of six vertices per span — two extension lines and
+  // the dimension line between them — built once per span set. The frame loop
+  // below only rewrites the x-coordinates the zoom scale moves, which is cheaper
+  // than rebuilding a geometry every frame and keeps the shape in one place.
+  const verts = useMemo(() => {
+    const arr = new Float32Array(drawn.length * 18);
+    drawn.forEach((s, i) => {
+      const a = s.from * M;
+      const b = s.to * M;
+      const o = i * 18;
+      arr[o + 0] = INNER; arr[o + 1] = a; arr[o + 2] = 0;       // extension line, near end
+      arr[o + 3] = OFF * 1.15; arr[o + 4] = a; arr[o + 5] = 0;
+      arr[o + 6] = INNER; arr[o + 7] = b; arr[o + 8] = 0;       // ...and its pair
+      arr[o + 9] = OFF * 1.15; arr[o + 10] = b; arr[o + 11] = 0;
+      arr[o + 12] = OFF; arr[o + 13] = a; arr[o + 14] = 0;      // the dimension line itself
+      arr[o + 15] = OFF; arr[o + 16] = b; arr[o + 17] = 0;
+    });
+    return arr;
+  }, [drawn]);
 
   const tmp = useMemo(() => ({
     camDir: new THREE.Vector3(),
@@ -126,7 +196,7 @@ const DiyDimension: React.FC = () => {
 
   useFrame(() => {
     const g = groupRef.current;
-    if (!g) return;
+    if (!g || drawn.length === 0) return;
 
     const camDir = camera.getWorldDirection(tmp.camDir);
     const axisVec = tmp.axis.set(
@@ -155,7 +225,7 @@ const DiyDimension: React.FC = () => {
     if (side.lengthSq() < 1e-6) side.set(1, 0, 0);
     side.normalize();
 
-    g.position.set(ax * M, ay * M, az * M);
+    g.position.set(ox * M, oy * M, oz * M);
     g.quaternion.setFromRotationMatrix(
       tmp.basis.makeBasis(side, axisVec, tmp.zAxis.crossVectors(side, axisVec)),
     );
@@ -171,34 +241,48 @@ const DiyDimension: React.FC = () => {
     const off = Math.max(OFF * k, inner + 0.01);
     const outer = off * 1.15;
 
-    // Compared against the buffer itself rather than a remembered copy: a new
-    // span rebuilds `verts` at its base sizes, and a cache of the last frame's
-    // numbers would then be equal to this frame's and skip the rewrite.
-    if (verts[0] !== inner || verts[3] !== outer || verts[12] !== off) {
-      verts[0] = inner; verts[3] = outer;
-      verts[6] = inner; verts[9] = outer;
-      verts[12] = off; verts[15] = off;
+    // Keyed on the span set as well as the scales: rebuilding `verts` (a new
+    // span, a resized parent) resets it to its base sizes, and a cache that only
+    // remembered the scales would consider this frame's numbers unchanged and
+    // leave the drawing at its base size for a frame.
+    const key = `${spanKey}|${inner.toFixed(6)}|${outer.toFixed(6)}|${off.toFixed(6)}`;
+    if (appliedKey.current !== key) {
+      appliedKey.current = key;
+      for (let i = 0; i < drawn.length; i++) {
+        const o = i * 18;
+        verts[o + 0] = inner; verts[o + 3] = outer;
+        verts[o + 6] = inner; verts[o + 9] = outer;
+        verts[o + 12] = off; verts[o + 15] = off;
+      }
       const attr = lineRef.current?.geometry.getAttribute('position');
       if (attr) attr.needsUpdate = true;
     }
 
+    // Tips on the dimension line, bodies pointing outward into it — the way a
+    // drawing has them, and the way that keeps them out of the numberless middle
+    // of a short span.
     const arrowH = ARROW_H * k;
-    tipARef.current?.position.set(off, arrowH / 2, 0);
-    tipBRef.current?.position.set(off, spanM - arrowH / 2, 0);
-    tipARef.current?.scale.setScalar(k);
-    tipBRef.current?.scale.setScalar(k);
-    labelRef.current?.position.set(off, spanM / 2, 0);
+    drawn.forEach((s, i) => {
+      const a = s.from * M;
+      const b = s.to * M;
+      const tipA = tipARefs.current[i];
+      const tipB = tipBRefs.current[i];
+      tipA?.position.set(off, a + arrowH / 2, 0);
+      tipB?.position.set(off, b - arrowH / 2, 0);
+      tipA?.scale.setScalar(k);
+      tipB?.scale.setScalar(k);
+      labelRefs.current[i]?.position.set(off, (a + b) / 2, 0);
+    });
   });
 
-  if (!profile) return null;
+  if (!profile || !datum || drawn.length === 0) return null;
 
   return (
     <group ref={groupRef}>
-      {/* Annotations are an overlay, not scenery: `depthTest` is off so the
-          dimension is never chewed up by the ground plane it starts on (the
-          first extension line of a height sits exactly on the floor) or by the
-          part it is measuring. It is offset laterally, so in practice there is
-          nothing it should have been hidden behind. */}
+      {/* Annotations are an overlay, not scenery: `depthTest` is off so a
+          dimension is never chewed up by the part it is measuring or by whatever
+          is behind it. It is offset laterally, so in practice there is nothing it
+          should have been hidden behind. */}
       <lineSegments ref={lineRef} frustumCulled={false} renderOrder={20}>
         <bufferGeometry>
           <bufferAttribute attach="attributes-position" args={[verts, 3]} />
@@ -206,32 +290,37 @@ const DiyDimension: React.FC = () => {
         <lineBasicMaterial color={INK} toneMapped={false} depthTest={false} depthWrite={false} />
       </lineSegments>
 
-      {/* Tips on the dimension line, bodies pointing outward into it — the way a
-          drawing has them, and the way that keeps them out of the numberless
-          middle of a short span. Dropped for a span of nothing (a rail sitting
-          on the floor), where the two would only overlap. */}
-      {spanM > 0.001 && (
-        <>
-          <mesh ref={tipARef} rotation={[0, 0, Math.PI]} renderOrder={21}>
-            <coneGeometry args={[ARROW_R, ARROW_H, 8]} />
-            <meshBasicMaterial color={INK} toneMapped={false} depthTest={false} depthWrite={false} />
-          </mesh>
-          <mesh ref={tipBRef} renderOrder={21}>
-            <coneGeometry args={[ARROW_R, ARROW_H, 8]} />
-            <meshBasicMaterial color={INK} toneMapped={false} depthTest={false} depthWrite={false} />
-          </mesh>
-        </>
-      )}
+      {drawn.map((_, i) => (
+        <mesh
+          key={`ta${i}`}
+          ref={(el) => { tipARefs.current[i] = el; }}
+          rotation={[0, 0, Math.PI]}
+          renderOrder={21}
+        >
+          <coneGeometry args={[ARROW_R, ARROW_H, 8]} />
+          <meshBasicMaterial color={INK} toneMapped={false} depthTest={false} depthWrite={false} />
+        </mesh>
+      ))}
+      {drawn.map((_, i) => (
+        <mesh key={`tb${i}`} ref={(el) => { tipBRefs.current[i] = el; }} renderOrder={21}>
+          <coneGeometry args={[ARROW_R, ARROW_H, 8]} />
+          <meshBasicMaterial color={INK} toneMapped={false} depthTest={false} depthWrite={false} />
+        </mesh>
+      ))}
 
-      {/* Plain DOM, so the number stays legible at any zoom and in any language:
-          a bare figure and the unit, which needs no translation. */}
-      <group ref={labelRef}>
-        <Html center zIndexRange={[10, 0]} style={{ pointerEvents: 'none' }}>
-          <div className="whitespace-nowrap rounded bg-neutral-900/85 px-1.5 py-0.5 text-[11px] font-medium tabular-nums text-amber-300">
-            {Math.round(span)} mm
-          </div>
-        </Html>
-      </group>
+      {/* Plain DOM, so the numbers stay legible at any zoom and in any language:
+          a bare figure and the unit, which needs no translation. Each span's
+          number sits in its own gap, which is what says which end it belongs to
+          — the alternative, an arrow or a word per number, needs a language. */}
+      {drawn.map((s, i) => (
+        <group key={`l${i}`} ref={(el) => { labelRefs.current[i] = el; }}>
+          <Html center zIndexRange={[10, 0]} style={{ pointerEvents: 'none' }}>
+            <div className="whitespace-nowrap rounded bg-neutral-900/85 px-1.5 py-0.5 text-[11px] font-medium tabular-nums text-amber-300">
+              {Math.round(s.to - s.from)} mm
+            </div>
+          </Html>
+        </group>
+      ))}
     </group>
   );
 };

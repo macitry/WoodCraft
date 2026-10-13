@@ -91,8 +91,26 @@ const DiyCornerHints: React.FC = () => {
   const pickUpHand = useDiyStore((s) => s.pickUpHand);
   const mode = useDiyStore((s) => s.mode);
 
+  // The part a click would place — the same resolution `placeBracketAtHint` and
+  // `placeBracketAtGhost` use, so a preview cannot promise one part while the
+  // click produces another.
+  const nextConnector = connectorById(
+    heldConnectorId ?? lastConnectorId ?? DEFAULT_BRACKET_CONNECTOR_ID,
+  );
+
   const hints = useMemo(() => {
     if (!showCornerHints) return [];
+    // A 三通件 is not placed on a joint, so the joints must stand down while one
+    // is in play. Two things go wrong if they do not: every corner draws a cube
+    // preview that the click would not honour (a node lands where the pointer
+    // is, not on a corner), and a click that DID reach them would hand the node
+    // a two-face pose it was never solved for — `placeBracketAtHint` builds a
+    // joint bracket out of whatever connector is chosen.
+    //
+    // Keyed on `lastConnectorId` as well as the hand: that is the id an empty
+    // hand would place, so a node left behind by the last placement has to close
+    // the corners down too. The gate lifts the moment an angle is picked again.
+    if (nextConnector.kind === 'node') return [];
     // `freeCornerHints` skips the joints that already carry a bracket, so a
     // preview is not drawn on top of an existing (orange/placed) bracket. That
     // is also what keeps the two click targets disjoint: a spot with a bracket
@@ -107,7 +125,7 @@ const DiyCornerHints: React.FC = () => {
     // have been refused with "only on a corner" while sitting on one.
     if (hand?.kind === 'kit') return allCornerHints(profiles);
     return freeCornerHints(profiles, brackets);
-  }, [showCornerHints, profiles, brackets, hand]);
+  }, [showCornerHints, profiles, brackets, hand, nextConnector]);
 
   // Persist every preview-mode hint set (position + pose) when the corner
   // preview turns on, or when the joint configuration changes.
@@ -163,12 +181,9 @@ const DiyCornerHints: React.FC = () => {
   const canPlace = mode === 'idle';
   const canHover = mode === 'idle';
 
-  // `connectorById` alone is wrong here: given null it falls back to the CAST
-  // bracket, not to `DEFAULT_BRACKET_CONNECTOR_ID`. Resolving the default first
-  // keeps the preview and the placement the same part — and the SAME resolution
-  // order the store uses (`placeBracketAtHint`), so a preview cannot promise one
-  // part while the click places another.
-  const preview = connectorById(heldConnectorId ?? lastConnectorId ?? DEFAULT_BRACKET_CONNECTOR_ID);
+  // The part the ghosts preview is `nextConnector`, computed with the hint gate
+  // above — one resolution, two readers, so the preview cannot promise one part
+  // while the click places another.
 
   /**
    * A click on a joint places whatever is in hand there.
@@ -204,7 +219,7 @@ const DiyCornerHints: React.FC = () => {
         <CornerHintGhost
           key={i}
           hint={h}
-          stlUrl={preview.stlUrl}
+          stlUrl={nextConnector.stlUrl}
           canPlace={canPlace}
           canHover={canHover}
           onPlace={() => placeOn(h)}

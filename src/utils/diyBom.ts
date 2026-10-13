@@ -97,8 +97,12 @@ export function computeDiyBom(
     bag.add(`bracket|${cc.id}`, {
       // The connector's own label is data, so it goes through the dictionary —
       // the BOM naming the part 「角码 Angle Alu 25x40」 in Chinese mode is the
-      // same 混杂 as the panel doing it.
-      part: t('bom.bracketNamed', { label: connectorLabel(cc) }),
+      // same 混杂 as the panel doing it. The NOUN is translated too, and it has
+      // to be the connector's own: a 三通件 row headed 角码 names a part the
+      // reader cannot order.
+      part: t(cc.kind === 'node' ? 'bom.nodeNamed' : 'bom.bracketNamed', {
+        label: connectorLabel(cc),
+      }),
       type: 'bracket',
       material: 'aluminum',
       profile: String(Math.round(b.size)),

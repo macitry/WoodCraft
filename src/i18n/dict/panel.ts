@@ -124,6 +124,9 @@ export const zh = {
   'bom.textTotal': '  零件合计：{n}',
   'bom.profile': '型材',
   'bom.bracketNamed': '角码 {label}',
+  // A 三通件 is not an 角码 — different part, different job in the joint, and the
+  // BOM is read by someone ordering from it.
+  'bom.nodeNamed': '三通件 {label}',
 
   // Board-upload failures. Each one is thrown as an Error whose message is shown
   // verbatim to the user (see MaterialSelector's alert), so it is a sentence for
@@ -249,6 +252,7 @@ export const en: Record<PanelKey, string> = {
   'bom.textTotal': '  Total parts: {n}',
   'bom.profile': 'Profile',
   'bom.bracketNamed': 'Bracket {label}',
+  'bom.nodeNamed': 'Three-way node {label}',
 
   'panel.errTooLarge': 'Image too large ({mb} MB) — pick one under 20 MB',
   'panel.errTileMm': 'The covered size must be a positive number of millimetres',

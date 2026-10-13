@@ -312,10 +312,20 @@ export function findCornerAt(
  */
 export const SAME_CORNER_MM = 2;
 
-/** The enabled bracket already bolted to `hint`'s corner, or null. */
+/**
+ * The enabled bracket already bolted to `hint`'s corner, or null.
+ *
+ * A bracket bolted to NOTHING does not occupy a joint: `connectedProfiles` is
+ * empty exactly when the joint solver never posed it, which is the 三通件 case —
+ * a cube is dropped where the pointer is and has no two faces to be solved
+ * against. Letting one count as an occupant would take the corner away from the
+ * angles (its ghost disappears, because this is also the preview filter) and
+ * would let `placeBracketAtHint` find it as the "sitting" bracket and swap an
+ * angle into a cube's unposed, unconnected record.
+ */
 export function bracketAtHint(brackets: DiyBracket[], hint: CornerHint): DiyBracket | null {
   for (const b of brackets) {
-    if (!b.enabled) continue;
+    if (!b.enabled || b.connectedProfiles.length === 0) continue;
     const d = Math.hypot(
       b.position.x - hint.position.x,
       b.position.y - hint.position.y,
