@@ -1,0 +1,601 @@
+/* ---------------------------------------------------------------------------
+   The customer page's own chrome.
+
+   Two jobs here, and only two:
+
+   1. Place the three bands — a glass header, a bare 3D stage, a glass footer.
+      The middle band is bare ON PURPOSE; see the note on `.shop-main`.
+
+   2. Carry the glass FALLBACK. liquid-glass produces its material maps with a
+      WebGPU device, and where there is none the library still renders but every
+      `.lg-surface` stays `background: transparent` — visible controls with the
+      page showing straight through them. That is a legible page, not a broken
+      one, but it is not the design either. `[data-glass-fallback]` is set by
+      `ShopShell` on the library's own diagnostic signal, and the rules at the
+      bottom of this file are the whole of the degraded design: same DOM, same
+      layout, a `backdrop-filter` standing in for the refracted map.
+   --------------------------------------------------------------------------- */
+
+.shop-root {
+  position: relative;
+  width: 100%;
+  height: 100%;
+}
+
+.shop-scene {
+  position: absolute;
+  inset: 0;
+  /* The library reads its foreground colour from here. Dark appearance, so the
+     control chrome and every label drawn by the page agree on white. */
+  --lg-foreground: #ffffff;
+}
+
+/* --- the layer the glass refracts ---------------------------------------- */
+
+.shop-bg {
+  position: absolute;
+  inset: 0;
+}
+
+/*
+ * Something for the refraction to bend, and it has to have STRUCTURE.
+ * A flat gradient displaced by a lens is a flat gradient — it reads as no glass
+ * at all. Soft blobs of colour at different distances are what make the edge of
+ * a surface look like an edge of glass.
+ */
+.shop-bg-art {
+  position: absolute;
+  inset: -8%;
+  background:
+    radial-gradient(120% 90% at 15% 0%, #2b2b46 0%, transparent 60%),
+    radial-gradient(100% 80% at 92% 8%, #3a2a20 0%, transparent 55%),
+    radial-gradient(120% 100% at 50% 112%, #1a2130 0%, transparent 62%),
+    linear-gradient(160deg, #12121f 0%, #0b0b14 60%, #141019 100%);
+}
+
+.shop-bg-art::before,
+.shop-bg-art::after {
+  content: '';
+  position: absolute;
+  border-radius: 50%;
+  filter: blur(70px);
+  opacity: 0.45;
+}
+
+.shop-bg-art::before {
+  width: 44vw;
+  height: 44vw;
+  left: 6%;
+  top: 10%;
+  background: #4a6fa5;
+}
+
+.shop-bg-art::after {
+  width: 38vw;
+  height: 38vw;
+  right: 4%;
+  bottom: 8%;
+  background: #a5714a;
+}
+
+/* --- the three bands ------------------------------------------------------ */
+
+.shop-stage {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding: 16px;
+}
+
+.shop-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  padding: 8px 12px;
+  flex: none;
+}
+
+.shop-foot {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 8px 12px;
+  flex: none;
+}
+
+/*
+ * The stage is BARE. No glass surface may overlap this element.
+ *
+ * liquid-glass refracts its own content layer (`GlassContent`) — a surface
+ * shows you that layer, displaced, not whatever happens to be painted behind
+ * it. Put a glass panel over the canvas and it would show the background
+ * gradient through itself while hiding the model, which is the one thing the
+ * page is for. So the view sits in a band of its own between the two glass
+ * bars, and the view controls live down in the footer rather than floating.
+ */
+.shop-main {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+}
+
+.shop-scroll {
+  position: absolute;
+  inset: 0;
+  overflow-y: auto;
+  padding: 6px 4px 18px;
+}
+
+/* --- header -------------------------------------------------------------- */
+
+.shop-brand {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  padding: 8px 16px;
+  flex: none;
+}
+
+.shop-brand-mark {
+  font-size: 17px;
+  font-weight: 650;
+  letter-spacing: 0.01em;
+}
+
+.shop-brand-tag {
+  font-size: 12px;
+  opacity: 0.72;
+}
+
+.shop-steps {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 5px 6px;
+  flex: none;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.shop-step {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 14px;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-size: 13px;
+  white-space: nowrap;
+  opacity: 0.5;
+  cursor: default;
+  transition: opacity 160ms ease, background-color 160ms ease;
+}
+
+.shop-step-dot {
+  display: grid;
+  place-items: center;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.16);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Done and current are both clickable — going BACK is always allowed, going
+   forward only as far as the user has already been. */
+.shop-step[data-state='done'],
+.shop-step[data-state='current'] {
+  cursor: pointer;
+  opacity: 1;
+}
+
+.shop-step[data-state='current'] {
+  background: rgba(255, 255, 255, 0.16);
+}
+
+.shop-step[data-state='done'] .shop-step-dot {
+  background: rgba(212, 165, 116, 0.35);
+}
+
+.shop-head-right {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex: none;
+}
+
+/* The two nav buttons in the footer re-use `.shop-step`, so they inherit its
+   pressed states; what they need on top is to look like buttons when idle. */
+.shop-step[data-shop-nav] {
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.shop-step[data-shop-nav]:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+
+.shop-step[data-shop-nav='next']:not(:disabled) {
+  border-color: rgba(212, 165, 116, 0.6);
+  background: rgba(212, 165, 116, 0.18);
+}
+
+/* --- footer -------------------------------------------------------------- */
+
+.shop-foot-note {
+  display: flex;
+  align-items: center;
+  gap: 18px;
+  padding: 9px 16px;
+  font-size: 12.5px;
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.shop-foot-chip {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  white-space: nowrap;
+}
+
+.shop-foot-chip > span:first-child {
+  opacity: 0.6;
+}
+
+.shop-foot-chip > span:last-child {
+  font-variant-numeric: tabular-nums;
+}
+
+/* --- step 1: the catalogue ----------------------------------------------- */
+
+.shop-h1 {
+  margin: 0 0 6px;
+  font-size: 24px;
+  font-weight: 620;
+  letter-spacing: 0.01em;
+}
+
+.shop-lead {
+  margin: 0 0 22px;
+  font-size: 13.5px;
+  opacity: 0.66;
+  max-width: 62ch;
+  line-height: 1.6;
+}
+
+/*
+ * The cards are NOT `GlassSurface`s, and the reason is a hard limit rather than
+ * taste: the scene refuses to register more than `maxSurfaces` and throws a
+ * `RangeError` when it is exceeded, and every surface costs a filter. A wall of
+ * them also refracts into mush — a material is convincing when a few surfaces
+ * carry it, not when the whole page is made of it. These are static CSS glass:
+ * the same tint and edge highlight, none of the cost.
+ */
+.shop-cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(250px, 1fr));
+  gap: 16px;
+}
+
+.shop-card {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 18px;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: 18px;
+  background: rgba(255, 255, 255, 0.06);
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: background-color 160ms ease, border-color 160ms ease, transform 160ms ease;
+}
+
+.shop-card:hover {
+  background: rgba(255, 255, 255, 0.1);
+  border-color: rgba(255, 255, 255, 0.26);
+  transform: translateY(-2px);
+}
+
+.shop-card[aria-pressed='true'] {
+  border-color: rgba(212, 165, 116, 0.75);
+  background: rgba(212, 165, 116, 0.12);
+}
+
+.shop-card-art {
+  height: 96px;
+  border-radius: 12px;
+  background: rgba(0, 0, 0, 0.22);
+  display: grid;
+  place-items: center;
+}
+
+.shop-card-name {
+  font-size: 15.5px;
+  font-weight: 600;
+}
+
+.shop-card-desc {
+  font-size: 12.5px;
+  opacity: 0.62;
+  line-height: 1.55;
+  min-height: 2.6em;
+}
+
+.shop-card-meta {
+  font-size: 11.5px;
+  opacity: 0.5;
+  font-variant-numeric: tabular-nums;
+}
+
+/* --- step 2: dimensions --------------------------------------------------- */
+
+.shop-fields {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(330px, 1fr));
+  gap: 18px;
+  max-width: 940px;
+}
+
+.shop-field {
+  padding: 16px 18px 12px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.05);
+}
+
+.shop-field-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 4px;
+}
+
+.shop-field-name {
+  font-size: 13.5px;
+  font-weight: 560;
+}
+
+.shop-field-readout {
+  display: flex;
+  align-items: baseline;
+  gap: 4px;
+  font-variant-numeric: tabular-nums;
+}
+
+.shop-field-number {
+  width: 5.2em;
+  padding: 3px 8px;
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  border-radius: 8px;
+  background: rgba(0, 0, 0, 0.25);
+  color: inherit;
+  font: inherit;
+  font-size: 14px;
+  font-weight: 600;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.shop-field-unit {
+  font-size: 12px;
+  opacity: 0.6;
+}
+
+.shop-field-range {
+  margin-top: 2px;
+  font-size: 11.5px;
+  opacity: 0.45;
+  font-variant-numeric: tabular-nums;
+}
+
+/* The profile chooser: three caps, and each one really does move the metal. */
+.shop-sizes {
+  display: flex;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.shop-size {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 3px;
+  padding: 10px 6px;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.04);
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+  transition: background-color 160ms ease, border-color 160ms ease;
+}
+
+.shop-size:hover {
+  background: rgba(255, 255, 255, 0.1);
+}
+
+.shop-size[aria-pressed='true'] {
+  border-color: rgba(212, 165, 116, 0.8);
+  background: rgba(212, 165, 116, 0.16);
+}
+
+.shop-size-cap {
+  font-size: 15px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.shop-size-sub {
+  font-size: 10.5px;
+  opacity: 0.55;
+}
+
+/* --- step 3: the stage ---------------------------------------------------- */
+
+.shop-view {
+  position: absolute;
+  inset: 0;
+  border-radius: 16px;
+  overflow: hidden;
+  background: rgba(0, 0, 0, 0.28);
+}
+
+.shop-view-hint {
+  position: absolute;
+  left: 14px;
+  bottom: 12px;
+  font-size: 11.5px;
+  opacity: 0.5;
+  pointer-events: none;
+}
+
+.shop-loading {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 14px;
+  text-align: center;
+  padding: 24px;
+}
+
+.shop-loading-title {
+  font-size: 15px;
+  font-weight: 560;
+}
+
+.shop-loading-note {
+  font-size: 12.5px;
+  opacity: 0.6;
+  max-width: 46ch;
+  line-height: 1.6;
+}
+
+.shop-bar {
+  width: min(320px, 60%);
+  height: 5px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.14);
+  overflow: hidden;
+}
+
+.shop-bar-fill {
+  height: 100%;
+  background: #d4a574;
+  transition: width 400ms ease;
+}
+
+/* --- step 4: the list ----------------------------------------------------- */
+
+.shop-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12.5px;
+}
+
+.shop-table th,
+.shop-table td {
+  padding: 9px 12px;
+  text-align: left;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.09);
+}
+
+.shop-table th {
+  font-weight: 560;
+  opacity: 0.55;
+  font-size: 11.5px;
+  white-space: nowrap;
+}
+
+.shop-table td.num,
+.shop-table th.num {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.shop-table tbody tr:last-child td {
+  border-bottom: 0;
+}
+
+.shop-table-name {
+  font-weight: 520;
+}
+
+.shop-table-note {
+  font-size: 11.5px;
+  opacity: 0.5;
+  margin: 12px 0 0;
+  line-height: 1.6;
+}
+
+.shop-exports {
+  display: flex;
+  gap: 10px;
+  margin-top: 20px;
+  flex-wrap: wrap;
+}
+
+.shop-empty {
+  padding: 40px 4px;
+  font-size: 13.5px;
+  opacity: 0.6;
+}
+
+/* --- the fallback --------------------------------------------------------- */
+
+/*
+ * Set on the root by `ShopShell` when the library reports it could not produce
+ * a material map, or when nothing has reported ready within a few seconds.
+ *
+ * `visibility` is forced back on as well: `styles.css` hides every surface that
+ * has not yet been given an inline `clip-path` by the shape engine, so a page
+ * where that engine never got as far as measuring would be blank rather than
+ * merely unrefracted. Everything below is chrome — the layout is untouched, and
+ * no element is added or removed, which is what keeps the two paths from
+ * drifting apart.
+ */
+[data-glass-fallback] .lg-surface {
+  visibility: visible;
+  background: rgba(255, 255, 255, 0.1);
+  backdrop-filter: blur(20px) saturate(1.6);
+  -webkit-backdrop-filter: blur(20px) saturate(1.6);
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  box-shadow:
+    0 10px 34px rgba(0, 0, 0, 0.34),
+    inset 0 1px 0 rgba(255, 255, 255, 0.22);
+}
+
+[data-glass-fallback] .lg-surface[data-glass-appearance='dark'] {
+  background: rgba(18, 18, 28, 0.55);
+  border-color: rgba(255, 255, 255, 0.14);
+}
+
+[data-glass-fallback] .shop-card {
+  backdrop-filter: blur(20px) saturate(1.6);
+  -webkit-backdrop-filter: blur(20px) saturate(1.6);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  [data-glass-fallback] .lg-surface,
+  [data-glass-fallback] .shop-card {
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
+    background: rgba(18, 18, 28, 0.82);
+  }
+}

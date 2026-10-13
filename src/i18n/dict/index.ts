@@ -20,6 +20,7 @@ import { zh as diyZh, en as diyEn } from './diy';
 import { zh as kitZh, en as kitEn } from './kit';
 import { zh as planZh, en as planEn } from './plan';
 import { zh as panelZh, en as panelEn } from './panel';
+import { zh as shopZh, en as shopEn } from './shop';
 
 export const zh = {
   ...commonZh,
@@ -30,6 +31,7 @@ export const zh = {
   ...kitZh,
   ...planZh,
   ...panelZh,
+  ...shopZh,
 };
 
 export type DictKey = keyof typeof zh;
@@ -43,4 +45,5 @@ export const en: Record<DictKey, string> = {
   ...kitEn,
   ...planEn,
   ...panelEn,
+  ...shopEn,
 };

@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>WoodCraft — Build Your Furniture</title>
+    <script>
+      /*
+       * Language before first paint.
+       *
+       * The same block as `index.html`, and it has to be duplicated rather than
+       * shared: it runs before any bundle exists, so there is nothing to import
+       * from. Only the two titles differ — a customer page is not a design tool
+       * and should not present itself as one. Keep this in step with
+       * `detect()` in src/i18n/lang.ts and with the copy in index.html; there is
+       * no mechanism that will notice if it drifts.
+       */
+      (function () {
+        var TITLES = { zh: 'WoodCraft — 定制你的家具', en: 'WoodCraft — Build Your Furniture' };
+        var lang = 'en';
+        try {
+          var saved = localStorage.getItem('woodcraft.lang');
+          if (saved === 'zh' || saved === 'en') lang = saved;
+          else if ((navigator.language || '').toLowerCase().indexOf('zh') === 0) lang = 'zh';
+        } catch (e) {
+          /* Storage blocked — fall back to English rather than failing to render. */
+        }
+        document.documentElement.lang = lang === 'zh' ? 'zh-CN' : 'en';
+        document.title = TITLES[lang];
+      })();
+    </script>
+  </head>
+  <body class="bg-neutral-950 text-white">
+    <div id="root"></div>
+    <script type="module" src="/src/shop/main.tsx"></script>
+  </body>
+</html>
