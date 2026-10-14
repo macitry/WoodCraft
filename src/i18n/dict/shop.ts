@@ -1,5 +1,5 @@
 // ---------------------------------------------------------------------------
-// Area: the customer page (`shop.html`) — the four-step guided configurator.
+// Area: the customer page (`shop.html`) — the three-step guided configurator.
 // Keys are prefixed `shop.`.
 //
 // The voice is different from the rest of the dictionary on purpose. Everywhere
@@ -14,7 +14,6 @@ export const zh = {
   'shop.stepLabel': '第 {n} 步，共 {total} 步',
   'shop.step.style': '选款式',
   'shop.step.size': '定尺寸',
-  'shop.step.preview': '看效果',
   'shop.step.bom': '要清单',
   'shop.next': '下一步',
   'shop.back': '上一步',
@@ -42,21 +41,24 @@ export const zh = {
     '规格决定铝型材的截面大小，也决定腿和横梁的实际长度——换一个，模型会跟着变。',
   'shop.size.profile.sub': '{n} mm 截面',
 
-  // --- step 3: the stage --------------------------------------------------
-  'shop.preview.title': '看效果',
-  'shop.preview.lead': '这是按你的选择实际生成的三维模型，不是示意图。',
-  'shop.preview.building': '正在生成…',
-  'shop.preview.buildingNote':
-    '后端正在按你的尺寸建模，第一次生成会慢一些。完成后会自动出现在这里，不用停留在这个页面。',
-  'shop.preview.failed': '生成失败',
-  'shop.preview.failedNote':
-    '后端没有给出模型。可能是服务没有启动，或者这次尺寸后端没能算出来。',
-  'shop.preview.retry': '重试',
-  'shop.preview.hint': '拖动旋转 · 滚轮缩放 · 右键平移',
-  'shop.preview.ready': '已生成',
-  'shop.preview.parts': '{n} 个零件',
+  // --- the right-hand view ------------------------------------------------
+  // It used to be a step of its own. It is a pane now, and these keys are the
+  // only place the page says what kind of picture the customer is looking at:
+  // a stand-in that follows the sliders, or the real thing.
+  'shop.view.empty': '选一件家具，它的样子会出现在这里。',
+  'shop.view.live': '示意图 · 跟着尺寸变',
+  'shop.view.building': '正在生成精细模型…',
+  'shop.view.buildingNote':
+    '后端正在按这个尺寸建模，第一次会慢一些。左边可以继续改，改完这里会重新来一次。',
+  'shop.view.ready': '精细模型',
+  'shop.view.failed': '精细模型没生成出来',
+  'shop.view.retry': '重试',
+  'shop.view.stlFailed':
+    '这个模型的文件暂时取不到——可能已经被清理掉了。改一下尺寸，或者稍后再试。',
+  'shop.view.hint': '拖动旋转 · 滚轮缩放 · 右键平移',
+  'shop.view.parts': '{n} 个零件',
 
-  // --- step 4: the list ---------------------------------------------------
+  // --- step 3: the list ---------------------------------------------------
   'shop.bom.title': '清单',
   'shop.bom.lead': '这是上面这个模型实际用到的全部零件，可以直接发给加工方。',
   'shop.bom.col.name': '零件',
@@ -118,7 +120,6 @@ export const en: Record<ShopKey, string> = {
   'shop.stepLabel': 'Step {n} of {total}',
   'shop.step.style': 'Choose',
   'shop.step.size': 'Size',
-  'shop.step.preview': 'Preview',
   'shop.step.bom': 'List',
   'shop.next': 'Next',
   'shop.back': 'Back',
@@ -144,18 +145,18 @@ export const en: Record<ShopKey, string> = {
     'The frame section decides how thick the aluminium is, and with it how long the legs and rails actually come out — change it and the model changes.',
   'shop.size.profile.sub': '{n} mm section',
 
-  'shop.preview.title': 'Take a look',
-  'shop.preview.lead': 'This is the model built from your choices, not an illustration.',
-  'shop.preview.building': 'Building…',
-  'shop.preview.buildingNote':
-    'The server is modelling your dimensions now. The first build takes a while; it will appear here on its own.',
-  'shop.preview.failed': 'That did not build',
-  'shop.preview.failedNote':
-    'The server returned no model — either it is not running, or it could not work out these dimensions.',
-  'shop.preview.retry': 'Try again',
-  'shop.preview.hint': 'Drag to rotate · scroll to zoom · right-drag to pan',
-  'shop.preview.ready': 'Ready',
-  'shop.preview.parts': '{n} parts',
+  'shop.view.empty': 'Pick a piece and it will appear here.',
+  'shop.view.live': 'Stand-in · follows your size',
+  'shop.view.building': 'Building the detailed model…',
+  'shop.view.buildingNote':
+    'The server is modelling this size now, and the first one takes a while. Carry on changing things on the left — it will start again when you stop.',
+  'shop.view.ready': 'Detailed model',
+  'shop.view.failed': 'The detailed model did not come out',
+  'shop.view.retry': 'Try again',
+  'shop.view.stlFailed':
+    'This model\'s files cannot be fetched right now — they may have been cleared away. Change a dimension, or try again later.',
+  'shop.view.hint': 'Drag to rotate · scroll to zoom · right-drag to pan',
+  'shop.view.parts': '{n} parts',
 
   'shop.bom.title': 'The list',
   'shop.bom.lead':

@@ -28,9 +28,15 @@ import {
  * generate call is the only way to find out whether a build has finished.
  */
 
-export type ShopStep = 'style' | 'size' | 'preview' | 'bom';
+/**
+ * Three steps, not four. There used to be a `preview` step between the size and
+ * the list, and it existed only because that is where the model got built and
+ * shown. The model is now always on screen (the right-hand pane), so a step
+ * whose whole content was "look at it" has nothing left to do.
+ */
+export type ShopStep = 'style' | 'size' | 'bom';
 
-export const SHOP_STEPS: readonly ShopStep[] = ['style', 'size', 'preview', 'bom'];
+export const SHOP_STEPS: readonly ShopStep[] = ['style', 'size', 'bom'];
 
 /** Every frame section the backend's solver understands. `profile_size` in
  *  `desk_solver.py` reads the first two characters as millimetres, and it is
@@ -50,6 +56,11 @@ const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
  *  call, not about the page. */
 let buildToken = 0;
 
+/** The same guard for solves. It has to be a SEPARATE counter: a solve fires
+ *  while a build is still running, and if they shared a token the solve would
+ *  silently cancel the build it was meant to sit in front of. */
+let solveToken = 0;
+
 interface ShopStore {
   step: ShopStep;
 
@@ -65,11 +76,20 @@ interface ShopStore {
   profile: string;
 
   // --- the build ----------------------------------------------------------
+  /**
+   * What the viewer draws, and it is one field rather than two on purpose: a
+   * solver-only answer and a finished one are the same `ShopModel` shape — the
+   * only difference is whether the parts carry `stlUrl`. So the viewer says
+   * "STL if you have one, otherwise a box", and this field can be swapped
+   * underneath it without either of them knowing which kind it got.
+   */
   model: ShopModel | null;
+  /** A real CAD build is in flight. Expensive, rare. */
   building: boolean;
   buildFailed: boolean;
   progress: ShopProgress | null;
-  /** The dimensions the model in hand was built from. */
+  /** The dimensions of the last FINISHED build. Only a finished one has an
+   *  entry in the server's cache, and only that one can answer `/bom`. */
   builtKey: string | null;
 
   // --- the list -----------------------------------------------------------
@@ -84,9 +104,11 @@ interface ShopStore {
   goTo: (step: ShopStep) => void;
   next: () => void;
   back: () => void;
-  /** Build, unless the model in hand already matches the choices. */
-  ensureBuilt: () => Promise<void>;
-  retryBuild: () => Promise<void>;
+  /** The fast path: ask for the solver's numbers, draw them, start no build. */
+  solve: () => Promise<void>;
+  /** The slow path: one real CAD build for the current choices. Also what the
+   *  retry button calls — after a failure `builtKey` is null, so it re-runs. */
+  build: () => Promise<void>;
   retryBom: () => Promise<void>;
 }
 
@@ -102,6 +124,25 @@ function keyOf(templateId: string, values: Record<string, number>, profile: stri
     values.tabletop_thickness ?? 0,
     profile,
   ].join('|');
+}
+
+/** The request body for the current choices. One place, because `keyOf` and the
+ *  body have to agree: if they ever drifted, the page would ask for one model
+ *  and file the answer under another's key, and a cache hit would be recorded
+ *  as a miss forever. Both paths — solve and build — go through here. */
+function paramsFor(
+  templateId: string,
+  values: Record<string, number>,
+  profile: string,
+): ShopGenerateParams {
+  return {
+    templateId,
+    width: values.width ?? 0,
+    depth: values.depth ?? 0,
+    height: values.height ?? 0,
+    tabletopThickness: values.tabletop_thickness ?? 0,
+    profile,
+  };
 }
 
 export const useShopStore = create<ShopStore>((set, get) => ({
@@ -142,6 +183,10 @@ export const useShopStore = create<ShopStore>((set, get) => ({
     // to learn about them.
     const values: Record<string, number> = {};
     for (const p of template.parameters) values[p.id] = p.defaultValue;
+    // The model is dropped rather than kept: it describes the PREVIOUS
+    // furniture, and a stale desk sitting in the viewer while the customer
+    // picks a new one is worse than an empty pane for the second it takes the
+    // solver to answer.
     set({
       template,
       values,
@@ -162,16 +207,12 @@ export const useShopStore = create<ShopStore>((set, get) => ({
   },
 
   goTo(step) {
-    // Forward only as far as the choices reach: everything past the catalogue
-    // needs a template, and the list needs a model to describe.
-    //
-    // The preview needs NEITHER, and that is not an oversight — it is the step
-    // that BUILDS the model, so requiring one to reach it would be a door that
-    // only opens from the inside. `PreviewStep` starts the build on mount.
-    const { template, model } = get();
-    const order = SHOP_STEPS.indexOf(step);
-    if (order >= 1 && !template) return;
-    if (order >= 3 && !model) return;
+    // One gate, not two. Everything past the catalogue needs a template, and
+    // that is the whole of it. The list used to be blocked on a finished model
+    // as well, which stopped making sense the moment the build moved onto its
+    // own clock: a customer who clicks on before it lands should reach a list
+    // that says it is still working, not a button that does nothing.
+    if (SHOP_STEPS.indexOf(step) >= 1 && !get().template) return;
     set({ step });
   },
 
@@ -187,47 +228,68 @@ export const useShopStore = create<ShopStore>((set, get) => ({
     if (to) set({ step: to });
   },
 
-  async ensureBuilt() {
-    const { template, values, profile, builtKey, building } = get();
-    if (!template || building) return;
-    const key = keyOf(template.id, values, profile);
-    // Re-entering the step with nothing changed must not start a second build:
-    // the server would treat it as a cache hit anyway, but a page that re-asks
-    // on every visit flickers through a loading state for no reason.
-    if (key === builtKey && get().model) return;
-    await get().retryBuild();
-  },
-
-  async retryBuild() {
+  async solve() {
     const { template, values, profile } = get();
     if (!template) return;
 
-    const token = ++buildToken;
     const key = keyOf(template.id, values, profile);
-    const params: ShopGenerateParams = {
-      templateId: template.id,
-      width: values.width ?? 0,
-      depth: values.depth ?? 0,
-      height: values.height ?? 0,
-      tabletopThickness: values.tabletop_thickness ?? 0,
-      profile,
-    };
+    const token = ++solveToken;
 
+    try {
+      const model = await generateShopModel({
+        ...paramsFor(template.id, values, profile),
+        solveOnly: true,
+      });
+      if (token !== solveToken) return;
+      // A finished build for these very dimensions is already drawn, and a box
+      // would be a downgrade on the real thing. The server usually settles this
+      // itself — a solve-only ask for a cached size is answered from the cache,
+      // STLs and all — so this only bites on a race.
+      if (get().builtKey === key) return;
+      set({ model });
+    } catch {
+      // Deliberately nothing, and in particular not `buildFailed`: a solve that
+      // failed says nothing about whether the build will, and the viewer keeps
+      // whatever it was already drawing.
+    }
+  },
+
+  async build() {
+    const { template, values, profile, builtKey } = get();
+    if (!template) return;
+
+    const key = keyOf(template.id, values, profile);
+    // Already have it: the finished model in hand is exactly these dimensions.
+    if (key === builtKey && get().model) return;
+
+    const token = ++buildToken;
+    const params = paramsFor(template.id, values, profile);
+
+    // Note what is NOT in this `set`: `model`. The solver's answer for these
+    // dimensions is nearly always already drawn, and blanking the pane for the
+    // tens of seconds a cold build takes is the one thing this pane exists to
+    // avoid. The list IS cleared — it describes the old model, not this one.
     set({
       building: true,
       buildFailed: false,
-      model: null,
       bom: null,
-      builtKey: null,
       progress: null,
     });
 
     const alive = () => token === buildToken;
+    // A build that lands after the customer has moved on describes dimensions
+    // nobody is looking at any more. `buildToken` catches a NEWER BUILD; this
+    // catches a newer CHOICE, which arrives as a solve and does not touch the
+    // build token at all.
+    const stillWanted = () => {
+      const t = get().template;
+      return alive() && !!t && key === keyOf(t.id, get().values, get().profile);
+    };
 
     try {
       let model = await generateShopModel(params);
-      if (!alive()) return;
-      set({ model });
+      if (!alive() || !model) return;
+      if (stillWanted()) set({ model });
 
       // A cache MISS answers at once with `status: "warming"`: the request
       // carries the solver's numbers and the CAD build is running in a
@@ -247,7 +309,7 @@ export const useShopStore = create<ShopStore>((set, get) => ({
         polls += 1;
         model = await generateShopModel(params);
         if (!alive()) return;
-        set({ model });
+        if (stillWanted()) set({ model });
       }
 
       if (!alive()) return;
@@ -256,6 +318,7 @@ export const useShopStore = create<ShopStore>((set, get) => ({
         set({ building: false, buildFailed: true });
         return;
       }
+      if (!stillWanted()) return;
 
       set({ building: false, builtKey: key });
       await get().retryBom();

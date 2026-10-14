@@ -8,7 +8,7 @@ import { shopBomRows } from '../bomRows';
 import { partName, partTypeLabel, templateName } from '../labels';
 
 /**
- * Step four: what it is made of, and the file you take away.
+ * Step three: what it is made of, and the file you take away.
  *
  * Two things about this page are deliberate and worth stating.
  *
@@ -29,6 +29,7 @@ const BomStep: React.FC = () => {
   const bom = useShopStore((s) => s.bom);
   const bomLoading = useShopStore((s) => s.bomLoading);
   const bomFailed = useShopStore((s) => s.bomFailed);
+  const building = useShopStore((s) => s.building);
   const retryBom = useShopStore((s) => s.retryBom);
   const template = useShopStore((s) => s.template);
   const profile = useShopStore((s) => s.profile);
@@ -53,6 +54,21 @@ const BomStep: React.FC = () => {
         <button type="button" className="shop-size" style={{ maxWidth: 160 }} onClick={() => void retryBom()}>
           <span className="shop-size-cap">{t('shop.bom.retry')}</span>
         </button>
+      </div>
+    );
+  }
+
+  // A build still running is not an empty list, and it is not a failure either.
+  // This used to be unreachable — the list step was gated on a finished model,
+  // so `!bom` here always meant "something went wrong". The gate is gone (the
+  // model is built on its own clock now), so a customer who clicks on early
+  // arrives here with no list and nothing wrong, and needs to be told which.
+  if (!bom && building) {
+    return (
+      <div className="shop-scroll">
+        <h2 className="shop-h1">{t('shop.bom.title')}</h2>
+        <p className="shop-lead">{t('shop.view.building')}</p>
+        <p className="shop-table-note">{t('shop.view.buildingNote')}</p>
       </div>
     );
   }

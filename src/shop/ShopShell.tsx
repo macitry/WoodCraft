@@ -6,20 +6,22 @@ import { useT } from '../i18n';
 import type { DictKey } from '../i18n/dict';
 import { SHOP_STEPS, useShopStore, type ShopStep } from './shopStore';
 import { templateName } from './labels';
+import ShopViewer from './ShopViewer';
+import { useLiveModel } from './useLiveModel';
 import StyleStep from './steps/StyleStep';
 import SizeStep from './steps/SizeStep';
-import PreviewStep from './steps/PreviewStep';
 import BomStep from './steps/BomStep';
 
 /**
- * The page: three bands and the glass around them.
+ * The page: a header, two columns and a footer, with the glass around them.
  *
- * WHY THE BANDS ARE SEPARATE. liquid-glass refracts its own CONTENT layer —
- * `GlassContent`, registered once through the controller — rather than whatever
- * happens to be painted behind a surface. A glass bar laid over the 3D canvas
- * would therefore show the page's background through itself while covering the
- * model, which is the one thing this page exists to show. So the canvas gets a
- * band with no glass in it at all, and every control lives above or below.
+ * WHY THE CANVAS HAS NO GLASS OVER IT. liquid-glass refracts its own CONTENT
+ * layer — `GlassContent`, registered once through the controller — rather than
+ * whatever happens to be painted behind a surface. A glass bar laid over the 3D
+ * canvas would therefore show the page's background through itself while
+ * covering the model, which is the one thing this page exists to show. So the
+ * right-hand column holds nothing but the canvas, and every control lives in the
+ * left column, the header or the footer.
  *
  * THE FALLBACK IS NOT A SECOND LAYOUT. No element is added or removed on the
  * degraded path; `data-glass-fallback` goes on this root and `shop.css` swaps
@@ -35,8 +37,21 @@ import BomStep from './steps/BomStep';
 const STEP_LABEL: Record<ShopStep, DictKey> = {
   style: 'shop.step.style',
   size: 'shop.step.size',
-  preview: 'shop.step.preview',
   bom: 'shop.step.bom',
+};
+
+/**
+ * What the badge over the canvas says. Not a step — a state of the picture, and
+ * it therefore only exists when there IS a picture: an empty pane says so in the
+ * middle of itself, and a badge repeating that sentence above it reads as a bug.
+ */
+type ViewState = 'live' | 'building' | 'ready' | 'failed';
+
+const VIEW_LABEL: Record<ViewState, DictKey> = {
+  live: 'shop.view.live',
+  building: 'shop.view.building',
+  ready: 'shop.view.ready',
+  failed: 'shop.view.failed',
 };
 
 /** How long the scene gets to report itself ready before we degrade anyway. */
@@ -49,14 +64,23 @@ const ShopShell: React.FC = () => {
   const values = useShopStore((s) => s.values);
   const profile = useShopStore((s) => s.profile);
   const model = useShopStore((s) => s.model);
+  const building = useShopStore((s) => s.building);
+  const buildFailed = useShopStore((s) => s.buildFailed);
+  const progress = useShopStore((s) => s.progress);
   const goTo = useShopStore((s) => s.goTo);
   const next = useShopStore((s) => s.next);
   const back = useShopStore((s) => s.back);
+  const build = useShopStore((s) => s.build);
   const loadTemplates = useShopStore((s) => s.loadTemplates);
 
   useEffect(() => {
     void loadTemplates();
   }, [loadTemplates]);
+
+  // The one clock that keeps the right-hand pane in step with the left-hand
+  // choices. It lives here rather than in a step because the pane outlives all
+  // three of them — see `useLiveModel`.
+  useLiveModel();
 
   const [fallback, setFallback] = useState(false);
   const rootRef = useRef<HTMLDivElement | null>(null);
@@ -103,10 +127,12 @@ const ShopShell: React.FC = () => {
   );
 
   const at = SHOP_STEPS.indexOf(step);
-  const canNext =
-    at < SHOP_STEPS.length - 1 &&
-    (step !== 'style' || template !== null) &&
-    (step !== 'preview' || model !== null);
+  // Everything past the catalogue needs a piece of furniture and nothing else —
+  // same rule as `goTo`, which enforces it again. The list used to be blocked on
+  // a finished model too; that stopped making sense when the build moved onto
+  // its own clock, because a customer who clicks on early should reach a list
+  // that says it is still working rather than a button that does nothing.
+  const canNext = at < SHOP_STEPS.length - 1 && template !== null;
 
   const size =
     values.width === undefined
@@ -114,6 +140,24 @@ const ShopShell: React.FC = () => {
       : `${Math.round(values.width)} × ${Math.round(values.depth ?? 0)} × ${Math.round(
           values.height ?? 0,
         )} mm`;
+
+  // Only meaningful with a model to describe — the `?.` is what lets the
+  // calculation stand outside the `model &&` that renders it.
+  const viewState: ViewState = buildFailed
+    ? 'failed'
+    : building
+      ? 'building'
+      : model?.status === 'full'
+        ? 'ready'
+        : 'live';
+
+  // The server's progress is one global value for the whole process rather than
+  // a per-customer one, so it is shown as a bare percentage: a percentage is
+  // true of whatever is building, a phase name in English would not be.
+  const percent =
+    building && progress && progress.total > 0
+      ? Math.min(100, Math.round((progress.current / progress.total) * 100))
+      : null;
 
   return (
     <div className="shop-root" data-glass-fallback={fallback ? '' : undefined}>
@@ -149,7 +193,7 @@ const ShopShell: React.FC = () => {
                 // Backwards is always allowed; forwards only as far as the
                 // choices already reach — `goTo` enforces it again, so a click
                 // here and a click on 下一步 cannot disagree.
-                const reachable = i <= at || (i === 1 && template) || (i >= 2 && model);
+                const reachable = i <= at || (i >= 1 && template !== null);
                 return (
                   <button
                     key={id}
@@ -176,11 +220,66 @@ const ShopShell: React.FC = () => {
             </div>
           </header>
 
-          <main className="shop-main">
-            {step === 'style' && <StyleStep />}
-            {step === 'size' && <SizeStep />}
-            {step === 'preview' && <PreviewStep />}
-            {step === 'bom' && <BomStep />}
+          {/* Two columns: the step on the left, the model on the right, and the
+              model does not care which step it is. That is the whole change —
+              there used to be a fourth step whose entire content was this pane,
+              and a customer who wanted to see a new size had to walk back to it.
+              `data-shop-main` carries the step name so a test can tell which
+              column it is looking at. */}
+          <main className="shop-main" data-shop-main={step}>
+            <section className="shop-pane" data-shop-pane={step}>
+              {step === 'style' && <StyleStep />}
+              {step === 'size' && <SizeStep />}
+              {step === 'bom' && <BomStep />}
+            </section>
+
+            <section className="shop-side" data-shop-side>
+              <div className="shop-view" data-shop-viewer>
+                {model ? (
+                  // Keyed by furniture, NOT by model. A new model arrives every
+                  // time a slider moves — a new `model_id` each time — and a
+                  // remount per solve would reset the camera on every frame of a
+                  // drag, which is both expensive and exactly wrong: the camera
+                  // holds still precisely so the SIZE change is what you see.
+                  <ShopViewer key={template?.id ?? 'none'} model={model} />
+                ) : (
+                  <div className="shop-view-empty">{t('shop.view.empty')}</div>
+                )}
+              </div>
+
+              {model && (
+                <div className="shop-view-badge" data-shop-view={viewState}>
+                  <span className="shop-view-dot" />
+                  <span>{t(VIEW_LABEL[viewState])}</span>
+                  {percent !== null && <span className="shop-view-pct">{percent}%</span>}
+                  {viewState === 'failed' && (
+                    <button
+                      type="button"
+                      className="shop-view-retry"
+                      data-shop-nav="retry"
+                      onClick={() => void build()}
+                    >
+                      {t('shop.view.retry')}
+                    </button>
+                  )}
+                </div>
+              )}
+
+              {building && (
+                <div className="shop-view-note" data-shop-view-note>
+                  {t('shop.view.buildingNote')}
+                </div>
+              )}
+
+              {model && model.parts.length > 0 && (
+                <div className="shop-view-foot">
+                  <span className="shop-view-hint">{t('shop.view.hint')}</span>
+                  <span className="shop-view-parts" data-shop-view-parts>
+                    {t('shop.view.parts', { n: model.parts.length })}
+                  </span>
+                </div>
+              )}
+            </section>
           </main>
 
           <footer className="shop-foot">

@@ -19,7 +19,22 @@ import client from '../api/client';
  * The server: `Parametric-Furniture-Generator/server.py`.
  */
 
-const API_BASE: string = import.meta.env.VITE_BACKEND_API_URL || 'http://localhost:8000';
+/**
+ * `127.0.0.1`, NOT `localhost`, and that is not a style preference.
+ *
+ * On this machine `localhost` resolves to `::1` first and `127.0.0.1` second,
+ * while the server binds `0.0.0.0` — IPv4 only. So every request spelled
+ * `localhost` waits out the IPv6 attempt before falling back. Measured, three
+ * times each, against the running server:
+ *
+ *     http://localhost:8000/api/health    2066 ms   2071 ms   2056 ms
+ *     http://127.0.0.1:8000/api/health      1 ms      1 ms      1 ms
+ *
+ * The solver itself takes about 1 ms, so that two seconds is pure address
+ * resolution and it lands on EVERY call — which is fatal for a view that is
+ * supposed to follow a slider. `VITE_BACKEND_API_URL` still overrides this.
+ */
+const API_BASE: string = import.meta.env.VITE_BACKEND_API_URL || 'http://127.0.0.1:8000';
 
 /** The server hands back paths like `/static/models/...`; they are served off
  *  the same origin as the API, which is not the page's origin in dev. */
@@ -60,6 +75,9 @@ interface WirePose {
 interface WirePart {
   name: string;
   part_type: string;
+  /** The frame section, e.g. `"3030"`. Only the solver-only answer and the
+   *  extrusion parts carry it; the tabletop has none. */
+  profile?: string | null;
   material?: string;
   dimensions?: Record<string, number> | null;
   mass_kg?: number | null;
@@ -126,6 +144,9 @@ export interface ShopPose {
 export interface ShopPart {
   name: string;
   partType: string;
+  /** The extrusion's section, e.g. `"3030"`, or `''` for a part without one.
+   *  This is what the schematic box's width and height come from. */
+  profile: string;
   material: string;
   dimensions: Record<string, number> | null;
   massKg: number | null;
@@ -176,6 +197,13 @@ export interface ShopGenerateParams {
   height: number;
   tabletopThickness: number;
   profile: string;
+  /**
+   * Ask the server for the solver's numbers only — the part poses and sizes to
+   * draw with — and for it NOT to start a CAD build. This is the drag path: a
+   * slider passes through dozens of sizes and every ordinary cache miss spawns
+   * a real build123d run. See `useLiveModel`.
+   */
+  solveOnly?: boolean;
 }
 
 // --- the two conversion helpers --------------------------------------------
@@ -184,6 +212,7 @@ function toPart(p: WirePart): ShopPart {
   return {
     name: p.name,
     partType: p.part_type,
+    profile: p.profile ?? '',
     material: p.material ?? '',
     dimensions: p.dimensions ?? null,
     massKg: p.mass_kg ?? null,
@@ -250,6 +279,7 @@ export async function generateShopModel(params: ShopGenerateParams): Promise<Sho
     tabletop_thickness: params.tabletopThickness,
     profile: params.profile,
     stl_quality: 'web',
+    solve_only: params.solveOnly ?? false,
   });
   return {
     modelId: data.model_id,

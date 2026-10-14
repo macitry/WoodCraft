@@ -3,8 +3,9 @@
 
    Two jobs here, and only two:
 
-   1. Place the three bands — a glass header, a bare 3D stage, a glass footer.
-      The middle band is bare ON PURPOSE; see the note on `.shop-main`.
+   1. Place the bands — a glass header, a glass footer, and between them the
+      step on the left and the model on the right. The right-hand column is
+      bare ON PURPOSE; see the note on `.shop-main`.
 
    2. Carry the glass FALLBACK. liquid-glass produces its material maps with a
       WebGPU device, and where there is none the library still renders but every
@@ -107,18 +108,35 @@
 }
 
 /*
- * The stage is BARE. No glass surface may overlap this element.
+ * Two columns: the step, and the model.
  *
- * liquid-glass refracts its own content layer (`GlassContent`) — a surface
- * shows you that layer, displaced, not whatever happens to be painted behind
- * it. Put a glass panel over the canvas and it would show the background
- * gradient through itself while hiding the model, which is the one thing the
- * page is for. So the view sits in a band of its own between the two glass
- * bars, and the view controls live down in the footer rather than floating.
+ * The right-hand column is BARE — no glass surface may overlap it, and nothing
+ * in `.shop-side` is a `GlassSurface`. liquid-glass refracts its own content
+ * layer (`GlassContent`) rather than whatever is painted behind a surface, so a
+ * glass panel over the canvas would show the background gradient through itself
+ * while hiding the model, which is the one thing the page is for. That is why
+ * the model's status badge and hint are plain elements rather than glass chips
+ * like their counterparts in the header and footer.
+ *
+ * `minmax(0, ...)` on both tracks, and `minmax(0, 1fr)` on the row: a grid item
+ * defaults to `min-height: auto`, so without them the left column's content
+ * would push the row taller than the stage and the scroll would never engage.
  */
 .shop-main {
   position: relative;
   flex: 1;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(300px, 0.92fr);
+  grid-template-rows: minmax(0, 1fr);
+  gap: 14px;
+}
+
+/* The left column is a frame, not a scroller. Each step brings its own
+   `.shop-scroll`, which fills this one — so the steps keep working unchanged
+   whether they are the whole stage or half of it. */
+.shop-pane {
+  position: relative;
   min-height: 0;
 }
 
@@ -127,6 +145,23 @@
   inset: 0;
   overflow-y: auto;
   padding: 6px 4px 18px;
+}
+
+/* Below this the two columns stop being side by side and become stacked, model
+   first — a customer on a phone is looking at the picture. */
+@media (max-width: 900px) {
+  .shop-main {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: minmax(200px, 0.85fr) minmax(0, 1fr);
+  }
+
+  .shop-side {
+    grid-row: 1;
+  }
+
+  .shop-pane {
+    grid-row: 2;
+  }
 }
 
 /* --- header -------------------------------------------------------------- */
@@ -444,7 +479,20 @@
   opacity: 0.55;
 }
 
-/* --- step 3: the stage ---------------------------------------------------- */
+/* --- the right-hand column: the model ------------------------------------- */
+
+/*
+ * Everything except `.shop-view` here is absolutely positioned, and that is
+ * deliberate: the badge, the note and the part count all come and go as the
+ * build progresses, and if they were laid out in flow the canvas would change
+ * height every time one appeared. A canvas that resizes mid-drag re-frames its
+ * camera, so the model would jump — and a jump is exactly what the fixed
+ * framing in `ShopViewer.tsx` is there to avoid.
+ */
+.shop-side {
+  position: relative;
+  min-height: 0;
+}
 
 .shop-view {
   position: absolute;
@@ -454,54 +502,122 @@
   background: rgba(0, 0, 0, 0.28);
 }
 
-.shop-view-hint {
+.shop-view-empty,
+.shop-view-error {
   position: absolute;
-  left: 14px;
-  bottom: 12px;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  padding: 28px;
+  font-size: 12.5px;
+  line-height: 1.7;
+  opacity: 0.62;
+}
+
+.shop-view-error {
+  /* Not dimmed to the same degree: it is a fault, not an empty state. */
+  opacity: 0.8;
+  color: #f0c9a8;
+}
+
+.shop-view-hint {
   font-size: 11.5px;
   opacity: 0.5;
   pointer-events: none;
 }
 
-.shop-loading {
+.shop-view-badge {
   position: absolute;
-  inset: 0;
+  left: 14px;
+  top: 12px;
   display: flex;
-  flex-direction: column;
   align-items: center;
-  justify-content: center;
-  gap: 14px;
-  text-align: center;
-  padding: 24px;
-}
-
-.shop-loading-title {
-  font-size: 15px;
-  font-weight: 560;
-}
-
-.shop-loading-note {
-  font-size: 12.5px;
-  opacity: 0.6;
-  max-width: 46ch;
-  line-height: 1.6;
-}
-
-.shop-bar {
-  width: min(320px, 60%);
-  height: 5px;
+  gap: 8px;
+  padding: 5px 11px;
   border-radius: 999px;
-  background: rgba(255, 255, 255, 0.14);
-  overflow: hidden;
+  font-size: 11.5px;
+  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid rgba(255, 255, 255, 0.11);
+  pointer-events: none;
 }
 
-.shop-bar-fill {
-  height: 100%;
-  background: #d4a574;
-  transition: width 400ms ease;
+.shop-view-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: currentColor;
+  opacity: 0.75;
 }
 
-/* --- step 4: the list ----------------------------------------------------- */
+/* One colour per state, so the badge says what kind of picture this is before
+   the words are read. `live` is the stand-in; `ready` is the real model. */
+.shop-view-badge[data-shop-view='live'] { color: #9fc4e8; }
+.shop-view-badge[data-shop-view='building'] { color: #d4a574; }
+.shop-view-badge[data-shop-view='ready'] { color: #9fd8b0; }
+.shop-view-badge[data-shop-view='failed'] { color: #e8a09f; }
+.shop-view-badge[data-shop-view='empty'] { color: rgba(255, 255, 255, 0.6); }
+
+.shop-view-badge[data-shop-view='building'] .shop-view-dot {
+  animation: shop-pulse 1.6s ease-in-out infinite;
+}
+
+@keyframes shop-pulse {
+  0%, 100% { opacity: 0.3; }
+  50% { opacity: 1; }
+}
+
+.shop-view-pct {
+  opacity: 0.7;
+  font-variant-numeric: tabular-nums;
+}
+
+.shop-view-retry {
+  /* The badge is a readout; the one thing in it you can press has to opt back
+     into receiving pointer events. */
+  pointer-events: auto;
+  appearance: none;
+  border: 1px solid currentColor;
+  background: transparent;
+  color: inherit;
+  border-radius: 999px;
+  padding: 2px 9px;
+  font: inherit;
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.shop-view-note {
+  position: absolute;
+  left: 14px;
+  right: 14px;
+  top: 46px;
+  font-size: 11.5px;
+  line-height: 1.6;
+  opacity: 0.55;
+  pointer-events: none;
+}
+
+.shop-view-foot {
+  position: absolute;
+  left: 14px;
+  right: 14px;
+  bottom: 12px;
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  pointer-events: none;
+}
+
+.shop-view-parts {
+  font-size: 11.5px;
+  opacity: 0.5;
+  font-variant-numeric: tabular-nums;
+}
+
+/* --- step 3: the list ----------------------------------------------------- */
 
 .shop-table {
   width: 100%;
