@@ -52,6 +52,8 @@ export const zh = {
     '后端正在按这个尺寸建模，第一次会慢一些。左边可以继续改，改完这里会重新来一次。',
   'shop.view.ready': '精细模型',
   'shop.view.failed': '精细模型没生成出来',
+  'shop.view.failedNote':
+    '后端没能按这个尺寸把模型建出来。换一下尺寸，或者点重试；示意几何还能照常看。',
   'shop.view.retry': '重试',
   'shop.view.stlFailed':
     '这个模型的文件暂时取不到——可能已经被清理掉了。改一下尺寸，或者稍后再试。',
@@ -152,6 +154,8 @@ export const en: Record<ShopKey, string> = {
     'The server is modelling this size now, and the first one takes a while. Carry on changing things on the left — it will start again when you stop.',
   'shop.view.ready': 'Detailed model',
   'shop.view.failed': 'The detailed model did not come out',
+  'shop.view.failedNote':
+    'The server could not build this size. Change a dimension, or try again — the stand-in still works as usual.',
   'shop.view.retry': 'Try again',
   'shop.view.stlFailed':
     'This model\'s files cannot be fetched right now — they may have been cleared away. Change a dimension, or try again later.',

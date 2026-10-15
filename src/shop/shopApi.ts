@@ -204,6 +204,14 @@ export interface ShopGenerateParams {
    * a real build123d run. See `useLiveModel`.
    */
   solveOnly?: boolean;
+  /**
+   * Try again at a size whose build already failed. The server caches a failed
+   * build as `status: "solver_only"`, and its cache-hit path returns that for
+   * ever — so this is the only thing that can clear one. Set it from an explicit
+   * retry, never from the debounced build, or a size that genuinely cannot be
+   * built would be re-attempted on every visit.
+   */
+  retryFailed?: boolean;
 }
 
 // --- the two conversion helpers --------------------------------------------
@@ -280,6 +288,7 @@ export async function generateShopModel(params: ShopGenerateParams): Promise<Sho
     profile: params.profile,
     stl_quality: 'web',
     solve_only: params.solveOnly ?? false,
+    retry_failed: params.retryFailed ?? false,
   });
   return {
     modelId: data.model_id,

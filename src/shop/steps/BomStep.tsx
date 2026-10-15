@@ -30,7 +30,9 @@ const BomStep: React.FC = () => {
   const bomLoading = useShopStore((s) => s.bomLoading);
   const bomFailed = useShopStore((s) => s.bomFailed);
   const building = useShopStore((s) => s.building);
+  const buildFailed = useShopStore((s) => s.buildFailed);
   const retryBom = useShopStore((s) => s.retryBom);
+  const build = useShopStore((s) => s.build);
   const template = useShopStore((s) => s.template);
   const profile = useShopStore((s) => s.profile);
 
@@ -45,6 +47,30 @@ const BomStep: React.FC = () => {
   );
 
   const fileBase = template ? templateName(t, template.id, template.name) : 'WoodCraft';
+
+  // A build that failed is not an empty list, and saying so in the empty list's
+  // words is worse than saying nothing: 「这个模型没有返回零件清单」 blames the
+  // customer's furniture for a server-side failure. This branch has to come
+  // first, and it needs its own retry — `retryBom` fetches a list for a model
+  // that does not exist, so only another build can help.
+  if (buildFailed && !bom) {
+    return (
+      <div className="shop-scroll">
+        <h2 className="shop-h1">{t('shop.bom.title')}</h2>
+        <p className="shop-lead">{t('shop.view.failed')}</p>
+        <p className="shop-table-note">{t('shop.view.failedNote')}</p>
+        <button
+          type="button"
+          className="shop-size"
+          style={{ maxWidth: 160 }}
+          data-shop-nav="build-retry"
+          onClick={() => void build(true)}
+        >
+          <span className="shop-size-cap">{t('shop.view.retry')}</span>
+        </button>
+      </div>
+    );
+  }
 
   if (bomFailed && !bom) {
     return (

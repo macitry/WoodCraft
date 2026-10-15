@@ -257,7 +257,7 @@ const ShopShell: React.FC = () => {
                       type="button"
                       className="shop-view-retry"
                       data-shop-nav="retry"
-                      onClick={() => void build()}
+                      onClick={() => void build(true)}
                     >
                       {t('shop.view.retry')}
                     </button>
@@ -268,6 +268,15 @@ const ShopShell: React.FC = () => {
               {building && (
                 <div className="shop-view-note" data-shop-view-note>
                   {t('shop.view.buildingNote')}
+                </div>
+              )}
+
+              {/* Mutually exclusive with the above — `build()` clears
+                  `buildFailed` when it starts — so the two can share the slot
+                  and the attribute without ever both being on screen. */}
+              {buildFailed && (
+                <div className="shop-view-note" data-shop-view-note>
+                  {t('shop.view.failedNote')}
                 </div>
               )}
 

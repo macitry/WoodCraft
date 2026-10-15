@@ -106,9 +106,12 @@ interface ShopStore {
   back: () => void;
   /** The fast path: ask for the solver's numbers, draw them, start no build. */
   solve: () => Promise<void>;
-  /** The slow path: one real CAD build for the current choices. Also what the
-   *  retry button calls — after a failure `builtKey` is null, so it re-runs. */
-  build: () => Promise<void>;
+  /** The slow path: one real CAD build for the current choices.
+   *
+   *  `retry` is for the retry buttons only, and it is not cosmetic: a failed
+   *  build is cached by the server, so an ordinary ask gets the same failure
+   *  back for ever. Only an ask that says it is a retry can clear one. */
+  build: (retry?: boolean) => Promise<void>;
   retryBom: () => Promise<void>;
 }
 
@@ -254,7 +257,7 @@ export const useShopStore = create<ShopStore>((set, get) => ({
     }
   },
 
-  async build() {
+  async build(retry = false) {
     const { template, values, profile, builtKey } = get();
     if (!template) return;
 
@@ -287,7 +290,11 @@ export const useShopStore = create<ShopStore>((set, get) => ({
     };
 
     try {
-      let model = await generateShopModel(params);
+      // The retry flag goes on THIS ask and no other. On the polls below it
+      // would be a loop: a rebuild that fails again leaves the cache holding a
+      // failure, and the next poll would then override it and start another
+      // build — one doomed build every two seconds until the poll ceiling.
+      let model = await generateShopModel(retry ? { ...params, retryFailed: true } : params);
       if (!alive() || !model) return;
       if (stillWanted()) set({ model });
 
