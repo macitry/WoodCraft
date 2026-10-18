@@ -1,6 +1,7 @@
 import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
 import { applyLangParam } from '../i18n';
+import { setDocumentTitles, SHOP_TITLES } from '../i18n/lang';
 import ShopShell from './ShopShell';
 import '../index.css';
 import '@glass-sdk/liquid-glass/styles.css';
@@ -17,6 +18,10 @@ import './shop.css';
  * from first paint to the last export.
  */
 applyLangParam(window.location.search);
+// `shop.html`'s own title (it is set before paint by the inline script there).
+// Without this the bundle's first import of `lang.ts` would overwrite it with
+// the editor's title, which is a different product in the same tab.
+setDocumentTitles(SHOP_TITLES);
 
 const rootElement = document.getElementById('root');
 if (!rootElement) {

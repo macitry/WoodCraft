@@ -214,6 +214,7 @@ const BomStep: React.FC = () => {
       <h2 className="shop-h1">{t('shop.bom.title')}</h2>
       <p className="shop-lead">{t('shop.bom.lead')}</p>
 
+      <div className="shop-table-wrap">
       <table className="shop-table">
         <thead>
           <tr>
@@ -254,6 +255,7 @@ const BomStep: React.FC = () => {
           })}
         </tbody>
       </table>
+      </div>
 
       <p className="shop-table-note" data-shop-bom-total>
         {t('shop.bom.massTotal')} {massTotal.toFixed(3)} kg · {t('shop.bom.priceTotal')} 0.00
@@ -263,9 +265,8 @@ const BomStep: React.FC = () => {
       <div className="shop-exports">
         <button
           type="button"
-          className="shop-size"
+          className="shop-size shop-export"
           data-shop-export="xlsx"
-          style={{ maxWidth: 200 }}
           onClick={() =>
             downloadFile(
               `${fileBase} BOM.xlsx`,
@@ -278,9 +279,8 @@ const BomStep: React.FC = () => {
         </button>
         <button
           type="button"
-          className="shop-size"
+          className="shop-size shop-export"
           data-shop-export="csv"
-          style={{ maxWidth: 200 }}
           onClick={() =>
             // No BOM (byte-order mark) in front: the file is UTF-8 and both the
             // CSV and the workbook come out of the same row set, so the two are
@@ -292,9 +292,8 @@ const BomStep: React.FC = () => {
         </button>
         <button
           type="button"
-          className="shop-size"
+          className="shop-size shop-export"
           data-shop-export="png"
-          style={{ maxWidth: 200 }}
           onClick={exportImage}
         >
           <span className="shop-size-cap">{t('shop.bom.export.png')}</span>

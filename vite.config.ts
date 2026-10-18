@@ -18,17 +18,19 @@ export default defineConfig({
   },
   build: {
     rollupOptions: {
-      // Two entry points, deliberately. The customer page (`shop.html`) is the
-      // one thing here that is not for the people who use the professional
-      // editor, and an entry point is the only boundary that holds without
-      // anyone having to remember it: `/diy` and `/kits` are reachable by
-      // typing a URL, whereas a second HTML entry is a separate chunk graph
-      // that never imports them, so their code is not sent to a customer at
-      // all. Vite serves both in dev without this block; it is `build` that
-      // needs telling, or only `index.html` would be emitted.
+      // Three entry points, deliberately. `shop.html` is the customer wizard
+      // and `cover.html` is the page the product is shown to the outside
+      // world; neither is for the people who use the professional editor. An
+      // entry point is the only boundary that holds without anyone having to
+      // remember it: `/diy` and `/kits` are reachable by typing a URL, whereas
+      // a second HTML entry is a separate chunk graph that never imports them,
+      // so their code is not sent to a visitor at all. Vite serves every entry
+      // in dev without this block; it is `build` that needs telling, or only
+      // `index.html` would be emitted.
       input: {
         main: 'index.html',
         shop: 'shop.html',
+        cover: 'cover.html',
       },
     },
   },

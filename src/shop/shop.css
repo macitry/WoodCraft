@@ -36,6 +36,11 @@
 .shop-bg {
   position: absolute;
   inset: 0;
+  /* The art below bleeds 8% past every edge so the refraction has something to
+     bend at the rim. Clip that bleed here: outside the viewport it is invisible
+     anyway, and unclipped it reports as 31 px of phantom page width on a phone —
+     enough for mobile Chrome to widen the layout viewport and rescale the page. */
+  overflow: hidden;
 }
 
 /*
@@ -144,15 +149,27 @@
   position: absolute;
   inset: 0;
   overflow-y: auto;
+  overscroll-behavior: contain;
   padding: 6px 4px 18px;
 }
 
 /* Below this the two columns stop being side by side and become stacked, model
-   first — a customer on a phone is looking at the picture. */
+   first — a customer on a phone is looking at the picture. The model's row gets
+   a real floor: a pane squeezed to 120 px shows a desk but cannot show its size
+   change, which is the reason it is on screen during the drag at all. */
 @media (max-width: 900px) {
+  .shop-stage {
+    padding:
+      max(12px, env(safe-area-inset-top))
+      max(12px, env(safe-area-inset-right))
+      max(12px, env(safe-area-inset-bottom))
+      max(12px, env(safe-area-inset-left));
+    gap: 10px;
+  }
+
   .shop-main {
     grid-template-columns: minmax(0, 1fr);
-    grid-template-rows: minmax(200px, 0.85fr) minmax(0, 1fr);
+    grid-template-rows: minmax(190px, 0.7fr) minmax(0, 1fr);
   }
 
   .shop-side {
@@ -161,6 +178,26 @@
 
   .shop-pane {
     grid-row: 2;
+  }
+}
+
+/* A phone held sideways has more width than height. Stacking there would leave
+   the picture and the step about 180 px each, so this keeps the two columns —
+   the narrow one is the picture, and it is still the larger of the two. */
+@media (max-width: 900px) and (orientation: landscape) and (max-height: 520px) {
+  .shop-main {
+    grid-template-columns: minmax(0, 1.1fr) minmax(240px, 0.9fr);
+    grid-template-rows: minmax(0, 1fr);
+  }
+
+  .shop-side {
+    grid-row: 1;
+    grid-column: 2;
+  }
+
+  .shop-pane {
+    grid-row: 1;
+    grid-column: 1;
   }
 }
 
@@ -646,6 +683,15 @@
 
 /* --- step 3: the list ----------------------------------------------------- */
 
+/* The list is nine columns. On a phone it is wider than the pane, and the step
+   has to keep scrolling vertically — so it scrolls SIDEWAYS in this box rather
+   than making the whole step pan. */
+.shop-table-wrap {
+  overflow-x: auto;
+  overscroll-behavior-x: contain;
+  -webkit-overflow-scrolling: touch;
+}
+
 .shop-table {
   width: 100%;
   border-collapse: collapse;
@@ -694,10 +740,196 @@
   flex-wrap: wrap;
 }
 
+.shop-export {
+  max-width: 200px;
+}
+
 .shop-empty {
   padding: 40px 4px;
   font-size: 13.5px;
   opacity: 0.6;
+}
+
+/* --- phones --------------------------------------------------------------- */
+
+/*
+ * At 390 px the header's three groups cannot share a row (the step strip alone
+ * is about 300 px), the footer's four chips cannot either, and the list is nine
+ * columns wide. So: the header becomes two rows, the footer stacks its summary
+ * above full-width nav buttons, the four boards go two-by-two, and the export
+ * buttons take a line each — the controls a thumb has to hit get bigger, not
+ * smaller, and nothing pokes out of the viewport.
+ *
+ * The shell stays what it is, a fixed stage with the step scrolling inside it.
+ * Growing the page instead would put the model off screen the moment a thumb
+ * reaches a slider, which is the one thing this page is arranged to avoid.
+ */
+@media (max-width: 640px) {
+  .shop-stage {
+    padding:
+      max(8px, env(safe-area-inset-top))
+      max(8px, env(safe-area-inset-right))
+      max(8px, env(safe-area-inset-bottom))
+      max(8px, env(safe-area-inset-left));
+    gap: 8px;
+  }
+
+  .shop-head {
+    flex-wrap: wrap;
+    row-gap: 6px;
+    padding: 4px 2px;
+  }
+
+  .shop-brand {
+    order: 1;
+    padding: 6px 12px;
+  }
+
+  /* The tagline is the first thing to go: at this width it costs a whole row
+     of the header and says nothing the cards do not. */
+  .shop-brand-tag {
+    display: none;
+  }
+
+  .shop-head-right {
+    order: 2;
+    margin-left: auto;
+  }
+
+  .shop-head [data-shop-step-label] {
+    display: none;
+  }
+
+  .shop-steps {
+    order: 3;
+    flex: 1 0 100%;
+    padding: 4px;
+  }
+
+  .shop-steps .shop-step {
+    flex: 1;
+    justify-content: center;
+    gap: 6px;
+    min-height: 38px;
+    padding: 7px 4px;
+    font-size: 12.5px;
+  }
+
+  .shop-foot {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 8px;
+    padding: 4px 2px;
+  }
+
+  .shop-foot-note {
+    order: 1;
+    flex: none;
+    flex-wrap: wrap;
+    overflow: visible;
+    gap: 6px 14px;
+    padding: 8px 12px;
+    font-size: 11.5px;
+  }
+
+  .shop-foot .shop-head-right {
+    order: 2;
+    width: 100%;
+    gap: 8px;
+  }
+
+  .shop-foot .shop-head-right .shop-step {
+    flex: 1;
+    justify-content: center;
+    padding: 10px 12px;
+  }
+
+  .shop-main {
+    gap: 8px;
+  }
+
+  .shop-h1 {
+    font-size: 20px;
+  }
+
+  .shop-lead {
+    margin-bottom: 16px;
+    font-size: 12.5px;
+  }
+
+  .shop-cards {
+    gap: 10px;
+  }
+
+  .shop-card {
+    gap: 8px;
+    padding: 12px;
+  }
+
+  .shop-card-art {
+    height: 74px;
+  }
+
+  .shop-fields {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 12px;
+  }
+
+  .shop-field {
+    padding: 12px 14px 10px;
+  }
+
+  .shop-board {
+    flex: 1 1 calc(50% - 6px);
+  }
+
+  .shop-table {
+    min-width: 620px;
+  }
+
+  .shop-export {
+    max-width: none;
+    flex: 1 1 100%;
+  }
+
+  .shop-view-badge {
+    left: 10px;
+    top: 8px;
+  }
+
+  .shop-view-note {
+    left: 10px;
+    right: 10px;
+    top: 40px;
+  }
+
+  .shop-view-foot {
+    left: 10px;
+    right: 10px;
+    bottom: 8px;
+  }
+}
+
+/* The shortest phones (320×568 and similar) cannot give both rows 190 px. The
+   model gives way rather than the step: a 150 px picture still shows the size
+   changing, while a 121 px step is one line of text and a scrollbar. */
+@media (max-width: 640px) and (max-height: 620px) {
+  .shop-main {
+    grid-template-rows: minmax(150px, 0.6fr) minmax(0, 1fr);
+  }
+
+  /* One scrollable row of chips instead of two wrapped ones: on this screen
+     every 26 px taken by the summary is 26 px the step does not get. */
+  .shop-foot-note {
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    overflow-y: hidden;
+    scrollbar-width: none;
+  }
+
+  .shop-foot-note::-webkit-scrollbar {
+    display: none;
+  }
 }
 
 /* --- the fallback --------------------------------------------------------- */

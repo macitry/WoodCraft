@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="theme-color" content="#0c0b0d" />
+    <meta name="description" content="WoodCraft — parametric furniture in aluminium and solid wood, sized to the millimetre." />
+    <meta property="og:type" content="website" />
+    <meta property="og:title" content="WoodCraft — Furniture, made to measure" />
+    <meta property="og:description" content="An aluminium frame, a solid-wood top, and a parts list you can take to the workshop. Three steps from idea to drawing." />
+    <title>WoodCraft — Furniture, made to measure</title>
+    <script>
+      /*
+       * Language before first paint — the same block as `index.html` and
+       * `shop.html`, with this entry point's own two titles and descriptions.
+       *
+       * It cannot import `detect()` in src/i18n/lang.ts: it runs before any
+       * bundle exists. Keep the storage key, the browser test and the shape of
+       * the strings in step with that file by hand.
+       */
+      (function () {
+        var TITLES = {
+          zh: 'WoodCraft — 按毫米定制的家具',
+          en: 'WoodCraft — Furniture, made to measure',
+        };
+        var DESCRIPTIONS = {
+          zh: '铝型材的骨架，实木的桌面。选款式、定规格、导出可直接下料的零件清单——从想法到图纸，三步。',
+          en: 'An aluminium frame under a solid-wood top. Choose a piece, set its dimensions, and export a parts list you can take straight to the workshop — three steps from idea to drawing.',
+        };
+        var lang = 'en';
+        try {
+          var saved = localStorage.getItem('woodcraft.lang');
+          if (saved === 'zh' || saved === 'en') lang = saved;
+          else if ((navigator.language || '').toLowerCase().indexOf('zh') === 0) lang = 'zh';
+        } catch (e) {
+          /* Storage blocked — fall back to English rather than failing to render. */
+        }
+        document.documentElement.lang = lang === 'zh' ? 'zh-CN' : 'en';
+        document.title = TITLES[lang];
+        var meta = document.querySelector('meta[name="description"]');
+        if (meta) meta.setAttribute('content', DESCRIPTIONS[lang]);
+      })();
+    </script>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/cover/main.tsx"></script>
+  </body>
+</html>

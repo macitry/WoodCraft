@@ -129,6 +129,15 @@ const ShopShell: React.FC = () => {
     [],
   );
 
+  // Touch has no wheel and no right button, so the desktop hint ("scroll to
+  // zoom, right-drag to pan") would be instructing a thumb to do two things it
+  // cannot. `pointer: coarse` is the platform's own answer and is read once —
+  // the input device does not change mid-visit in any way worth re-rendering.
+  const coarse = useMemo(
+    () => typeof window !== 'undefined' && window.matchMedia('(pointer: coarse)').matches,
+    [],
+  );
+
   const at = SHOP_STEPS.indexOf(step);
   // Everything past the catalogue needs a piece of furniture and nothing else —
   // same rule as `goTo`, which enforces it again. The list used to be blocked on
@@ -296,7 +305,9 @@ const ShopShell: React.FC = () => {
 
               {model && model.parts.length > 0 && (
                 <div className="shop-view-foot">
-                  <span className="shop-view-hint">{t('shop.view.hint')}</span>
+                  <span className="shop-view-hint">
+                    {t(coarse ? 'shop.view.hintTouch' : 'shop.view.hint')}
+                  </span>
                   <span className="shop-view-parts" data-shop-view-parts>
                     {t('shop.view.parts', { n: model.parts.length })}
                   </span>

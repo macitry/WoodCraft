@@ -56,11 +56,48 @@ let current: Lang = detect();
  *  via `useT()` instead, or a flip will not re-render it. */
 export const getLang = (): Lang => current;
 
-/** Tab titles, per language. The brand is the same word in both. */
+/** Tab titles, per language. The brand is the same word in both.
+ *
+ *  These are the EDITOR's titles, the default for this bundle. `shop.html` and
+ *  `cover.html` are different products on the same computer and say so in the
+ *  tab; an entry point overrides these through `setDocumentTitles` before its
+ *  first render. Without the override, every page's title would silently snap
+ *  back to the editor's the moment the bundle read this module. */
 const TITLES: Record<Lang, string> = {
   zh: 'WoodCraft — 参数化家具设计器',
   en: 'WoodCraft — Parametric Furniture Designer',
 };
+
+/** The customer page's tab titles, kept here because a component is not
+ *  allowed to hold CJK (see scripts/check-i18n.mjs) and `main.tsx` is one.
+ *  They mirror the inline scripts in shop.html and cover.html. */
+export const SHOP_TITLES: Record<Lang, string> = {
+  zh: 'WoodCraft — 定制你的家具',
+  en: 'WoodCraft — Build Your Furniture',
+};
+
+/** The cover site's tab titles; same reasoning as SHOP_TITLES. */
+export const COVER_TITLES: Record<Lang, string> = {
+  zh: 'WoodCraft — 按毫米定制的家具',
+  en: 'WoodCraft — Furniture, made to measure',
+};
+
+let titles: Record<Lang, string> = TITLES;
+
+/**
+ * Point the tab title at another entry point's two strings.
+ *
+ * Called once by `shop.html` and `cover.html` from their own `main.tsx`. The
+ * document `lang` keeps following the language store as usual; only the title
+ * is replaced, and it is replaced for every future flip as well, so the
+ * override does not have to be re-applied in a React effect on every change.
+ *
+ * Passing `null` restores the editor's titles.
+ */
+export function setDocumentTitles(next: Record<Lang, string> | null): void {
+  titles = next ?? TITLES;
+  applyDocumentLang();
+}
 
 /**
  * Everything about the document that is not a React node but still has to
@@ -77,7 +114,7 @@ const TITLES: Record<Lang, string> = {
 function applyDocumentLang(): void {
   if (typeof document === 'undefined') return;
   document.documentElement.lang = current === 'zh' ? 'zh-CN' : 'en';
-  document.title = TITLES[current];
+  document.title = titles[current];
 }
 
 applyDocumentLang();

@@ -66,6 +66,7 @@ export const zh = {
   'shop.view.stlFailed':
     '这个模型的文件暂时取不到——可能已经被清理掉了。改一下尺寸，或者稍后再试。',
   'shop.view.hint': '拖动旋转 · 滚轮缩放 · 右键平移',
+  'shop.view.hintTouch': '单指旋转 · 双指缩放 · 双指拖动平移',
   'shop.view.parts': '{n} 个零件',
 
   // --- step 3: the list ---------------------------------------------------
@@ -190,6 +191,7 @@ export const en: Record<ShopKey, string> = {
   'shop.view.stlFailed':
     'This model\'s files cannot be fetched right now — they may have been cleared away. Change a dimension, or try again later.',
   'shop.view.hint': 'Drag to rotate · scroll to zoom · right-drag to pan',
+  'shop.view.hintTouch': 'Drag to rotate · pinch to zoom · two-finger drag to pan',
   'shop.view.parts': '{n} parts',
 
   'shop.bom.title': 'The list',

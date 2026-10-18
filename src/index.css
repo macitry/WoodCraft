@@ -36,4 +36,8 @@ body {
 #root {
   width: 100vw;
   height: 100vh;
+  /* Phones measure `vh` against the layout viewport *including* the address
+     bar, so a 100vh shell hangs below the visible page until the bar retracts.
+     `dvh` is the visible height; browsers without it keep the line above. */
+  height: 100dvh;
 }
