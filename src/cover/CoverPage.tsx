@@ -1,6 +1,6 @@
-import { useEffect, useRef, useState, type CSSProperties, type ReactNode } from 'react';
+import { useEffect, useRef, useState, type CSSProperties } from 'react';
 import LangToggle from '../components/LangToggle';
-import { useT } from '../i18n';
+import { useLang, useT, type Translate } from '../i18n';
 import type { DictKey } from '../i18n/dict';
 import { textureLabel, textureNote } from '../i18n/names';
 import { boardById } from '../materials/boardRegistry';
@@ -9,44 +9,89 @@ import HeroDesk from './HeroDesk';
 /**
  * The cover site.
  *
- * One scrolling page, four ideas, two doors: the customer wizard and the
- * professional editor. It is a separate HTML entry (see vite.config.ts) and
- * imports neither the editor's router nor the shop's store, so a visitor who
- * only came to look does not download either.
+ * One scrolling page: the desk, the reason, the parts list, how it is made,
+ * what it is made of, one door. It is a separate HTML entry (see
+ * vite.config.ts) and imports neither the editor's router nor the shop's
+ * store, so a visitor who only came to look does not download either.
  *
  * The design language is the one the rest of the product already uses — dark
  * ground, warm wood, aluminium grey — but pushed editorial: a serif accent in
  * English, a technical grid, mono labels, and real parts as the imagery. The
  * only 3D on the page is a desk built locally in `HeroDesk`; nothing here
  * waits on the backend.
+ *
+ * The width control is the page's one interaction, and it is deliberately the
+ * same number in three places: the hero desk, the mass readout, and the sample
+ * list below. Seeing them move together is the product demonstration; the copy
+ * around them only has to stay out of the way.
  */
 
 const LINKS: { id: string; key: DictKey }[] = [
-  { id: 'idea', key: 'cover.nav.idea' },
+  { id: 'delivery', key: 'cover.nav.delivery' },
   { id: 'process', key: 'cover.nav.process' },
   { id: 'materials', key: 'cover.nav.materials' },
-  { id: 'delivery', key: 'cover.nav.delivery' },
 ];
 
 const STEPS = [
-  { title: 'cover.process.s1.title', body: 'cover.process.s1.body', tag: 'cover.process.s1.tag' },
-  { title: 'cover.process.s2.title', body: 'cover.process.s2.body', tag: 'cover.process.s2.tag' },
-  { title: 'cover.process.s3.title', body: 'cover.process.s3.body', tag: 'cover.process.s3.tag' },
-] as const;
-
-const FEATURES = [
-  { title: 'cover.delivery.f1.title', body: 'cover.delivery.f1.body' },
-  { title: 'cover.delivery.f2.title', body: 'cover.delivery.f2.body' },
-  { title: 'cover.delivery.f3.title', body: 'cover.delivery.f3.body' },
+  { title: 'cover.process.s1.title', body: 'cover.process.s1.body' },
+  { title: 'cover.process.s2.title', body: 'cover.process.s2.body' },
+  { title: 'cover.process.s3.title', body: 'cover.process.s3.body' },
 ] as const;
 
 const BOARD_IDS = ['oak', 'walnut', 'plank', 'ply'] as const;
 
-const PROFILE_SECTIONS = [
-  { code: '2020', mm: 20, glyph: 30 },
-  { code: '3030', mm: 30, glyph: 43 },
-  { code: '4040', mm: 40, glyph: 56 },
-];
+const SAMPLE_WIDTHS = [1200, 1500, 1800] as const;
+type SampleWidth = (typeof SAMPLE_WIDTHS)[number];
+
+interface SampleConfig {
+  width: SampleWidth;
+  /** Solver totals, in kg, for the default basic-desk at 600 deep × 750 high,
+   *  18 mm top, 3030 frame. Mass is linear in extrusion length, so these three
+   *  points are the whole curve the control can reach. */
+  total: number;
+  tabletop: number;
+  legs: number;
+  rails: number;
+  sideRails: number;
+  railLength: number;
+}
+
+/**
+ * Real `/api/models/{id}/bom` output, grouped by identical part. The legs share
+ * one length (732 mm) at every width; the side rails stay 540 mm; only the
+ * tabletop and the two long rails grow with the width. Bracket and fastener
+ * rows are absent because the current solver does not put them in the BOM —
+ * this sheet only shows what a download would actually contain.
+ */
+const SAMPLE_CONFIGS: Record<SampleWidth, SampleConfig> = {
+  1200: {
+    width: 1200,
+    total: 14.364,
+    tabletop: 9.072,
+    legs: 2.464,
+    rails: 1.919,
+    sideRails: 0.909,
+    railLength: 1140,
+  },
+  1500: {
+    width: 1500,
+    total: 17.137,
+    tabletop: 11.34,
+    legs: 2.464,
+    rails: 2.424,
+    sideRails: 0.909,
+    railLength: 1440,
+  },
+  1800: {
+    width: 1800,
+    total: 19.91,
+    tabletop: 13.608,
+    legs: 2.464,
+    rails: 2.929,
+    sideRails: 0.909,
+    railLength: 1740,
+  },
+};
 
 const Arrow: React.FC = () => (
   <svg className="arrow" viewBox="0 0 16 16" aria-hidden="true">
@@ -88,27 +133,6 @@ const StepIcon: React.FC<{ kind: 'choose' | 'size' | 'list' }> = ({ kind }) => {
   );
 };
 
-const ProfileGlyph: React.FC<{ width: number }> = ({ width }) => (
-  <svg
-    className="metal-glyph"
-    viewBox="0 0 48 48"
-    width={width}
-    height={width}
-    aria-hidden="true"
-  >
-    <rect x="4" y="4" width="40" height="40" />
-    <rect x="11" y="11" width="26" height="26" />
-    <path d="M4 18h7v12H4M44 18h-7v12h7M18 4v7h12V4M18 44v-7h12v7" />
-  </svg>
-);
-
-const SectionIndex: React.FC<{ n: string; children: ReactNode }> = ({ n, children }) => (
-  <div className="section-index" data-reveal>
-    <span className="section-num">{n}</span>
-    <span className="section-label">{children}</span>
-  </div>
-);
-
 /**
  * Marks every `[data-reveal]` on screen as seen, once. Kept as a DOM query
  * rather than a per-component hook because the page has dozens of them and a
@@ -138,24 +162,54 @@ function useReveal(): void {
   }, []);
 }
 
-/** The sample sheet's six rows. `——` is used for a value the part does not
+/** The sheet's four grouped rows. `—` is used for a value the part does not
  *  have (a tabletop has no extrusion length), not for missing data. */
-function useSampleRows(): string[][] {
-  const t = useT();
-  const oak = textureLabel(boardById('oak'));
+function sampleRows(t: Translate, oak: string, config: SampleConfig): string[][] {
+  const kg = (n: number): string => `${n.toFixed(3)} kg`;
   return [
-    [t('shop.part.tabletop'), t('shop.partType.tabletop'), oak, '1200 × 600 × 18', '—', '1', '9.072 kg'],
-    [t('cover.sample.legs'), t('shop.partType.leg'), t('cover.sample.mat.alu'), '3030', '732', '4', '2.584 kg'],
-    [t('cover.sample.rails'), t('shop.partType.beam'), t('cover.sample.mat.alu'), '3030', '1140', '2', '2.052 kg'],
-    [t('cover.sample.sideRails'), t('shop.partType.beam'), t('cover.sample.mat.alu'), '3030', '540', '2', '0.972 kg'],
-    [t('shop.partType.bracket'), t('shop.partType.bracket'), t('cover.sample.mat.diecast'), '3030', '—', '8', '0.288 kg'],
-    [t('shop.partType.hardware'), t('shop.partType.hardware'), t('cover.sample.mat.steel'), 'M8 × 20', '—', '16', '0.296 kg'],
+    [
+      t('shop.part.tabletop'),
+      t('shop.partType.tabletop'),
+      oak,
+      `${config.width} × 600 × 18`,
+      '—',
+      '1',
+      kg(config.tabletop),
+    ],
+    [
+      t('cover.sample.legs'),
+      t('shop.partType.leg'),
+      t('cover.sample.mat.alu'),
+      '3030',
+      '732',
+      '4',
+      kg(config.legs),
+    ],
+    [
+      t('cover.sample.rails'),
+      t('shop.partType.beam'),
+      t('cover.sample.mat.alu'),
+      '3030',
+      String(config.railLength),
+      '2',
+      kg(config.rails),
+    ],
+    [
+      t('cover.sample.sideRails'),
+      t('shop.partType.beam'),
+      t('cover.sample.mat.alu'),
+      '3030',
+      '540',
+      '2',
+      kg(config.sideRails),
+    ],
   ];
 }
 
-const SampleSheet: React.FC = () => {
+const SampleSheet: React.FC<{ config: SampleConfig }> = ({ config }) => {
   const t = useT();
-  const rows = useSampleRows();
+  const lang = useLang();
+  const rows = sampleRows(t, textureLabel(boardById('oak')), config);
   const heads: { key: DictKey; cls: string }[] = [
     { key: 'shop.bom.col.name', cls: 'sheet-name' },
     { key: 'shop.bom.col.type', cls: 'sheet-type' },
@@ -165,12 +219,17 @@ const SampleSheet: React.FC = () => {
     { key: 'shop.bom.col.qty', cls: 'sheet-qty' },
     { key: 'shop.bom.col.mass', cls: 'sheet-mass' },
   ];
+  // These files are generated from the same three solver BOMs the table shows,
+  // one pair per width and language, and ship in public/samples. They are real
+  // downloads, not a badge that looks like one.
+  const base = `/samples/woodcraft-bom-${config.width}-${lang}`;
+  const file = `WoodCraft-BOM-${config.width}-${lang}`;
 
   return (
     <aside className="sheet" data-reveal>
       <div className="sheet-head">
         <span className="sheet-tag">{t('cover.sample.label')}</span>
-        <span className="sheet-spec-line">{t('cover.sample.spec')}</span>
+        <span className="sheet-spec-line">{t('cover.sample.spec', { w: config.width })}</span>
       </div>
 
       <div className="sheet-table" role="table" aria-label={t('cover.sample.label')}>
@@ -199,13 +258,16 @@ const SampleSheet: React.FC = () => {
 
       <div className="sheet-foot">
         <span className="sheet-total">
-          {t('cover.sample.total')} <strong>15.264 kg</strong>
+          {t('cover.sample.total')} <strong>{config.total.toFixed(3)} kg</strong>
         </span>
         <span className="sheet-export">
           {t('cover.sample.export')}
-          <b>XLSX</b>
-          <b>CSV</b>
-          <b>PNG</b>
+          <a href={`${base}.xlsx`} download={`${file}.xlsx`}>
+            XLSX
+          </a>
+          <a href={`${base}.csv`} download={`${file}.csv`}>
+            CSV
+          </a>
         </span>
       </div>
       <p className="sheet-note">{t('cover.sample.note')}</p>
@@ -217,9 +279,15 @@ const CoverPage: React.FC = () => {
   const t = useT();
   const [solid, setSolid] = useState(false);
   const [menu, setMenu] = useState(false);
+  // 1500 is the middle of the three stops, so the first frame has room to
+  // read as either a smaller or a larger desk when the visitor reaches for the
+  // control. It is also the desk the hero and the sheet both describe.
+  const [width, setWidth] = useState<SampleWidth>(1500);
   const closeRef = useRef<HTMLButtonElement>(null);
   const menuBtnRef = useRef<HTMLButtonElement>(null);
   useReveal();
+
+  const config = SAMPLE_CONFIGS[width];
 
   useEffect(() => {
     const onScroll = () => setSolid(window.scrollY > 28);
@@ -304,9 +372,8 @@ const CoverPage: React.FC = () => {
             </button>
           </div>
           <nav className="menu-links">
-            {LINKS.map((l, i) => (
+            {LINKS.map((l) => (
               <a key={l.id} href={`#${l.id}`} onClick={() => setMenu(false)}>
-                <span className="menu-num">0{i + 1}</span>
                 {t(l.key)}
               </a>
             ))}
@@ -314,10 +381,6 @@ const CoverPage: React.FC = () => {
           <div className="menu-foot">
             <a className="btn btn--primary" href="shop.html" onClick={() => setMenu(false)}>
               {t('cover.nav.start')}
-              <Arrow />
-            </a>
-            <a className="menu-editor" href="index.html" onClick={() => setMenu(false)}>
-              {t('cover.nav.editor')}
               <Arrow />
             </a>
           </div>
@@ -343,31 +406,39 @@ const CoverPage: React.FC = () => {
                 {t('cover.nav.start')}
                 <Arrow />
               </a>
-              <a className="btn btn--text" href="index.html">
-                {t('cover.nav.editor')}
-                <Arrow />
-              </a>
             </div>
-            <div className="hero-stats" data-reveal style={delay(310)}>
-              <span>
-                <b>4</b>
-                {t('cover.hero.stat.pieces')}
-              </span>
-              <span>
-                <b>3</b>
-                {t('cover.hero.stat.sections')}
-              </span>
-              <span>
-                <b>3</b>
-                {t('cover.hero.stat.steps')}
-              </span>
+
+            <div className="hero-width" data-reveal style={delay(310)}>
+              <div className="hero-width-head">
+                <span className="hero-width-label">{t('cover.hero.width')}</span>
+                <span className="hero-width-unit">mm</span>
+              </div>
+              <div className="hero-width-row">
+                <div className="hero-width-stops" role="group" aria-label={t('cover.hero.width')}>
+                  {SAMPLE_WIDTHS.map((w) => (
+                    <button
+                      key={w}
+                      type="button"
+                      className="hero-width-stop"
+                      aria-pressed={width === w}
+                      onClick={() => setWidth(w)}
+                    >
+                      {w}
+                    </button>
+                  ))}
+                </div>
+                <span className="hero-width-mass">
+                  <b>{config.total.toFixed(3)}</b> kg
+                </span>
+              </div>
+              <p className="hero-width-hint">{t('cover.hero.widthHint')}</p>
             </div>
           </div>
 
           <div className="hero-stage">
             <div className="hero-grid" aria-hidden="true" />
             <div className="hero-aura" aria-hidden="true" />
-            <HeroDesk />
+            <HeroDesk widthMm={width} />
             <span className="hero-annot hero-annot--a" aria-hidden="true">
               <i />
               {t('cover.hero.note1')}
@@ -376,51 +447,49 @@ const CoverPage: React.FC = () => {
               <i />
               {t('cover.hero.note2')}
             </span>
-            <span className="hero-side" aria-hidden="true">
-              PARAMETRIC FURNITURE — 2026
-            </span>
           </div>
 
-          <a className="hero-scroll" href="#idea">
+          <a className="hero-scroll" href="#manifesto">
             <span>{t('cover.hero.scroll')}</span>
             <i />
           </a>
         </section>
 
-        <div className="cover-ticker" aria-hidden="true">
-          <div className="cover-ticker-track">
-            {[0, 1].map((i) => (
-              <span className="cover-ticker-run" key={i}>
-                ALUMINIUM 6063 <i>·</i> OAK <i>·</i> WALNUT <i>·</i> PLYWOOD <i>·</i> 1200 × 600 ×
-                750 <i>·</i> PARAMETRIC <i>·</i> MADE TO MEASURE <i>·</i>&nbsp;
-              </span>
-            ))}
-          </div>
-        </div>
+        <section id="manifesto" className="manifesto" aria-labelledby="manifesto-title">
+          <h2 id="manifesto-title" className="manifesto-line" data-reveal>
+            <span>
+              <span>{t('cover.idea.line1a')}</span>
+              <span className="manifesto-break">{t('cover.idea.line1b')}</span>
+            </span>
+            <span className="soft">{t('cover.idea.line2')}</span>
+          </h2>
+        </section>
 
-        <section id="idea" className="section section--idea" aria-labelledby="idea-title">
+        <section id="delivery" className="section" aria-labelledby="delivery-title">
           <div className="section-head">
-            <SectionIndex n="01">{t('cover.idea.eyebrow')}</SectionIndex>
+            <p className="section-label" data-reveal>
+              {t('cover.delivery.eyebrow')}
+            </p>
             <div className="section-body">
-              <h2 id="idea-title" className="section-title" data-reveal>
-                {t('cover.idea.line1')}
+              <h2 id="delivery-title" className="section-title section-title--wide" data-reveal>
+                {t('cover.delivery.title1')}
                 <br />
-                <span className="soft">{t('cover.idea.line2')}</span>
+                <span className="soft">{t('cover.delivery.title2')}</span>
               </h2>
               <p className="lede" data-reveal style={delay(90)}>
-                {t('cover.idea.body')}
-              </p>
-              <p className="idea-note" data-reveal style={delay(160)}>
-                <span className="rule" />
-                {t('cover.idea.note')}
+                {t('cover.delivery.body')}
               </p>
             </div>
           </div>
+
+          <SampleSheet config={config} />
         </section>
 
         <section id="process" className="section" aria-labelledby="process-title">
           <div className="section-head section-head--row">
-            <SectionIndex n="02">{t('cover.process.eyebrow')}</SectionIndex>
+            <p className="section-label" data-reveal>
+              {t('cover.process.eyebrow')}
+            </p>
             <h2 id="process-title" className="section-title section-title--wide" data-reveal>
               {t('cover.process.title')}
             </h2>
@@ -435,7 +504,6 @@ const CoverPage: React.FC = () => {
                 </div>
                 <h3>{t(step.title)}</h3>
                 <p>{t(step.body)}</p>
-                <span className="process-tag">{t(step.tag)}</span>
               </li>
             ))}
           </ol>
@@ -443,7 +511,9 @@ const CoverPage: React.FC = () => {
 
         <section id="materials" className="section" aria-labelledby="materials-title">
           <div className="section-head">
-            <SectionIndex n="03">{t('cover.materials.eyebrow')}</SectionIndex>
+            <p className="section-label" data-reveal>
+              {t('cover.materials.eyebrow')}
+            </p>
             <div className="section-body">
               <h2 id="materials-title" className="section-title section-title--wide" data-reveal>
                 {t('cover.materials.title')}
@@ -470,60 +540,9 @@ const CoverPage: React.FC = () => {
               );
             })}
           </div>
-
-          <div className="metal-band" data-reveal>
-            <div className="metal-copy">
-              <h3>{t('cover.metal.title')}</h3>
-              <p>{t('cover.metal.body')}</p>
-            </div>
-            <div className="metal-sections">
-              {PROFILE_SECTIONS.map((p) => (
-                <div className="metal-item" key={p.code}>
-                  <ProfileGlyph width={p.glyph} />
-                  <span className="metal-code">{p.code}</span>
-                  <span className="metal-sub">{t('cover.metal.section', { n: p.mm })}</span>
-                </div>
-              ))}
-            </div>
-          </div>
-        </section>
-
-        <section id="delivery" className="section" aria-labelledby="delivery-title">
-          <div className="section-head section-head--row">
-            <SectionIndex n="04">{t('cover.delivery.eyebrow')}</SectionIndex>
-            <h2 id="delivery-title" className="section-title section-title--wide" data-reveal>
-              {t('cover.delivery.title1')}
-              <br />
-              <span className="soft">{t('cover.delivery.title2')}</span>
-            </h2>
-          </div>
-
-          <div className="delivery-grid">
-            <div className="delivery-copy">
-              <p className="lede" data-reveal>
-                {t('cover.delivery.body')}
-              </p>
-              <ul className="deliver-list">
-                {FEATURES.map((f, i) => (
-                  <li key={f.title} data-reveal style={delay(i * 90)}>
-                    <span className="deliver-num">0{i + 1}</span>
-                    <div>
-                      <h3>{t(f.title)}</h3>
-                      <p>{t(f.body)}</p>
-                    </div>
-                  </li>
-                ))}
-              </ul>
-            </div>
-
-            <SampleSheet />
-          </div>
         </section>
 
         <section className="cover-cta" aria-labelledby="cta-title">
-          <div className="dimension" aria-hidden="true">
-            <span>1200 mm</span>
-          </div>
           <p className="cta-eyebrow" data-reveal>
             {t('cover.cta.eyebrow')}
           </p>
@@ -537,9 +556,6 @@ const CoverPage: React.FC = () => {
             <a className="btn btn--primary btn--lg" href="shop.html">
               {t('cover.nav.start')}
               <Arrow />
-            </a>
-            <a className="btn btn--ghost btn--lg" href="index.html">
-              {t('cover.nav.editor')}
             </a>
           </div>
         </section>

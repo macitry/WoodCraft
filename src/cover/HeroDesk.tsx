@@ -21,21 +21,23 @@ import { boardById } from '../materials/boardRegistry';
  * already ships in `public/profiles`, and using it is what makes the legs read
  * as aluminium rather than as grey bars.
  *
- * The proportions match the sample list further down the page: a 1500 mm top,
- * 18 mm thick, on a 3030 frame. Nothing here claims to be a solved model; it is
- * the product's silhouette.
+ * The proportions are the sample list's: a 600 mm deep top, 18 mm thick, on a
+ * flush 3030 frame at 750 mm. The width is a prop because the cover's control
+ * changes it — a 1200, 1500 or 1800 mm desk is the same model at three lengths,
+ * and the list below the hero recalculates with it.
+ *
+ * The rail lengths match the solver: legs at 732 mm, side rails at 540, long
+ * rails at width − 60. A cover that shows one length and lists another is a
+ * cover that has already broken its promise, so the frame is cut to the same
+ * numbers as the BOM, not merely eyeballed.
  */
 
-const TOP_W = 1.5;
-const TOP_D = 0.75;
+const TOP_D = 0.6;
 const TOP_T = 0.018;
-/** Walnut, not oak: the hero sits on a near-black page, and the darker board
- *  holds its grain under the key light where pale oak washes out to cream. The
- *  material cards below still show all four boards. */
-const HERO_BOARD = 'walnut';
+/** Oak by default, because the sample list is oak; the two have to be the same
+ *  desk for the width control to mean anything. */
+const HERO_BOARD = 'oak';
 const HEIGHT = 0.75;
-const FRAME_W = 1.28;
-const FRAME_D = 0.57;
 const SECTION = 0.03;
 
 /** A WebGL failure must cost the hero's picture, not the page. */
@@ -77,20 +79,20 @@ const StudioEnvironment: React.FC = () => {
 
 /**
  * The tabletop is the only surface with a grain, so it is the only one that
- * needs the board pipeline. `applyBoardUVs` is what puts the 600 mm tile at
- * the right scale on a 1500 mm board; without it the rings would be twice as
- * far apart as they are on the real desk.
+ * needs the board pipeline. `applyBoardUVs` is what puts the bake's tile at the
+ * right scale when the board widens from 1200 to 1800 mm; without it the rings
+ * would stretch with the geometry.
  */
-const Tabletop: React.FC = () => {
+const Tabletop: React.FC<{ width: number }> = ({ width }) => {
   const board = boardById(HERO_BOARD);
   const maxAnisotropy = useThree((s) => s.gl.capabilities.getMaxAnisotropy());
   const maps = useBoardMaps(HERO_BOARD, maxAnisotropy);
 
   const geometry = useMemo(() => {
-    const g = new THREE.BoxGeometry(TOP_W, TOP_T, TOP_D);
+    const g = new THREE.BoxGeometry(width, TOP_T, TOP_D);
     applyBoardUVs(g, board, METRE_FRAME);
     return g;
-  }, [board]);
+  }, [board, width]);
 
   const materials = useMemo(
     () =>
@@ -177,7 +179,7 @@ const Bar: React.FC<BarProps> = ({ geometry, material, position, axis, length })
   );
 };
 
-const Desk: React.FC = () => {
+const Desk: React.FC<{ width: number }> = ({ width }) => {
   const profile = useProfileGeometry();
   const aluminium = useMemo(
     () =>
@@ -191,15 +193,20 @@ const Desk: React.FC = () => {
   );
   useEffect(() => () => aluminium.dispose(), [aluminium]);
 
-  const legX = FRAME_W / 2 - SECTION / 2;
-  const legZ = FRAME_D / 2 - SECTION / 2;
+  // The frame sits flush under the top, so its outer width is the top's width.
+  // Rails span between the legs' inner faces: width − 2 × 30 mm, which is the
+  // solver's 1140 / 1440 / 1740 mm at the three cover widths.
+  const frameW = width;
+  const frameD = TOP_D;
+  const legX = frameW / 2 - SECTION / 2;
+  const legZ = frameD / 2 - SECTION / 2;
   const railY = HEIGHT - TOP_T - SECTION / 2;
-  const railLengthX = FRAME_W - SECTION;
-  const railLengthZ = FRAME_D - SECTION;
+  const railLengthX = frameW - 2 * SECTION;
+  const railLengthZ = frameD - 2 * SECTION;
 
   return (
     <group>
-      <Tabletop />
+      <Tabletop width={width} />
 
       {[-1, 1].map((sx) =>
         [-1, 1].map((sz) => (
@@ -250,14 +257,17 @@ const Spinner: React.FC<{ children: ReactNode; animate: boolean }> = ({ children
   useFrame((state, delta) => {
     const g = group.current;
     if (!g || !animate) return;
-    const target = Math.sin(state.clock.elapsedTime * 0.24) * 0.26 + state.pointer.x * 0.12;
+    // Smaller than it was before the desk could reach 1800 mm: at full width
+    // the rotated diagonal is the widest thing in the scene, and 0.26 rad put
+    // a corner outside the frame.
+    const target = Math.sin(state.clock.elapsedTime * 0.24) * 0.16 + state.pointer.x * 0.1;
     g.rotation.y += (target - g.rotation.y) * Math.min(1, delta * 2.4);
   });
 
   return <group ref={group}>{children}</group>;
 };
 
-const HeroDesk: React.FC = () => {
+const HeroDesk: React.FC<{ widthMm: number }> = ({ widthMm }) => {
   const animate = useMemo(
     () =>
       typeof window !== 'undefined' &&
@@ -271,13 +281,16 @@ const HeroDesk: React.FC = () => {
         className="hero-canvas"
         shadows="soft"
         dpr={[1, 2]}
-        camera={{ position: [1.95, 1.22, 2.1], fov: 30, near: 0.05, far: 40 }}
+        // Framed for the widest desk the control can ask for (1800 mm), with
+        // just enough margin for the slow turn. At 1200 the desk is smaller in
+        // the same frame, which is the point: the change has to be visible.
+        camera={{ position: [2.2, 1.37, 2.38], fov: 30, near: 0.05, far: 40 }}
         gl={{ antialias: true, alpha: true, powerPreference: 'high-performance' }}
         onCreated={({ camera, gl }) => {
           camera.lookAt(0, 0.4, 0);
-          // Slightly under one keeps the walnut dark instead of blowing the
-          // grain out to beige under the studio environment.
-          gl.toneMappingExposure = 0.92;
+          // Oak is much paler than the walnut this scene was lit for; pulling
+          // the exposure down keeps the grain from blowing out to cream.
+          gl.toneMappingExposure = 0.86;
         }}
       >
         <Suspense fallback={null}>
@@ -300,7 +313,7 @@ const HeroDesk: React.FC = () => {
           <pointLight position={[-1.4, 0.8, 1.2]} intensity={0.55} color="#d8a86b" distance={4} decay={2} />
 
           <Spinner animate={animate}>
-            <Desk />
+            <Desk width={widthMm / 1000} />
           </Spinner>
 
           <ContactShadows

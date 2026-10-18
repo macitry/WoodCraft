@@ -236,6 +236,7 @@ body {
 /* The switch comes from the app; restyle it as a hairline pill rather than
    the editor's filled control. */
 [data-lang-toggle].cover-lang {
+  flex: none;
   background: transparent;
   border: 1px solid var(--line);
   border-radius: 999px;
@@ -246,6 +247,7 @@ body {
   font-family: var(--mono);
   font-size: 9.5px;
   letter-spacing: 0.1em;
+  white-space: nowrap;
   color: var(--ink-dim);
 }
 
@@ -369,31 +371,11 @@ body {
   border-top: 1px solid var(--line);
 }
 
-.menu-num {
-  font-family: var(--mono);
-  font-size: 10.5px;
-  letter-spacing: 0.14em;
-  color: var(--wood);
-}
-
 .menu-foot {
   display: flex;
   flex-direction: column;
   align-items: flex-start;
   gap: 18px;
-}
-
-.menu-editor {
-  display: inline-flex;
-  align-items: center;
-  gap: 9px;
-  font-size: 13.5px;
-  color: var(--ink-dim);
-  text-decoration: none;
-}
-
-.menu-editor:hover {
-  color: var(--ink);
 }
 
 /* ============================================================
@@ -459,6 +441,9 @@ body {
 
 .hero-title .line {
   display: block;
+  /* The English first sentence is longer than the column at desktop; balancing
+     its two lines keeps 「pick.」 from being stranded on a line of its own. */
+  text-wrap: balance;
 }
 
 .hero-title .line--accent {
@@ -484,7 +469,9 @@ html[lang="en"] .hero-title .line--accent {
 }
 
 .hero-sub {
-  max-width: 50ch;
+  /* Wide enough for the Chinese sentence to end on the first line at desktop;
+     50ch cut it after 「一起算」 and left 「好。」 alone. */
+  max-width: 34em;
   margin: 30px 0 0;
   font-size: 15.5px;
   line-height: 1.78;
@@ -525,44 +512,26 @@ html[lang="en"] .hero-title .line--accent {
   transform: translateY(-1px);
 }
 
-.btn--text {
-  gap: 9px;
-  padding: 15px 2px;
-  color: var(--ink-dim);
-}
-
-.btn--text:hover {
-  color: var(--ink);
-}
-
-.btn--ghost {
-  border-color: var(--line-strong);
-  color: var(--ink);
-}
-
-.btn--ghost:hover {
-  border-color: var(--ink);
-  background: rgba(242, 238, 230, 0.05);
-}
-
 .btn--lg {
   padding: 18px 32px;
   font-size: 14px;
 }
 
-.hero-stats {
-  display: flex;
-  gap: clamp(24px, 3.4vw, 52px);
+/* The one interaction on the page. A segmented control, not a slider: three
+   exact sizes are easier to hit, easier to read, and they are the three the
+   sample files exist for. The mass on the right is the same number as the
+   sheet's total, so the link between the two is visible before scrolling. */
+.hero-width {
   max-width: 470px;
-  margin-top: clamp(36px, 5vh, 62px);
-  padding-top: 22px;
+  margin-top: clamp(34px, 4.6vh, 54px);
+  padding-top: 20px;
   border-top: 1px solid var(--line);
 }
 
-.hero-stats span {
+.hero-width-head {
   display: flex;
-  flex-direction: column;
-  gap: 5px;
+  align-items: baseline;
+  justify-content: space-between;
   font-family: var(--mono);
   font-size: 9.5px;
   letter-spacing: 0.16em;
@@ -570,14 +539,67 @@ html[lang="en"] .hero-title .line--accent {
   color: var(--ink-faint);
 }
 
-.hero-stats b {
-  font-family: var(--sans);
-  font-size: 25px;
-  font-weight: 500;
-  line-height: 1;
-  letter-spacing: -0.02em;
-  color: var(--ink);
+.hero-width-label {
+  color: var(--ink-dim);
+}
+
+.hero-width-row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 18px;
+  margin-top: 9px;
+}
+
+.hero-width-stops {
+  display: flex;
+  gap: 6px;
+}
+
+.hero-width-stop {
+  padding: 7px 11px;
+  border: 1px solid transparent;
+  border-radius: 0;
+  background: transparent;
+  font-family: var(--mono);
+  font-size: 12px;
+  letter-spacing: 0.04em;
   font-variant-numeric: tabular-nums;
+  color: var(--ink-faint);
+  cursor: pointer;
+  transition: color 0.25s, border-color 0.25s, background 0.25s;
+}
+
+.hero-width-stop:hover {
+  color: var(--ink);
+}
+
+.hero-width-stop[aria-pressed="true"] {
+  border-color: var(--line-strong);
+  background: rgba(242, 238, 230, 0.04);
+  color: var(--ink);
+}
+
+.hero-width-mass {
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: 0.06em;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  color: var(--ink-faint);
+}
+
+.hero-width-mass b {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--ink);
+}
+
+.hero-width-hint {
+  margin: 10px 0 0;
+  font-size: 11.5px;
+  line-height: 1.5;
+  color: var(--ink-faint);
 }
 
 .hero-stage {
@@ -661,25 +683,6 @@ html[lang="en"] .hero-title .line--accent {
   left: 0;
 }
 
-.hero-side {
-  position: absolute;
-  /* vertical-rl rather than rotate(90deg): the layout box is already the
-     vertical strip we see, so `top: 50%` + translateY(-50%) centres it and
-     `right` lands in the page gutter instead of dragging a 200 px horizontal
-     box back across the desk. */
-  right: -34px;
-  top: 50%;
-  z-index: 5;
-  writing-mode: vertical-rl;
-  transform: translateY(-50%);
-  font-family: var(--mono);
-  font-size: 9px;
-  letter-spacing: 0.3em;
-  color: var(--ink-faint);
-  white-space: nowrap;
-  pointer-events: none;
-}
-
 .hero-scroll {
   position: absolute;
   left: 50%;
@@ -738,40 +741,55 @@ html[lang="en"] .hero-title .line--accent {
 }
 
 /* ============================================================
-   Ticker
+   Statement
    ============================================================ */
 
-.cover-ticker {
-  overflow: hidden;
-  padding-block: 16px;
-  border-block: 1px solid var(--line);
-  background: rgba(255, 255, 255, 0.012);
+.manifesto {
+  max-width: 1500px;
+  margin-inline: auto;
+  padding: clamp(100px, 16vh, 190px) var(--gutter);
+  border-top: 1px solid var(--line);
 }
 
-.cover-ticker-track {
-  display: flex;
-  width: max-content;
-  animation: ticker 48s linear infinite;
+.manifesto-line {
+  max-width: 21ch;
+  margin: 0;
+  font-size: clamp(2.3rem, 5.4vw, 5.4rem);
+  font-weight: 550;
+  line-height: 1.05;
+  letter-spacing: -0.045em;
 }
 
-.cover-ticker-run {
-  font-family: var(--mono);
-  font-size: 10px;
-  letter-spacing: 0.22em;
-  white-space: nowrap;
-  color: var(--ink-faint);
+.manifesto-line > span {
+  display: block;
 }
 
-.cover-ticker-run i {
-  margin-inline: 18px;
-  font-style: normal;
-  color: var(--wood);
+/* The two halves are one line on desktop; at phone widths the second half
+   becomes a block. That break is placed at the word boundary between 「库存」
+   and 「决定」, so the browser cannot split a word just because the line ran out
+   of room. See the phone rule below. */
+.manifesto-break {
+  display: inline;
 }
 
-@keyframes ticker {
-  to {
-    transform: translateX(-50%);
-  }
+.manifesto-line .soft {
+  color: var(--wood-bright);
+}
+
+html[lang^="zh"] .manifesto-line {
+  /* 14em holds all twelve characters of the first sentence at the desktop
+     size; `20ch` cut it after 「尺」 and left a two-character orphan. */
+  max-width: 14em;
+  font-weight: 600;
+  line-height: 1.2;
+  letter-spacing: -0.03em;
+}
+
+html[lang="en"] .manifesto-line .soft {
+  font-family: var(--serif);
+  font-style: italic;
+  font-weight: 400;
+  letter-spacing: -0.025em;
 }
 
 /* ============================================================
@@ -795,21 +813,6 @@ html[lang="en"] .hero-title .line--accent {
 
 .section-head--row {
   align-items: end;
-}
-
-.section-index {
-  position: sticky;
-  top: 108px;
-  display: flex;
-  flex-direction: column;
-  gap: 13px;
-}
-
-.section-num {
-  font-family: var(--mono);
-  font-size: 10px;
-  letter-spacing: 0.18em;
-  color: var(--wood);
 }
 
 .section-label {
@@ -870,45 +873,6 @@ html[lang="en"] .section-title .soft {
   font-size: 15px;
   line-height: 1.8;
   color: var(--ink-dim);
-}
-
-.idea-note {
-  display: flex;
-  align-items: center;
-  gap: 14px;
-  margin: 34px 0 0;
-  font-family: var(--mono);
-  font-size: 9.5px;
-  letter-spacing: 0.18em;
-  text-transform: uppercase;
-  color: var(--ink-faint);
-}
-
-.idea-note .rule {
-  width: 44px;
-  height: 1px;
-  background: var(--line-strong);
-}
-
-/* The huge outlined MM is decoration, but it is also the one word that names
-   the whole proposition. It is clipped by the section, never scrollable. */
-.section--idea {
-  overflow: hidden;
-}
-
-.section--idea::after {
-  content: "MM";
-  position: absolute;
-  right: -0.05em;
-  top: 50%;
-  transform: translateY(-50%);
-  font-size: clamp(12rem, 25vw, 29rem);
-  font-weight: 700;
-  line-height: 1;
-  letter-spacing: -0.07em;
-  color: transparent;
-  -webkit-text-stroke: 1px rgba(242, 238, 230, 0.065);
-  pointer-events: none;
 }
 
 /* ============================================================
@@ -979,15 +943,6 @@ html[lang="en"] .section-title .soft {
   font-size: 14px;
   line-height: 1.75;
   color: var(--ink-dim);
-}
-
-.process-tag {
-  margin-top: 26px;
-  font-family: var(--mono);
-  font-size: 9.5px;
-  letter-spacing: 0.18em;
-  text-transform: uppercase;
-  color: var(--ink-faint);
 }
 
 .process-step::after {
@@ -1084,124 +1039,13 @@ html[lang="en"] .section-title .soft {
   color: var(--ink-dim);
 }
 
-.metal-band {
-  display: grid;
-  grid-template-columns: minmax(0, 1.15fr) minmax(0, 0.85fr);
-  gap: 40px;
-  margin-top: 10px;
-  padding: clamp(28px, 4vw, 52px);
-  border: 1px solid var(--line);
-  background: rgba(255, 255, 255, 0.015);
-}
-
-.metal-copy h3 {
-  margin: 0;
-  font-size: clamp(1.35rem, 2vw, 1.8rem);
-  font-weight: 550;
-  letter-spacing: -0.02em;
-}
-
-.metal-copy p {
-  max-width: 46ch;
-  margin: 16px 0 0;
-  font-size: 14px;
-  line-height: 1.75;
-  color: var(--ink-dim);
-}
-
-.metal-sections {
-  display: flex;
-  align-items: flex-end;
-  justify-content: flex-end;
-  gap: clamp(22px, 3vw, 48px);
-}
-
-.metal-item {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 12px;
-}
-
-.metal-glyph {
-  flex: none;
-  fill: none;
-  stroke: var(--line-strong);
-  stroke-width: 1.15;
-  transition: stroke 0.4s;
-}
-
-.metal-item:hover .metal-glyph {
-  stroke: var(--wood-bright);
-}
-
-.metal-code {
-  font-family: var(--mono);
-  font-size: 10.5px;
-  letter-spacing: 0.14em;
-  color: var(--ink);
-}
-
-.metal-sub {
-  font-family: var(--mono);
-  font-size: 9px;
-  letter-spacing: 0.08em;
-  white-space: nowrap;
-  color: var(--ink-faint);
-}
-
 /* ============================================================
    Delivery + sample sheet
    ============================================================ */
 
-.delivery-grid {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(0, 1.1fr);
-  gap: clamp(38px, 6vw, 90px);
-  align-items: start;
-  margin-top: clamp(48px, 7vh, 82px);
-}
-
-.delivery-grid .lede {
-  margin-top: 0;
-}
-
-.deliver-list {
-  margin: 38px 0 0;
-  padding: 0;
-  list-style: none;
-  border-top: 1px solid var(--line);
-}
-
-.deliver-list li {
-  display: grid;
-  grid-template-columns: 42px minmax(0, 1fr);
-  gap: 18px;
-  padding: 23px 0;
-  border-bottom: 1px solid var(--line);
-}
-
-.deliver-num {
-  padding-top: 4px;
-  font-family: var(--mono);
-  font-size: 9.5px;
-  letter-spacing: 0.14em;
-  color: var(--wood);
-}
-
-.deliver-list h3 {
-  margin: 0;
-  font-size: 16.5px;
-  font-weight: 550;
-  letter-spacing: -0.01em;
-}
-
-.deliver-list p {
-  max-width: 44ch;
-  margin: 8px 0 0;
-  font-size: 13.5px;
-  line-height: 1.7;
-  color: var(--ink-dim);
+.section > .sheet {
+  max-width: 1120px;
+  margin-top: clamp(46px, 6vh, 74px);
 }
 
 .sheet {
@@ -1331,11 +1175,18 @@ html[lang="en"] .section-title .soft {
   color: var(--ink-faint);
 }
 
-.sheet-export b {
+.sheet-export a {
   padding: 3px 6px;
   border: 1px solid var(--line);
   font-weight: 500;
+  text-decoration: none;
   color: var(--ink-dim);
+  transition: color 0.25s, border-color 0.25s;
+}
+
+.sheet-export a:hover {
+  border-color: var(--line-strong);
+  color: var(--ink);
 }
 
 .sheet-note {
@@ -1381,45 +1232,6 @@ html[lang="en"] .section-title .soft {
 .cover-cta > * {
   position: relative;
   z-index: 1;
-}
-
-.dimension {
-  position: relative;
-  width: min(560px, 62%);
-  height: 16px;
-  margin: 0 auto 58px;
-  border-top: 1px solid var(--line-strong);
-}
-
-.dimension::before,
-.dimension::after {
-  content: "";
-  position: absolute;
-  top: -4px;
-  width: 1px;
-  height: 9px;
-  background: var(--line-strong);
-}
-
-.dimension::before {
-  left: 0;
-}
-
-.dimension::after {
-  right: 0;
-}
-
-.dimension span {
-  position: absolute;
-  left: 50%;
-  top: -24px;
-  padding-inline: 9px;
-  transform: translateX(-50%);
-  background: var(--bg);
-  font-family: var(--mono);
-  font-size: 9px;
-  letter-spacing: 0.16em;
-  color: var(--ink-faint);
 }
 
 .cta-eyebrow {
@@ -1593,8 +1405,7 @@ html[lang="en"] .cta-title {
     min-height: 380px;
   }
 
-  .hero-annot,
-  .hero-side {
+  .hero-annot {
     display: none;
   }
 
@@ -1607,13 +1418,6 @@ html[lang="en"] .cta-title {
     grid-template-columns: minmax(0, 1fr);
     gap: 26px;
     align-items: start;
-  }
-
-  .section-index {
-    position: static;
-    flex-direction: row;
-    align-items: baseline;
-    gap: 14px;
   }
 
   .section-label {
@@ -1651,23 +1455,6 @@ html[lang="en"] .cta-title {
 
   .process-step p {
     max-width: 54ch;
-  }
-
-  .metal-band {
-    grid-template-columns: minmax(0, 1fr);
-    gap: 32px;
-  }
-
-  .metal-sections {
-    justify-content: flex-start;
-  }
-
-  .delivery-grid {
-    grid-template-columns: minmax(0, 1fr);
-  }
-
-  .delivery-copy {
-    max-width: 660px;
   }
 }
 
@@ -1762,26 +1549,18 @@ html[lang="en"] .cta-title {
     width: 100%;
   }
 
-  .hero-actions .btn--text {
-    justify-content: space-between;
-    padding: 14px 2px;
-    border-bottom: 1px solid var(--line);
-    border-radius: 0;
-  }
-
-  .hero-stats {
-    gap: 18px;
+  .hero-width {
     margin-top: 30px;
     padding-top: 18px;
   }
 
-  .hero-stats b {
-    font-size: 21px;
+  .hero-width-stop {
+    padding: 7px 9px;
+    font-size: 11.5px;
   }
 
-  .hero-stats span {
-    font-size: 8.5px;
-    letter-spacing: 0.12em;
+  .hero-width-mass b {
+    font-size: 12px;
   }
 
   .hero-stage {
@@ -1794,17 +1573,18 @@ html[lang="en"] .cta-title {
     opacity: 0.34;
   }
 
-  .cover-ticker {
-    padding-block: 12px;
+  .manifesto {
+    padding-top: 86px;
+    padding-bottom: 86px;
   }
 
-  .cover-ticker-run {
-    font-size: 8.5px;
-    letter-spacing: 0.16em;
+  .manifesto-line {
+    font-size: clamp(1.8rem, 8.4vw, 2.6rem);
+    line-height: 1.22;
   }
 
-  .cover-ticker-run i {
-    margin-inline: 12px;
+  .manifesto-break {
+    display: block;
   }
 
   .section {
@@ -1820,17 +1600,6 @@ html[lang="en"] .cta-title {
     margin-top: 24px;
     font-size: 14px;
     line-height: 1.75;
-  }
-
-  .section--idea::after {
-    font-size: 13rem;
-    opacity: 0.7;
-  }
-
-  .idea-note {
-    margin-top: 26px;
-    font-size: 8.5px;
-    letter-spacing: 0.12em;
   }
 
   .process {
@@ -1859,10 +1628,6 @@ html[lang="en"] .cta-title {
     font-size: 13.5px;
   }
 
-  .process-tag {
-    margin-top: 18px;
-  }
-
   .wood-grid {
     gap: 8px;
     margin-top: 36px;
@@ -1886,45 +1651,8 @@ html[lang="en"] .cta-title {
     line-height: 1.45;
   }
 
-  .metal-band {
-    gap: 26px;
-    padding: 22px 18px;
-  }
-
-  .metal-copy p {
-    font-size: 13px;
-  }
-
-  .metal-sections {
-    flex-wrap: wrap;
-    gap: 20px 26px;
-  }
-
-  .metal-sub {
-    font-size: 8px;
-  }
-
-  .delivery-grid {
+  .section > .sheet {
     margin-top: 38px;
-    gap: 34px;
-  }
-
-  .deliver-list {
-    margin-top: 28px;
-  }
-
-  .deliver-list li {
-    grid-template-columns: 30px minmax(0, 1fr);
-    gap: 12px;
-    padding: 19px 0;
-  }
-
-  .deliver-list h3 {
-    font-size: 15.5px;
-  }
-
-  .deliver-list p {
-    font-size: 12.5px;
   }
 
   .sheet {
@@ -1981,11 +1709,6 @@ html[lang="en"] .cta-title {
     padding-bottom: 96px;
   }
 
-  .dimension {
-    width: 74%;
-    margin-bottom: 46px;
-  }
-
   .cta-title {
     font-size: clamp(2.3rem, 10.5vw, 3.4rem);
   }
@@ -2021,19 +1744,12 @@ html[lang="en"] .cta-title {
 }
 
 @media (max-width: 380px) {
-  .hero-stats {
-    gap: 14px;
-  }
-
-  .hero-stats b {
-    font-size: 19px;
+  .hero-width-row {
+    flex-wrap: wrap;
+    gap: 8px 14px;
   }
 
   .wood-note {
-    display: none;
-  }
-
-  .sheet-export b:nth-of-type(3) {
     display: none;
   }
 }
@@ -2043,7 +1759,6 @@ html[lang="en"] .cta-title {
     scroll-behavior: auto;
   }
 
-  .cover-ticker-track,
   .pulse,
   .hero-scroll i::after {
     animation: none;

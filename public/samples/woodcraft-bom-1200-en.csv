@@ -1,0 +1,6 @@
+﻿Part,Type,Material,Spec,Length (mm),Qty,Mass (kg)
+Tabletop,Tabletop,Oak,1200 × 600 × 18,—,1,9.072
+Legs,Leg,Aluminium 6063,3030,732,4,2.464
+Rails,Beam,Aluminium 6063,3030,1140,2,1.919
+Side rails,Beam,Aluminium 6063,3030,540,2,0.909
+Total mass,,,,,,14.364
