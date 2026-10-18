@@ -1,6 +1,8 @@
 import { useEffect, useState } from 'react';
 import { GlassSlider } from '@glass-sdk/liquid-glass';
 import { useT } from '../../i18n';
+import { textureLabel, textureNote } from '../../i18n/names';
+import { TABLETOP_TEXTURES } from '../../materials/tabletopTextures';
 import { SHOP_PROFILES, useShopStore } from '../shopStore';
 import { paramLabel } from '../labels';
 
@@ -18,8 +20,10 @@ const SizeStep: React.FC = () => {
   const template = useShopStore((s) => s.template);
   const values = useShopStore((s) => s.values);
   const profile = useShopStore((s) => s.profile);
+  const board = useShopStore((s) => s.board);
   const setValue = useShopStore((s) => s.setValue);
   const setProfile = useShopStore((s) => s.setProfile);
+  const setBoard = useShopStore((s) => s.setBoard);
 
   if (!template) return null;
 
@@ -81,6 +85,37 @@ const SizeStep: React.FC = () => {
               <span className="shop-size-sub">
                 {t('shop.size.profile.sub', { n: Number(size.slice(0, 2)) })}
               </span>
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {/* The board chooser. The swatch is the baked tile itself rather than a
+          brown square, because the difference between oak and walnut is mostly
+          the grain — the same reasoning the editor's MaterialSelector gives. */}
+      <div className="shop-field" style={{ marginTop: 18, maxWidth: 640 }}>
+        <div className="shop-field-head">
+          <span className="shop-field-name">{t('shop.size.board.title')}</span>
+        </div>
+        <p className="shop-lead" style={{ margin: '6px 0 0', maxWidth: 'none' }}>
+          {t('shop.size.board.lead')}
+        </p>
+        <div className="shop-sizes shop-boards">
+          {TABLETOP_TEXTURES.map((b) => (
+            <button
+              key={b.id}
+              type="button"
+              className="shop-size shop-board"
+              data-shop-board={b.id}
+              aria-pressed={board === b.id}
+              title={textureNote(b)}
+              onClick={() => setBoard(b.id)}
+            >
+              <span
+                className="shop-board-swatch"
+                style={{ backgroundImage: `url(${b.faceUrl})`, backgroundColor: b.color }}
+              />
+              <span className="shop-size-cap">{textureLabel(b)}</span>
             </button>
           ))}
         </div>

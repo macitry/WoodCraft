@@ -1,0 +1,189 @@
+import React, { useEffect, useMemo, useRef } from 'react';
+import * as THREE from 'three';
+import type { BracketInstance } from '../types/furniture';
+import { bracketStlUrl } from '../types/furniture';
+import type { KitLayout, LocalFastener } from '../utils/accessoryKits';
+import {
+  HARDWARE_TONE,
+  SCREW_SERIES,
+  accessoryKitById,
+  jointFasteners,
+} from '../utils/accessoryKits';
+import { CoverMesh, ScrewMesh, TNutMesh } from '../diy/FastenerStl';
+import { DEFAULT_SCREW_FAMILY } from '../diy/fastenerDims';
+
+/**
+ * The fastener rendering, with no store in it.
+ *
+ * This used to live inside `MainFastenerRenderer`, which reads the editor's
+ * `activeKitId` / visibility switches from `useModelStore`. The customer page
+ * draws the same joints and must not import that store — it would pull the
+ * whole editor document (mock model, board registry, DXF import) into the shop
+ * bundle. So the store lookup stays in the editor wrapper and everything that
+ * actually draws lives here, driven by props.
+ */
+
+const MM_TO_M = 0.001;
+
+/** The catalog part for a fastener. Geometry comes from the baked STL (shared by
+ *  `useLoader` per URL), so there is no prototype cache any more — but the parts
+ *  are still NOT pickable: the bracket itself is what the user selects and drags,
+ *  and a fastener that swallowed that click would be a hole in its hit area. */
+const FastenerStl: React.FC<{ fastener: LocalFastener }> = ({ fastener }) => {
+  const { spec } = fastener;
+  const size = spec.size ?? 'M6';
+  if (spec.kind === 't_nut') {
+    // Deliberately NO `xray`: the nut belongs in the slot, and the profile hides
+    // it there. See `TNutMeshProps.xray` before changing that.
+    return (
+      <TNutMesh
+        size={size}
+        series={SCREW_SERIES}
+        family={spec.tnutFamily}
+        color={HARDWARE_TONE.t_nut}
+      />
+    );
+  }
+  // A cover is neither a screw nor a nut — it has no size, no length and no
+  // family, so there is nothing for the screw branch to read off it.
+  if (spec.kind === 'cover') {
+    return <CoverMesh uid={spec.uid} color={HARDWARE_TONE.cover} />;
+  }
+  return (
+    <ScrewMesh
+      family={spec.family ?? DEFAULT_SCREW_FAMILY}
+      size={size}
+      length={spec.length ?? 0}
+      color={HARDWARE_TONE[spec.kind]}
+    />
+  );
+};
+
+const FastenerMesh: React.FC<{ fastener: LocalFastener; bracketId: string }> = ({
+  fastener,
+  bracketId,
+}) => {
+  const groupRef = useRef<THREE.Group>(null);
+  const { position, rotation } = fastener;
+
+  // Dev-only: expose the mounted node so a headless check can prove the fastener
+  // really is a DESCENDANT of its bracket's transform group (rather than a
+  // sibling that happens to land nearby). Asserting the parent chain is the only
+  // way to actually test the nesting this design depends on.
+  useEffect(() => {
+    if (!import.meta.env.DEV) return;
+    const obj = groupRef.current;
+    if (!obj) return;
+    const w = window as unknown as { __wcFastenerNodes?: unknown[] };
+    const rec = {
+      bracketId,
+      object: obj,
+      local: position,
+      /** Which catalog kind this is. A headless check cannot tell a T-nut from a
+       *  bolt by looking at the mounted mesh (both are just an STL), and "is the
+       *  T-nut drawn at all" is exactly the question worth asking. */
+      kind: fastener.spec.kind,
+      /** Seated inside the profile, so the profile hides it — see `TNutMeshProps.xray`. */
+      internal: fastener.internal,
+      /** Closest ancestor group carrying this bracket's tag. */
+      bracketGroup: (() => {
+        let p: THREE.Object3D | null = obj.parent;
+        while (p) {
+          if (p.userData?.wcBracketId === bracketId) return p;
+          p = p.parent;
+        }
+        return null;
+      })(),
+    };
+    (w.__wcFastenerNodes ??= []).push(rec);
+    return () => {
+      const list = w.__wcFastenerNodes ?? [];
+      const i = list.indexOf(rec);
+      if (i >= 0) list.splice(i, 1);
+    };
+    // `fastener` as well as its position: `kind` and `internal` are read off it
+    // above, so the record must be republished when the seat it describes is.
+  }, [bracketId, fastener, position]);
+
+  return (
+    <group
+      ref={groupRef}
+      // The bracket group's space is METRES (its STL child carries the mm→m
+      // scale), so a local offset authored in mm must be converted here — the
+      // fastener's own mm-sized geometry is then sized by the same MM_TO_M.
+      position={[position[0] * MM_TO_M, position[1] * MM_TO_M, position[2] * MM_TO_M]}
+      rotation={rotation as unknown as [number, number, number]}
+      scale={MM_TO_M}
+    >
+      <FastenerStl fastener={fastener} />
+    </group>
+  );
+};
+
+export interface FastenerSetProps {
+  bracket: BracketInstance;
+  /** The accessory kit to seat. The editor passes its live selection; the shop
+   *  passes the default, because a customer has no kit picker. */
+  kitId: string | null;
+  /** The picture switches. Both default ON in the editor's store. */
+  showFasteners: boolean;
+  showInternalFasteners: boolean;
+  /** The user's per-part edits for this kit + hole pattern, or null for the
+   *  kit's preset. The shop has no editor and therefore always passes null. */
+  layout: KitLayout | null;
+}
+
+/**
+ * The bolts (and optionally the T-nuts) for one bracket joint.
+ *
+ * MUST be rendered INSIDE the bracket's own <group position rotation>, never as
+ * a sibling with a recomputed transform: `BracketInstance.rotation` is documented
+ * as intrinsic ZYX but is consumed by three as its default XYZ order, so any
+ * re-derivation in one order or the other drifts on multi-axis brackets. Nested,
+ * the fasteners inherit the bracket's matrix verbatim and cannot disagree with it.
+ */
+export const FastenerSetFor: React.FC<FastenerSetProps> = ({
+  bracket,
+  kitId,
+  showFasteners,
+  showInternalFasteners,
+  layout,
+}) => {
+  const kit = accessoryKitById(kitId);
+  // THIS bracket's connector — its own `stlUrl`, or the default bracket's when it
+  // has none. Resolved once, through the same helper the renderer draws the mesh
+  // with, because the seats and the mesh have to be the same part: a bracket that
+  // fell back to the default MESH while seating hardware on the unknown-url
+  // PATTERN would draw bolts through a plate that has no holes there.
+  const stlUrl = bracketStlUrl(bracket);
+  const fasteners = useMemo(
+    () => (kit ? jointFasteners(kit, stlUrl, 1, layout) : []),
+    [kit, stlUrl, layout],
+  );
+
+  const shown = showFasteners
+    ? fasteners.filter((f) => !f.internal || showInternalFasteners)
+    : [];
+
+  // Dev-only: how many fasteners are actually mounted, for headless assertions.
+  // Increment/decrement so StrictMode's double-invoke and unmounts stay netted.
+  useEffect(() => {
+    if (!import.meta.env.DEV) return;
+    const w = window as unknown as { __wcFastenerCount?: number };
+    w.__wcFastenerCount = (w.__wcFastenerCount ?? 0) + shown.length;
+    return () => {
+      w.__wcFastenerCount = (w.__wcFastenerCount ?? 0) - shown.length;
+    };
+  }, [shown.length]);
+
+  if (shown.length === 0) return null;
+  return (
+    <group>
+      {shown.map((f) => (
+        // `f.key` (the seat), not the index: after an add or a delete an index
+        // would make React reuse a node for a different part.
+        <FastenerMesh key={f.key} fastener={f} bracketId={bracket.id} />
+      ))}
+    </group>
+  );
+};

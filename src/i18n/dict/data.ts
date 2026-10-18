@@ -62,6 +62,11 @@ export const zh = {
   'material.mdf': '中密度板',
   'material.oak': '橡木',
   'material.walnut': '黑胡桃',
+  // The customer page's two remaining baked boards. `plank` is glued-up oak
+  // staves and `ply` is the plywood tile; both ids are texture ids that become
+  // the tabletop's `material` in the shop's list and exports.
+  'material.plank': '橡木拼板',
+  'material.ply': '多层板',
   'material.aluminum': '铝',
   'material.steel': '钢',
   'material.brass': '黄铜',
@@ -116,6 +121,8 @@ export const en: Record<DataKey, string> = {
   'material.mdf': 'MDF',
   'material.oak': 'Oak',
   'material.walnut': 'Walnut',
+  'material.plank': 'Oak plank',
+  'material.ply': 'Plywood',
   'material.aluminum': 'Aluminium',
   'material.steel': 'Steel',
   'material.brass': 'Brass',

@@ -1,6 +1,8 @@
-import type { BomRow } from '../utils/bomExport';
+import { hardwareBomRows, type BomRow } from '../utils/bomExport';
+import type { AccessoryKit } from '../utils/accessoryKits';
+import { bracketStlUrl, type BracketInstance } from '../types/furniture';
 import type { ShopBomEntry } from './shopApi';
-import { partName, partTypeLabel } from './labels';
+import { partName } from './labels';
 import type { Translate } from '../i18n';
 
 /**
@@ -19,13 +21,21 @@ import type { Translate } from '../i18n';
  * Prices are absent on purpose. The server returns none, and the `0.00` the
  * page shows in that column is a placeholder for a number nobody has. Writing
  * it into the file would hand a fabricator a quote of zero.
+ *
+ * The frame rows come from the server; the corner brackets and their fasteners
+ * come from the page's own bracket generator (`shopBrackets`) through the very
+ * `hardwareBomRows` the editor exports with. The server does not model joints,
+ * and a shopping list that stops at the bare frame is not what the editor hands
+ * the same customer.
  */
 export function shopBomRows(
   entries: ShopBomEntry[],
   profile: string,
   t: Translate,
+  hardware?: { brackets: BracketInstance[]; kit: AccessoryKit | null } | null,
+  board?: string | null,
 ): BomRow[] {
-  return entries.map((entry) => {
+  const frameRows = entries.map((entry) => {
     const dims = entry.dimensions ?? {};
     // Frame parts come back with an extrusion length; a board is described by
     // its face instead, and its longest side is what a cutting list wants.
@@ -34,12 +44,35 @@ export function shopBomRows(
     const isFrame = entry.partType !== 'tabletop';
     return {
       part: partName(t, entry.name),
-      type: partTypeLabel(t, entry.partType),
-      material: entry.material,
+      // The raw id, not the label: `BomRow.type` is the export's machine column
+      // (see `bomToCsv`), and the editor writes 'leg'/'beam' there too. The
+      // table translates it for display.
+      type: entry.partType,
+      // The tabletop's material is the customer's choice on this page. The
+      // server only knows "a board" (`material: "wood"`, with the board's name
+      // carried in a field the BOM endpoint does not return), so an exported
+      // desk would otherwise forget the walnut the customer picked two steps
+      // ago. The id is one of the baked boards and `materialName` translates it
+      // in the table and in both writers.
+      material: entry.partType === 'tabletop' && board ? board : entry.material,
       profile: isFrame ? profile : '',
       lengthMm,
       qty: entry.quantity,
       note: entry.massKg !== null ? `${entry.massKg.toFixed(3)} kg` : undefined,
     };
   });
+
+  if (!hardware) return frameRows;
+  return [
+    ...frameRows,
+    // `jointStlUrls` in draw order: the same resolution the viewer uses for the
+    // mesh (`bracketStlUrl`), so the fasteners counted here are the ones on the
+    // brackets on screen.
+    ...hardwareBomRows(
+      hardware.brackets.length,
+      hardware.brackets.map((b) => bracketStlUrl(b)),
+      hardware.kit,
+      null,
+    ),
+  ];
 }

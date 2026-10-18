@@ -479,6 +479,33 @@
   opacity: 0.55;
 }
 
+/* The board chooser. Four boards instead of three sections, so the row is
+   allowed to wrap: two across on a narrow pane beats four slivers. The swatch
+   is the baked tile itself, tiled at a little over life size — four flat brown
+   squares would be a worse menu than four pieces of wood. */
+.shop-boards {
+  flex-wrap: wrap;
+}
+
+.shop-board {
+  flex: 1 1 calc(25% - 6px);
+  min-width: 96px;
+}
+
+.shop-board-swatch {
+  display: block;
+  width: 100%;
+  height: 44px;
+  border-radius: 8px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background-size: 220% auto;
+  background-position: center;
+}
+
+.shop-board .shop-size-cap {
+  font-size: 12.5px;
+}
+
 /* --- the right-hand column: the model ------------------------------------- */
 
 /*

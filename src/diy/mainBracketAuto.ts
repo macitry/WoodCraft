@@ -12,7 +12,7 @@
 // bracket. Everything else (leg tops, cross-beam-to-leg) does.
 // ============================================================
 
-import type { BracketInstance, Component, DiyProfile, FurnitureModel } from '../types/furniture';
+import type { BracketInstance, DiyProfile, FurnitureModel } from '../types/furniture';
 import { computeCornerHints, eulerFromNormals } from './diyCornerGeometry';
 import { jointFitInfo, cornerBracketFits } from './diyJointGeometry';
 import { t } from '../i18n';
@@ -30,11 +30,29 @@ export interface MainFrameParams {
   crossBeamHeightRatio: number;
 }
 
+/**
+ * The part fields this module actually reads.
+ *
+ * `FurnitureModel.components` satisfies it, but the customer page has no
+ * editor model to hand over — its parts come straight off the wire — so the
+ * union is declared here rather than importing `Component` and forcing the
+ * shop to fabricate one.
+ */
+export interface AutoBracketPart {
+  id: string;
+  name: string;
+  /** Optional, like `Component.partType`: a part without one is not an
+   *  extrusion and the generator skips it. */
+  partType?: string;
+  visible?: boolean;
+  dimensions?: Record<string, number> | null;
+}
+
 /** Profile size used for all main-frame extrusions (matches the frontend). */
 const PROFILE_SIZE = 30;
 
 /** Axis direction of an aluminum component, from its id (matches the renderer). */
-function profileDirection(part: Component): DiyProfile['direction'] {
+function profileDirection(part: AutoBracketPart): DiyProfile['direction'] {
   if (part.partType === 'leg') return 'Y';
   return part.id.includes('front') || part.id.includes('back') ? 'X' : 'Z';
 }
@@ -54,7 +72,7 @@ interface AluminumProfile {
  * Returns null for non-extrusion parts (tabletop etc.).
  */
 function aluminumComponentProfile(
-  part: Component,
+  part: AutoBracketPart,
   p: MainFrameParams,
 ): AluminumProfile | null {
   const ps = PROFILE_SIZE;
@@ -62,10 +80,11 @@ function aluminumComponentProfile(
   const iz = p.insetRatioZ * p.depth;
   const frameW = p.width - ix * 2;
   const frameD = p.depth - iz * 2;
-  const longDim = Math.max(frameW, frameD);
-  const shortDim = Math.min(frameW, frameD);
   const beamY = p.height - p.tabletopThickness - ps / 2;
-  const legH = p.height - p.tabletopThickness - ps;
+  // Floor to the tabletop's underside, and the clear span below the rail band —
+  // the same split the solver makes (`h - tt` vs `h - tt - ps`).
+  const legH = p.height - p.tabletopThickness;
+  const clearLeg = legH - ps;
   const bx = p.width / 2 - ix - ps / 2;
   const bz = p.depth / 2 - iz - ps / 2;
   const id = part.id;
@@ -81,8 +100,8 @@ function aluminumComponentProfile(
 
   if (part.partType === 'beam') {
     const isWidthBeam = id.includes('front') || id.includes('back');
-    const isLong = (isWidthBeam && frameW >= frameD) || (!isWidthBeam && frameD > frameW);
-    const len = isLong ? longDim : shortDim - 2 * ps;
+    // Both pairs fit between the legs, so both lose one section at each end.
+    const len = (isWidthBeam ? frameW : frameD) - 2 * ps;
     const pos = { x: 0, y: beamY, z: 0 };
     if (id.includes('front')) pos.z = bz;
     if (id.includes('back')) pos.z = -bz;
@@ -93,9 +112,9 @@ function aluminumComponentProfile(
 
   if (part.partType === 'cross_beam') {
     const ratio = p.crossBeamHeightRatio;
-    const beamCY = Math.max(ps / 2, ratio * (legH - ps / 2));
+    const beamCY = Math.max(ps / 2, ratio * (clearLeg - ps / 2));
     const isFrontBack = id.includes('front') || id.includes('back');
-    const len = isFrontBack ? longDim - 2 * ps : shortDim - 2 * ps;
+    const len = (isFrontBack ? frameW : frameD) - 2 * ps;
     const pos = { x: 0, y: beamCY, z: 0 };
     if (id.includes('front')) pos.z = bz;
     if (id.includes('back')) pos.z = -bz;
@@ -118,26 +137,44 @@ export function autoGenerateBrackets(
   model: FurnitureModel | null,
   p: MainFrameParams,
 ): BracketInstance[] {
-  if (!model) return [];
+  return autoGenerateBracketsForParts(model?.components ?? [], p);
+}
 
+/**
+ * The same generator for a caller that has no `FurnitureModel`.
+ *
+ * The customer page draws the server's parts as they arrive; it has no editor
+ * document and no business inventing one. The geometry only ever reads a
+ * part's id, type and section, so those are the whole input.
+ */
+export function autoGenerateBracketsForParts(
+  parts: AutoBracketPart[],
+  p: MainFrameParams,
+): BracketInstance[] {
   const profiles: DiyProfile[] = [];
   const partTypeByProfile: Record<string, string> = {};
   const partNameById: Record<string, string> = {};
   let seq = 1;
 
-  for (const part of model.components) {
+  for (const part of parts) {
     if (!part.visible) continue;
     const info = aluminumComponentProfile(part, p);
     if (!info) continue;
+    // NOT rounded, deliberately. At an odd width the leg centre is a half
+    // millimetre (`w / 2 - ps / 2`), and rounding it moves the leg's inner face
+    // away from the beam end that is supposed to butt against it — a 0.5 mm
+    // miss that the joint maths rejects outright on one side of the desk while
+    // tolerating it on the other (Math.round breaks the symmetry), losing two
+    // brackets. The hints themselves are still rounded when they are emitted.
     profiles.push({
       id: part.id,
       seq: seq++,
       profileSize: '3030',
-      length: Math.round(info.length),
+      length: info.length,
       position: {
-        x: Math.round(info.position.x),
-        y: Math.round(info.position.y),
-        z: Math.round(info.position.z),
+        x: info.position.x,
+        y: info.position.y,
+        z: info.position.z,
       },
       direction: info.direction,
       parentId: null,

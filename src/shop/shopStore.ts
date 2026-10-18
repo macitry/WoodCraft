@@ -1,4 +1,5 @@
 import { create } from 'zustand';
+import { DEFAULT_TABLETOP_TEXTURE } from '../materials/tabletopTextures';
 import {
   fetchShopBom,
   fetchShopProgress,
@@ -74,6 +75,19 @@ interface ShopStore {
   /** Current value per parameter id, seeded from the template's `defaultValue`. */
   values: Record<string, number>;
   profile: string;
+  /**
+   * The tabletop's board, as a texture id (oak / walnut / plank / ply).
+   *
+   * It is NOT part of a generate request, deliberately. The solver's frame and
+   * its masses are the same wood or not — `board_material` on the server is
+   * carried as a label on the solved tabletop and never reaches the geometry —
+   * and the server's accepted spellings (plywood / mdf / oak) are not this
+   * page's four boards. Sending one of them would put a material in the list
+   * that is not the one the customer picked. So the choice lives here: it
+   * drives the tabletop's texture in the pane and the material column in the
+   * list and both exports.
+   */
+  board: string;
 
   // --- the build ----------------------------------------------------------
   /**
@@ -101,6 +115,7 @@ interface ShopStore {
   chooseTemplate: (template: ShopTemplate) => void;
   setValue: (id: string, value: number) => void;
   setProfile: (profile: string) => void;
+  setBoard: (board: string) => void;
   goTo: (step: ShopStep) => void;
   next: () => void;
   back: () => void;
@@ -158,6 +173,9 @@ export const useShopStore = create<ShopStore>((set, get) => ({
   template: null,
   values: {},
   profile: '3030',
+  // The editor's default board, so a customer who never opens the picker sees
+  // the same tabletop the professional page starts with.
+  board: DEFAULT_TABLETOP_TEXTURE,
 
   model: null,
   building: false,
@@ -174,12 +192,23 @@ export const useShopStore = create<ShopStore>((set, get) => ({
     try {
       const templates = await fetchShopTemplates();
       set({ templates, templatesLoading: false });
+      // The first piece is chosen on arrival, so the page opens with a model in
+      // the right-hand pane instead of an empty frame the customer has to earn.
+      // `chooseTemplate` does not advance the step, so this is exactly what a
+      // click on the first card does — nothing is decided on their behalf.
+      const first = templates[0];
+      if (first && !get().template) get().chooseTemplate(first);
     } catch {
       set({ templatesLoading: false, templatesFailed: true });
     }
   },
 
   chooseTemplate(template) {
+    // Choosing the piece that is already chosen is not a choice. Without this
+    // the pane would blank and re-solve for furniture the customer did not
+    // change — and this runs by itself once on load (see `loadTemplates`).
+    if (get().template?.id === template.id) return;
+
     // Seeding from `defaultValue` rather than from a constant here is the whole
     // point of taking the parameters off the wire: a second kind of furniture
     // brings its own dimensions and its own limits, and this page does not have
@@ -190,10 +219,14 @@ export const useShopStore = create<ShopStore>((set, get) => ({
     // furniture, and a stale desk sitting in the viewer while the customer
     // picks a new one is worse than an empty pane for the second it takes the
     // solver to answer.
+    //
+    // And NO `step` here. Choosing on the first screen used to jump straight to
+    // the size step, which turned the click into "next" and hid the answer to
+    // it: the pane was already showing the piece, but the customer had been
+    // moved off the screen they clicked on. Selecting shows; 下一步 advances.
     set({
       template,
       values,
-      step: 'size',
       model: null,
       builtKey: null,
       bom: null,
@@ -207,6 +240,11 @@ export const useShopStore = create<ShopStore>((set, get) => ({
 
   setProfile(profile) {
     set({ profile });
+  },
+
+  setBoard(board) {
+    // No re-solve: the board is a surface, not a size — see the field comment.
+    set({ board });
   },
 
   goTo(step) {

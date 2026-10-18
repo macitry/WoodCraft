@@ -399,20 +399,24 @@ const ProceduralPart: React.FC<ProceduralPartProps> = ({
       }
 
       case 'leg':
-        return new THREE.BoxGeometry(ps, mm(height - thickness) - ps, ps);
+        // Floor to the tabletop's underside — the solver's `h - tt`. This used
+        // to stop one section short and let the long beams pass over the leg,
+        // which made the 3D disagree with the CAD the customer page builds.
+        return new THREE.BoxGeometry(ps, mm(height) - mm(thickness), ps);
 
       case 'beam': {
+        // Each pair spans its own dimension and fits BETWEEN the legs, so both
+        // lose one section at each end (`- 2 * ps`).
         const isWidthBeam = part.id.includes('front') || part.id.includes('back');
-        const longDim = Math.max(frameW, frameD);
-        const shortDim = Math.min(frameW, frameD);
-        const isLong = (isWidthBeam && frameW >= frameD) || (!isWidthBeam && frameD > frameW);
-        const len = isLong ? longDim : shortDim - 2 * ps;
+        const len = (isWidthBeam ? frameW : frameD) - 2 * ps;
         return new THREE.BoxGeometry(len, ps, ps);
       }
 
       case 'cross_beam': {
-        const longDim = Math.max(frameW, frameD);
-        return new THREE.BoxGeometry(longDim - 2 * ps, ps, ps);
+        // Same orientation rule as the solver: front/back rails span the width,
+        // left/right rails the depth.
+        const isFrontBack = part.id.includes('front') || part.id.includes('back');
+        return new THREE.BoxGeometry((isFrontBack ? frameW : frameD) - 2 * ps, ps, ps);
       }
 
       default:
@@ -423,7 +427,11 @@ const ProceduralPart: React.FC<ProceduralPartProps> = ({
   const position = useMemo((): [number, number, number] => {
     const h = mm(height);
     const t = mm(thickness);
-    const legH = h - t - ps;
+    // Legs reach the tabletop's underside; beams sit in the band below it.
+    // `clearLeg` is one section shorter and is what the cross-rail ratio is
+    // measured on — the solver's `clear_leg`.
+    const legH = h - t;
+    const clearLeg = legH - ps;
     const beamY = h - t - ps / 2;
     const lx = mm(width) / 2 - insetX - ps / 2;
     const lz = mm(depth) / 2 - insetZ - ps / 2;
@@ -451,9 +459,8 @@ const ProceduralPart: React.FC<ProceduralPartProps> = ({
       }
 
       case 'cross_beam': {
-        const legH = h - t - ps;
         const ratio = layout.crossBeamHeightRatio;
-        const beamCY = Math.max(ps / 2, ratio * (legH - ps / 2));
+        const beamCY = Math.max(ps / 2, ratio * (clearLeg - ps / 2));
         const isFrontBack = part.id.includes('front') || part.id.includes('back');
         if (isFrontBack) {
           const bz = mm(depth) / 2 - insetZ - ps / 2;
@@ -569,10 +576,8 @@ function computeFrameLayout(
   if (part.partType === 'beam' && extrusionLen) {
     const isWidthBeam = part.id.includes('front') || part.id.includes('back');
     const beamY = mm(h - tt - ps / 2);
-    const longDim = Math.max(frameW, frameD);
-    const shortDim = Math.min(frameW, frameD);
-    const isLong = (isWidthBeam && frameW >= frameD) || (!isWidthBeam && frameD > frameW);
-    const targetLen = isLong ? longDim : shortDim - 2 * ps;
+    // Both pairs fit between the legs — the solver's `- 2 * ps` on each.
+    const targetLen = (isWidthBeam ? frameW : frameD) - 2 * ps;
     const beamZ = d / 2 - insetZ - ps / 2;
     const beamX = w / 2 - insetX - ps / 2;
     let bx = 0, bz = 0;
@@ -585,7 +590,7 @@ function computeFrameLayout(
 
   // --- Legs ---
   if (part.partType === 'leg' && extrusionLen) {
-    const legH = h - tt - ps;
+    const legH = h - tt;
     const lx = w / 2 - insetX - ps / 2;
     const lz = d / 2 - insetZ - ps / 2;
     let px = 0, pz = 0;
@@ -598,24 +603,24 @@ function computeFrameLayout(
 
   // --- Cross beams: additional horizontal rails between leg pairs ---
   if (part.partType === 'cross_beam' && extrusionLen) {
-    const legH = h - tt - ps;
+    // The ratio is measured on the clear leg below the rail band, one section
+    // shorter than the leg itself — the solver's `clear_leg`.
+    const clearLeg = h - tt - ps;
     const ratio = layout.crossBeamHeightRatio;
-    const beamCY = Math.max(ps / 2, ratio * (legH - ps / 2));
+    const beamCY = Math.max(ps / 2, ratio * (clearLeg - ps / 2));
     const beamY = mm(beamCY);
 
     const isFrontBack = part.id.includes('front') || part.id.includes('back');
+    // Each rail spans its own dimension and fits between the legs.
+    const targetLen = (isFrontBack ? frameW : frameD) - 2 * ps;
 
     if (isFrontBack) {
-      // Span between front/back legs (runs left-right, long dimension)
-      const longDim = Math.max(w - insetX * 2, d - insetZ * 2);
-      const targetLen = longDim - 2 * ps;
+      // Span between front/back legs (runs left-right, along the width)
       const legZ = d / 2 - insetZ - ps / 2;
       const bz = part.id.includes('front') ? mm(legZ) : -mm(legZ);
       return { worldPosition: [0, beamY, bz], zScale: targetLen / (extrusionLen || targetLen) };
     } else {
-      // Span between left/right legs (runs front-back, short dimension)
-      const shortDim = Math.min(w - insetX * 2, d - insetZ * 2);
-      const targetLen = shortDim - 2 * ps;
+      // Span between left/right legs (runs front-back, along the depth)
       const legX = w / 2 - insetX - ps / 2;
       const bx = part.id.includes('left') ? mm(legX) : -mm(legX);
       return { worldPosition: [bx, beamY, 0], zScale: targetLen / (extrusionLen || targetLen) };

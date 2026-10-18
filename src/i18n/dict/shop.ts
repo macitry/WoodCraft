@@ -13,39 +13,47 @@ export const zh = {
   'shop.brand.tag': '定制你的家具',
   'shop.stepLabel': '第 {n} 步，共 {total} 步',
   'shop.step.style': '选款式',
-  'shop.step.size': '定尺寸',
+  // Not 「定尺寸」 any more: this step also fixes the frame section and the
+  // tabletop board, and a name that promised only numbers was the one label on
+  // the page the contents disagreed with.
+  'shop.step.size': '定规格',
   'shop.step.bom': '要清单',
   'shop.next': '下一步',
   'shop.back': '上一步',
   'shop.foot.furniture': '家具',
   'shop.foot.size': '外形',
   'shop.foot.profile': '型材',
+  'shop.foot.board': '桌面材料',
   'shop.foot.none': '未选择',
 
   // --- step 1: the catalogue ----------------------------------------------
   'shop.style.title': '先挑一件',
   'shop.style.lead':
-    '每一件都可以改尺寸。选好之后，后面的每一步都只围绕它。',
+    '每一件都可以改尺寸。点一张卡片，右边就会显示它；选好之后再按「下一步」。',
   'shop.style.cardMeta': '{n} 项尺寸可调',
   'shop.style.select': '选它',
   'shop.style.selected': '已选择',
   'shop.style.empty': '暂时取不到家具目录。请确认后端已启动后重试。',
   'shop.style.retry': '重新获取',
 
-  // --- step 2: dimensions -------------------------------------------------
-  'shop.size.title': '定尺寸',
+  // --- step 2: size, section and board ------------------------------------
+  'shop.size.title': '尺寸和材料',
   'shop.size.lead':
-    '拖动滑块或直接输入数值。每一件家具的尺寸范围由后端给出，不是这里写死的。',
+    '拖动滑块或直接输入数值。尺寸范围由后端给出；型材和桌面材料由你挑，右边的模型会跟着变。',
   'shop.size.profile.title': '型材规格',
   'shop.size.profile.lead':
     '规格决定铝型材的截面大小，也决定腿和横梁的实际长度——换一个，模型会跟着变。',
   'shop.size.profile.sub': '{n} mm 截面',
+  'shop.size.board.title': '桌面材料',
+  'shop.size.board.lead':
+    '桌面是整张桌子唯一的木板。选一种，右边的桌面会立刻换上这种木纹，清单和导出也会按它写材料。',
 
   // --- the right-hand view ------------------------------------------------
   // It used to be a step of its own. It is a pane now, and these keys are the
   // only place the page says what kind of picture the customer is looking at:
   // a stand-in that follows the sliders, or the real thing.
   'shop.view.empty': '选一件家具，它的样子会出现在这里。',
+  'shop.view.solving': '正在按默认尺寸画出它……',
   'shop.view.live': '示意图 · 跟着尺寸变',
   'shop.view.building': '正在生成精细模型…',
   'shop.view.buildingNote':
@@ -82,12 +90,21 @@ export const zh = {
   'shop.bom.retry': '重新获取',
   'shop.bom.export.xlsx': '导出 Excel',
   'shop.bom.export.csv': '导出 CSV',
-  'shop.bom.exportNote': '导出文件含零件、材料、规格、长度、数量与重量，不含价格。',
+  // 导出图片 = 右边模型的画面 + 同一份零件清单，合成一张图。
+  'shop.bom.export.png': '导出图片',
+  'shop.bom.imageName': '零件清单图',
+  'shop.bom.imageNoPrice': '价格未包含',
+  'shop.bom.imageFailed': '这个浏览器没能把模型存成图片，请稍后再试。',
+  'shop.bom.exportNote':
+    '清单文件含零件、材料、规格、长度、数量与重量，不含价格；图片把模型和同一份清单画在一起。',
 
   // --- part types, as a customer would name them --------------------------
   'shop.partType.tabletop': '桌面',
   'shop.partType.leg': '支腿',
   'shop.partType.beam': '横梁',
+  'shop.partType.cross_beam': '加强横梁',
+  'shop.partType.bracket': '角码',
+  'shop.partType.hardware': '紧固件',
   'shop.partType.other': '配件',
 
   // --- names that arrive from the server ----------------------------------
@@ -98,8 +115,12 @@ export const zh = {
   // backend shows up here untranslated rather than missing.
   'shop.template.basic-desk.name': '基础书桌',
   'shop.template.basic-desk.desc': '铝型材框架配木桌板。最普通的一张桌子，也最能说明这套东西是怎么搭起来的。',
-  'shop.template.standing-desk.name': '升降书桌',
-  'shop.template.standing-desk.desc': '更高的那张。默认尺寸按站着用来定，腿更长，桌面也厚一些。',
+  'shop.template.cross-beam-desk.name': '加强横梁桌',
+  'shop.template.cross-beam-desk.desc': '前后两对腿之间多加两根横梁。桌子要放重东西、或者你常趴在边上画图，就选这张。',
+  'shop.template.side-cross-desk.name': '侧加强横梁桌',
+  'shop.template.side-cross-desk.desc': '加强横梁放在左右两侧。桌子窄而深、主要靠两侧受力时，这个方向更管用。',
+  'shop.template.inset-desk.name': '内缩桌',
+  'shop.template.inset-desk.desc': '框架往桌板里面收，四面都留出悬边。腿不顶脚，看着也轻一些。',
   'shop.param.width': '宽度',
   'shop.param.depth': '深度',
   'shop.param.height': '高度',
@@ -113,6 +134,10 @@ export const zh = {
   'shop.part.beam_back': '后横梁',
   'shop.part.beam_left': '左横梁',
   'shop.part.beam_right': '右横梁',
+  'shop.part.cross_beam_front': '前加强横梁',
+  'shop.part.cross_beam_back': '后加强横梁',
+  'shop.part.cross_beam_left': '左加强横梁',
+  'shop.part.cross_beam_right': '右加强横梁',
 } as const;
 
 export type ShopKey = keyof typeof zh;
@@ -121,33 +146,38 @@ export const en: Record<ShopKey, string> = {
   'shop.brand.tag': 'Build your furniture',
   'shop.stepLabel': 'Step {n} of {total}',
   'shop.step.style': 'Choose',
-  'shop.step.size': 'Size',
+  'shop.step.size': 'Specify',
   'shop.step.bom': 'List',
   'shop.next': 'Next',
   'shop.back': 'Back',
   'shop.foot.furniture': 'Furniture',
   'shop.foot.size': 'Size',
   'shop.foot.profile': 'Frame',
+  'shop.foot.board': 'Board',
   'shop.foot.none': 'Not chosen',
 
   'shop.style.title': 'Pick one to start',
   'shop.style.lead':
-    'Every piece can be resized. Whatever you choose here is what the rest of the steps are about.',
+    'Every piece can be resized. Click a card to see it on the right; carry on with «Next» when you are ready.',
   'shop.style.cardMeta': '{n} adjustable dimensions',
   'shop.style.select': 'Choose this',
   'shop.style.selected': 'Chosen',
   'shop.style.empty': 'The furniture catalogue is not reachable right now.',
   'shop.style.retry': 'Try again',
 
-  'shop.size.title': 'Set the size',
+  'shop.size.title': 'Size and materials',
   'shop.size.lead':
-    'Drag a slider or type a number. Each piece states its own limits, and they come from the server rather than being fixed here.',
-  'shop.size.profile.title': 'Frame size',
+    'Drag a slider or type a number. The limits come from the server; the frame section and the board are yours to pick, and the model on the right follows.',
+  'shop.size.profile.title': 'Frame section',
   'shop.size.profile.lead':
-    'The frame section decides how thick the aluminium is, and with it how long the legs and rails actually come out — change it and the model changes.',
+    'The section decides how thick the aluminium is, and with it how long the legs and rails actually come out — change it and the model changes.',
   'shop.size.profile.sub': '{n} mm section',
+  'shop.size.board.title': 'Tabletop board',
+  'shop.size.board.lead':
+    'The top is the only board on the desk. Pick one and the tabletop in the model changes at once; the list and the export name the same material.',
 
   'shop.view.empty': 'Pick a piece and it will appear here.',
+  'shop.view.solving': 'Drawing it at the default size…',
   'shop.view.live': 'Stand-in · follows your size',
   'shop.view.building': 'Building the detailed model…',
   'shop.view.buildingNote':
@@ -185,20 +215,33 @@ export const en: Record<ShopKey, string> = {
   'shop.bom.retry': 'Try again',
   'shop.bom.export.xlsx': 'Export Excel',
   'shop.bom.export.csv': 'Export CSV',
+  'shop.bom.export.png': 'Export image',
+  'shop.bom.imageName': 'parts sheet',
+  'shop.bom.imageNoPrice': 'No prices',
+  'shop.bom.imageFailed': 'This browser could not save the model as an image. Please try again.',
   'shop.bom.exportNote':
-    'The file carries part, material, section, length, quantity and mass. No prices.',
+    'The parts file carries part, material, section, length, quantity and mass — no prices. The image puts the model and the same list on one sheet.',
 
   'shop.partType.tabletop': 'Tabletop',
   'shop.partType.leg': 'Leg',
   'shop.partType.beam': 'Rail',
+  'shop.partType.cross_beam': 'Cross rail',
+  'shop.partType.bracket': 'Corner bracket',
+  'shop.partType.hardware': 'Fastener',
   'shop.partType.other': 'Fitting',
 
   'shop.template.basic-desk.name': 'Basic desk',
   'shop.template.basic-desk.desc':
     'An aluminium frame under a wooden top. The plainest desk there is, and the clearest illustration of how one goes together.',
-  'shop.template.standing-desk.name': 'Standing desk',
-  'shop.template.standing-desk.desc':
-    'The taller one. Its default dimensions are set for standing, with longer legs and a thicker top.',
+  'shop.template.cross-beam-desk.name': 'Cross-beam desk',
+  'shop.template.cross-beam-desk.desc':
+    'Two extra rails between the front and back legs. Pick this one if the desk carries weight, or if you lean on the edge.',
+  'shop.template.side-cross-desk.name': 'Side cross desk',
+  'shop.template.side-cross-desk.desc':
+    'The extra rails run between the left and right legs — the stiffer direction on a deep, narrow desk.',
+  'shop.template.inset-desk.name': 'Inset desk',
+  'shop.template.inset-desk.desc':
+    'The frame sits in from the edges, so the top overhangs on all four sides. The desk reads lighter, and the legs stay out of your way.',
   'shop.param.width': 'Width',
   'shop.param.depth': 'Depth',
   'shop.param.height': 'Height',
@@ -212,4 +255,8 @@ export const en: Record<ShopKey, string> = {
   'shop.part.beam_back': 'Back rail',
   'shop.part.beam_left': 'Left rail',
   'shop.part.beam_right': 'Right rail',
+  'shop.part.cross_beam_front': 'Front cross rail',
+  'shop.part.cross_beam_back': 'Back cross rail',
+  'shop.part.cross_beam_left': 'Left cross rail',
+  'shop.part.cross_beam_right': 'Right cross rail',
 };

@@ -376,11 +376,9 @@ const TabletopPlan: React.FC = () => {
     const insetZ = depth * cp.insetRatioZ;
     const frameW = width - insetX * 2;
     const frameD = depth - insetZ * 2;
-    const longDim = Math.max(frameW, frameD);
-    const shortDim = Math.min(frameW, frameD);
-    const isLongFB = frameW >= frameD;
-    const fbLen = isLongFB ? longDim : shortDim - 2 * profileSize;
-    const lrLen = isLongFB ? shortDim - 2 * profileSize : longDim;
+    // Both pairs fit between the legs, exactly as the solver builds them.
+    const fbLen = frameW - 2 * profileSize;
+    const lrLen = frameD - 2 * profileSize;
     const beamYf = depth / 2 - insetZ - profileSize / 2;
     const beamXl = -width / 2 + insetX + profileSize / 2;
     const beamXr = width / 2 - insetX - profileSize / 2;

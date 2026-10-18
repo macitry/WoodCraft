@@ -1,12 +1,23 @@
-import { Component, Suspense, useMemo, useRef, type ReactNode } from 'react';
-import { Canvas, useLoader } from '@react-three/fiber';
+import { Component, Suspense, useEffect, useMemo, useRef, type ReactNode } from 'react';
+import { Canvas, useLoader, useThree } from '@react-three/fiber';
 import { OrbitControls } from '@react-three/drei';
 import { STLLoader } from 'three-stdlib';
 import * as THREE from 'three';
 import Lighting from '../viewer/Lighting';
 import { useT } from '../i18n';
+import {
+  applyBoardUVs,
+  buildBoardMaterials,
+  splitStlByFace,
+  useBoardMaps,
+  METRE_FRAME,
+  STL_FRAME,
+} from '../materials/boardMaterial';
+import { boardById } from '../materials/boardRegistry';
 import { PROFILE_DIMS, type ProfileSize } from '../types/furniture';
 import type { ShopModel, ShopPart, ShopPose } from './shopApi';
+import { shopBrackets } from './shopBrackets';
+import ShopBracketSet from './ShopBracketSet';
 
 /**
  * The customer page's 3D view.
@@ -79,19 +90,73 @@ function usePartTransform(pose: ShopPose | null) {
 
 /** Wood for the top, aluminium for everything else. Both the mesh and the box
  *  use these, so the moment a real STL replaces a box nothing about the part's
- *  colour or finish moves — only its detail. */
-function usePartMaterial(part: ShopPart) {
-  const board = part.partType === 'tabletop';
-  return board
-    ? { color: '#c0986e', metalness: 0.04, roughness: 0.62 }
+ *  colour or finish moves — only its detail.
+ *
+ *  The tabletop's colour is the CHOSEN board's, not one fixed beige: the
+ *  textures load asynchronously, and this is what the customer sees until they
+ *  land (and forever, if they never do). */
+function usePartMaterial(part: ShopPart, board: string) {
+  return part.partType === 'tabletop'
+    ? { color: boardById(board).color, metalness: 0.04, roughness: 0.62 }
     : { color: '#b9bcc2', metalness: 0.55, roughness: 0.42 };
 }
 
+/** The board's textures and the geometry they are authored against.
+ *
+ *  Same pipeline as the editor's `StlPart` (`ModelLoader.tsx`), and for the same
+ *  reason it is not optional here: the customer picked a board a moment ago in
+ *  step two, and a pane that answered with one flat beige would make the picker
+ *  look like it did nothing. The geometry is CLONED because `useLoader` hands
+ *  every mount the same cached geometry, and UV authoring mutates it. */
+function useBoardGeometry(
+  loaded: THREE.BufferGeometry,
+  part: ShopPart,
+  board: string,
+): THREE.BufferGeometry {
+  const isTabletop = part.partType === 'tabletop';
+  const boardTile = boardById(board);
+  return useMemo(() => {
+    if (!isTabletop) return loaded;
+    const g = loaded.clone();
+    splitStlByFace(g, STL_FRAME);
+    applyBoardUVs(g, boardTile, STL_FRAME);
+    return g;
+  }, [loaded, isTabletop, boardTile]);
+}
+
 /** The finished part: the server's own mesh, in millimetres. */
-const StlPart: React.FC<{ part: ShopPart }> = ({ part }) => {
-  const geometry = useLoader(STLLoader, part.stlUrl as string);
+const StlPart: React.FC<{ part: ShopPart; board: string }> = ({ part, board }) => {
+  const loaded = useLoader(STLLoader, part.stlUrl as string);
   const transform = usePartTransform(part.pose);
-  const material = usePartMaterial(part);
+  const fallback = usePartMaterial(part, board);
+  const isTabletop = part.partType === 'tabletop';
+  const maxAnisotropy = useThree((s) => s.gl.capabilities.getMaxAnisotropy());
+  const boardMaps = useBoardMaps(isTabletop ? board : null, maxAnisotropy);
+  const geometry = useBoardGeometry(loaded, part, board);
+
+  // Null until the PNGs land, and forever if they never do — the flat colour
+  // still renders the desk.
+  const boardMaterials = useMemo(
+    () =>
+      isTabletop && boardMaps
+        ? buildBoardMaterials(
+          geometry,
+          boardMaps,
+          { metalness: 0.04, emissive: '#000000', emissiveIntensity: 0 },
+          STL_FRAME,
+        )
+        : null,
+    [isTabletop, boardMaps, geometry],
+  );
+
+  // Both are owned by this mount: the material set repeats two materials across
+  // the groups, and the clone is ours alone (`loaded` belongs to the loader).
+  useEffect(() => () => {
+    new Set(boardMaterials).forEach((m) => m?.dispose());
+  }, [boardMaterials]);
+  useEffect(() => () => {
+    if (geometry !== loaded) geometry.dispose();
+  }, [geometry, loaded]);
 
   return (
     <mesh
@@ -102,7 +167,13 @@ const StlPart: React.FC<{ part: ShopPart }> = ({ part }) => {
       castShadow
       receiveShadow
     >
-      <meshStandardMaterial {...material} />
+      {boardMaterials ? (
+        boardMaterials.map((m, i) => (
+          <primitive key={i} object={m} attach={`material-${i}`} />
+        ))
+      ) : (
+        <meshStandardMaterial {...fallback} />
+      )}
     </mesh>
   );
 };
@@ -137,21 +208,60 @@ function boxSize(part: ShopPart): [number, number, number] | null {
   return [w, d, t];
 }
 
-const BoxPart: React.FC<{ part: ShopPart }> = ({ part }) => {
+const BoxPart: React.FC<{ part: ShopPart; board: string }> = ({ part, board }) => {
   const transform = usePartTransform(part.pose);
-  const material = usePartMaterial(part);
+  const fallback = usePartMaterial(part, board);
   const size = useMemo(() => boxSize(part), [part]);
-  if (!size) return null;
+  const isTabletop = part.partType === 'tabletop';
+  const boardTile = boardById(board);
+  const maxAnisotropy = useThree((s) => s.gl.capabilities.getMaxAnisotropy());
+  const boardMaps = useBoardMaps(isTabletop ? board : null, maxAnisotropy);
+
+  // The box is in metres, so its UVs are authored in METRE_FRAME — the same
+  // pair `ModelLoader`'s ProceduralPart uses. BoxGeometry already carries six
+  // groups, which is exactly what the per-face material needs.
+  const geometry = useMemo(() => {
+    if (!size) return null;
+    const g = new THREE.BoxGeometry(size[0], size[1], size[2]);
+    if (isTabletop) applyBoardUVs(g, boardTile, METRE_FRAME);
+    return g;
+  }, [size, isTabletop, boardTile]);
+
+  const boardMaterials = useMemo(
+    () =>
+      geometry && isTabletop && boardMaps
+        ? buildBoardMaterials(
+          geometry,
+          boardMaps,
+          { metalness: 0.04, emissive: '#000000', emissiveIntensity: 0 },
+          METRE_FRAME,
+        )
+        : null,
+    [geometry, isTabletop, boardMaps],
+  );
+
+  useEffect(() => () => {
+    new Set(boardMaterials).forEach((m) => m?.dispose());
+  }, [boardMaterials]);
+  useEffect(() => () => geometry?.dispose(), [geometry]);
+
+  if (!geometry) return null;
 
   return (
     <mesh
+      geometry={geometry}
       position={transform.position}
       rotation={transform.rotation}
       castShadow
       receiveShadow
     >
-      <boxGeometry args={size} />
-      <meshStandardMaterial {...material} />
+      {boardMaterials ? (
+        boardMaterials.map((m, i) => (
+          <primitive key={i} object={m} attach={`material-${i}`} />
+        ))
+      ) : (
+        <meshStandardMaterial {...fallback} />
+      )}
     </mesh>
   );
 };
@@ -163,8 +273,8 @@ const BoxPart: React.FC<{ part: ShopPart }> = ({ part }) => {
  * component, because `StlPart` calls `useLoader` — a hook, so it cannot sit
  * behind a condition.
  */
-const Part: React.FC<{ part: ShopPart }> = ({ part }) =>
-  part.stlUrl ? <StlPart part={part} /> : <BoxPart part={part} />;
+const Part: React.FC<{ part: ShopPart; board: string }> = ({ part, board }) =>
+  part.stlUrl ? <StlPart part={part} board={board} /> : <BoxPart part={part} board={board} />;
 
 const FOV = 42;
 
@@ -300,7 +410,11 @@ class ViewerBoundary extends Component<
   }
 }
 
-const ShopViewer: React.FC<{ model: ShopModel }> = ({ model }) => {
+const ShopViewer: React.FC<{ model: ShopModel; templateId: string; board: string }> = ({
+  model,
+  templateId,
+  board,
+}) => {
   const t = useT();
 
   /**
@@ -320,6 +434,14 @@ const ShopViewer: React.FC<{ model: ShopModel }> = ({ model }) => {
   if (frame.current === null) frame.current = frameFor(model.dimensions, 1);
   const frozen = frame.current;
 
+  /**
+   * The joints, recomputed as the piece changes size so the hardware follows the
+   * sliders. Like the parts themselves these are the SERVER's numbers through
+   * the shared frame math — see `shopBrackets`.
+   */
+  const brackets = useMemo(() => shopBrackets(model, templateId), [model, templateId]);
+  const dropY = -((model.dimensions?.height ?? 750) * MM);
+
   return (
     <ViewerBoundary
       modelId={model.modelId}
@@ -328,7 +450,12 @@ const ShopViewer: React.FC<{ model: ShopModel }> = ({ model }) => {
       <Canvas
         shadows="soft"
         dpr={[1, 2]}
-        gl={{ antialias: true }}
+        // `preserveDrawingBuffer` is for the list step's image export: the
+        // canvas is read with `toBlob` long after the frame that drew it, and
+        // without this the drawing buffer has already been presented and
+        // cleared, so the file comes out empty. The cost is one extra copy per
+        // frame on a pane that is already the page's most expensive view.
+        gl={{ antialias: true, preserveDrawingBuffer: true }}
         camera={{ position: frozen.position, fov: FOV, near: 0.05, far: 60 }}
         onCreated={({ camera, size }) => {
           const fitted = frameFor(model.dimensions, size.width / Math.max(1, size.height));
@@ -342,8 +469,11 @@ const ShopViewer: React.FC<{ model: ShopModel }> = ({ model }) => {
         <Suspense fallback={null}>
           <group>
             {model.parts.map((part) => (
-              <Part key={part.name} part={part} />
+              <Part key={part.name} part={part} board={board} />
             ))}
+            {/* Own Suspense: the bracket meshes are extra fetches and must not
+                hold the furniture hostage. */}
+            <ShopBracketSet brackets={brackets} dropY={dropY} />
           </group>
         </Suspense>
         <OrbitControls

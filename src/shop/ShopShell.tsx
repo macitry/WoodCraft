@@ -3,7 +3,9 @@ import { GlassContent, GlassScene, GlassSurface } from '@glass-sdk/liquid-glass'
 import type { GlassDiagnostic } from '@glass-sdk/liquid-glass';
 import LangToggle from '../components/LangToggle';
 import { useT } from '../i18n';
+import { textureLabel } from '../i18n/names';
 import type { DictKey } from '../i18n/dict';
+import { boardById } from '../materials/boardRegistry';
 import { SHOP_STEPS, useShopStore, type ShopStep } from './shopStore';
 import { templateName } from './labels';
 import ShopViewer from './ShopViewer';
@@ -63,6 +65,7 @@ const ShopShell: React.FC = () => {
   const template = useShopStore((s) => s.template);
   const values = useShopStore((s) => s.values);
   const profile = useShopStore((s) => s.profile);
+  const board = useShopStore((s) => s.board);
   const model = useShopStore((s) => s.model);
   const building = useShopStore((s) => s.building);
   const buildFailed = useShopStore((s) => s.buildFailed);
@@ -241,9 +244,20 @@ const ShopShell: React.FC = () => {
                   // remount per solve would reset the camera on every frame of a
                   // drag, which is both expensive and exactly wrong: the camera
                   // holds still precisely so the SIZE change is what you see.
-                  <ShopViewer key={template?.id ?? 'none'} model={model} />
+                  <ShopViewer
+                    key={template?.id ?? 'none'}
+                    model={model}
+                    templateId={template?.id ?? 'basic-desk'}
+                    board={board}
+                  />
                 ) : (
-                  <div className="shop-view-empty">{t('shop.view.empty')}</div>
+                  // Two different silences. With no piece chosen there is
+                  // nothing to draw and the customer has to act; with one
+                  // chosen the solver is simply on its way, and "pick a piece"
+                  // would be telling them to do what they just did.
+                  <div className="shop-view-empty">
+                    {template ? t('shop.view.solving') : t('shop.view.empty')}
+                  </div>
                 )}
               </div>
 
@@ -306,6 +320,10 @@ const ShopShell: React.FC = () => {
               <span className="shop-foot-chip">
                 <span>{t('shop.foot.profile')}</span>
                 <span data-shop-summary="profile">{profile}</span>
+              </span>
+              <span className="shop-foot-chip">
+                <span>{t('shop.foot.board')}</span>
+                <span data-shop-summary="board">{textureLabel(boardById(board))}</span>
               </span>
             </GlassSurface>
 

@@ -1,11 +1,16 @@
 import { useMemo } from 'react';
 import { useT } from '../../i18n';
-import { materialName } from '../../i18n/names';
+import { materialName, textureLabel } from '../../i18n/names';
+import { boardById } from '../../materials/boardRegistry';
 import { bomToCsv, bomToXlsx } from '../../utils/bomExport';
 import { downloadFile } from '../../utils/download';
 import { useShopStore } from '../shopStore';
+import { bomSheetBlob } from '../bomImage';
 import { shopBomRows } from '../bomRows';
-import { partName, partTypeLabel, templateName } from '../labels';
+import { shopBrackets } from '../shopBrackets';
+import { DEFAULT_ACCESSORY_KIT_ID, accessoryKitById } from '../../utils/accessoryKits';
+import { partTypeLabel, templateName } from '../labels';
+import type { ShopBom, ShopModel } from '../shopApi';
 
 /**
  * Step three: what it is made of, and the file you take away.
@@ -35,16 +40,34 @@ const BomStep: React.FC = () => {
   const build = useShopStore((s) => s.build);
   const template = useShopStore((s) => s.template);
   const profile = useShopStore((s) => s.profile);
+  const board = useShopStore((s) => s.board);
+  const model = useShopStore((s) => s.model);
+  const values = useShopStore((s) => s.values);
 
   const entries = bom?.entries ?? [];
 
   // `t` is a dependency on purpose: the rows carry translated names, so they are
-  // rebuilt when the language flips. `shopBomRows` is cheap and the list is nine
-  // rows long.
-  const rows = useMemo(
-    () => (bom ? shopBomRows(bom.entries, profile, t) : []),
-    [bom, profile, t],
-  );
+  // rebuilt when the language flips. The bracket set is the same one the viewer
+  // draws, and the fasteners are counted through the editor's own
+  // `hardwareBomRows`, so the list and the exported file carry the hardware the
+  // 3D shows rather than stopping at the bare frame.
+  const rows = useMemo(() => {
+    if (!bom) return [];
+    const bracketSource = bracketModel(model, bom, values, profile);
+    const brackets = bracketSource && template
+      ? shopBrackets(bracketSource, template.id)
+      : [];
+    return shopBomRows(
+      bom.entries,
+      profile,
+      t,
+      {
+        brackets,
+        kit: accessoryKitById(DEFAULT_ACCESSORY_KIT_ID),
+      },
+      board,
+    );
+  }, [bom, profile, t, model, template, values, board]);
 
   const fileBase = template ? templateName(t, template.id, template.name) : 'WoodCraft';
 
@@ -122,6 +145,70 @@ const BomStep: React.FC = () => {
     bom.totalMassKg ??
     entries.reduce((sum, e) => sum + (e.massKg ?? 0) * (e.quantity || 1), 0);
 
+  // The picture is the sheet a customer forwards on: the render on top, the
+  // same rows the table and the files carry underneath. A picture alone makes
+  // the recipient ask what the parts are; a list alone loses the view.
+  //
+  // The render is READ from the viewer's canvas rather than redrawn — that is
+  // the view the customer chose, at the pane's own pixel density — which is
+  // why `ShopViewer` sets `preserveDrawingBuffer`: the frame was drawn before
+  // this click and would otherwise be gone.
+  //
+  // Prices stay out of the sheet for the reason they stay out of the files: the
+  // server has none, and a quote of zero is worse than no quote.
+  const exportImage = async () => {
+    const canvas = document.querySelector<HTMLCanvasElement>('[data-shop-viewer] canvas');
+    if (!canvas) {
+      window.alert(t('shop.bom.imageFailed'));
+      return;
+    }
+    const boardLabel = textureLabel(boardById(board));
+    const size = [values.width, values.depth, values.height]
+      .map((n) => n ?? '—')
+      .join(' × ');
+    const blob = await bomSheetBlob({
+      canvas,
+      title: fileBase,
+      subtitle: `${size} mm · ${t('shop.size.profile.title')} ${profile} · ${t('shop.size.board.title')} ${boardLabel}`,
+      sectionTitle: t('shop.bom.title'),
+      columns: [
+        t('shop.bom.col.name'),
+        t('shop.bom.col.type'),
+        t('shop.bom.col.material'),
+        t('shop.bom.col.spec'),
+        t('shop.bom.col.length'),
+        t('shop.bom.col.qty'),
+        t('shop.bom.col.mass'),
+      ],
+      // Mass comes from the server's entry, exactly as the table shows it. It
+      // is NOT `row.note`: the note is a mass string on the frame rows but the
+      // kit's name on hardware rows, and the sheet would print 「Standard…」 in
+      // the mass column for every bolt.
+      rows: rows.map((row, i) => {
+        const entry = bom.entries[i];
+        return [
+          row.part,
+          partTypeLabel(t, row.type),
+          materialName(row.material, row.material),
+          row.profile || '—',
+          row.lengthMm > 0 ? String(row.lengthMm) : '—',
+          String(row.qty),
+          entry && entry.massKg !== null ? `${entry.massKg.toFixed(3)} kg` : '—',
+        ];
+      }),
+      footer: `${t('shop.bom.massTotal')} ${massTotal.toFixed(3)} kg · ${t('shop.bom.imageNoPrice')}`,
+    });
+    if (!blob) {
+      window.alert(t('shop.bom.imageFailed'));
+      return;
+    }
+    downloadFile(
+      `${fileBase} ${t('shop.bom.imageName')}.png`,
+      new Uint8Array(await blob.arrayBuffer()),
+      'image/png',
+    );
+  };
+
   return (
     <div className="shop-scroll">
       <h2 className="shop-h1">{t('shop.bom.title')}</h2>
@@ -141,18 +228,23 @@ const BomStep: React.FC = () => {
             <th className="num">{t('shop.bom.col.subtotal')}</th>
           </tr>
         </thead>
-        <tbody data-shop-bom-rows={entries.length}>
-          {entries.map((entry, i) => {
-            const row = rows[i];
+        <tbody data-shop-bom-rows={rows.length}>
+          {rows.map((row, i) => {
+            // The first rows are the server's own, in order; brackets and
+            // hardware are appended after them and have no server entry (and
+            // therefore no mass).
+            const entry = bom.entries[i];
             return (
-              <tr key={entry.name}>
-                <td className="shop-table-name">{partName(t, entry.name)}</td>
-                <td>{partTypeLabel(t, entry.partType)}</td>
-                <td>{materialName(entry.material, entry.material)}</td>
-                <td>{row?.profile || '—'}</td>
-                <td className="num">{row && row.lengthMm > 0 ? row.lengthMm : '—'}</td>
-                <td className="num">{entry.quantity}</td>
-                <td className="num">{entry.massKg !== null ? entry.massKg.toFixed(3) : '—'}</td>
+              <tr key={`${row.type}-${row.part}-${i}`}>
+                <td className="shop-table-name">{row.part}</td>
+                <td>{partTypeLabel(t, row.type)}</td>
+                <td>{materialName(row.material, row.material)}</td>
+                <td>{row.profile || '—'}</td>
+                <td className="num">{row.lengthMm > 0 ? row.lengthMm : '—'}</td>
+                <td className="num">{row.qty}</td>
+                <td className="num">
+                  {entry && entry.massKg !== null ? entry.massKg.toFixed(3) : '—'}
+                </td>
                 <td className="num" data-shop-price="0.00">
                   0.00
                 </td>
@@ -198,11 +290,63 @@ const BomStep: React.FC = () => {
         >
           <span className="shop-size-cap">{t('shop.bom.export.csv')}</span>
         </button>
+        <button
+          type="button"
+          className="shop-size"
+          data-shop-export="png"
+          style={{ maxWidth: 200 }}
+          onClick={exportImage}
+        >
+          <span className="shop-size-cap">{t('shop.bom.export.png')}</span>
+        </button>
       </div>
 
       <p className="shop-table-note">{t('shop.bom.exportNote')}</p>
     </div>
   );
 };
+
+/**
+ * The model the bracket generator should see.
+ *
+ * Normally that is the live model — the one the viewer draws — so the list
+ * describes exactly the picture beside it. But the list is answered by a
+ * FINISHED build while the viewer may already hold a newer solver-only preview;
+ * when there is no live model at all, the BOM's own entries carry the same part
+ * ids and types (all the generator reads) and the slider values supply the
+ * frame dimensions. Returning null means there is nothing to place brackets on
+ * and the list stays frame-only rather than inventing joints.
+ */
+function bracketModel(
+  model: ShopModel | null,
+  bom: ShopBom,
+  values: Record<string, number>,
+  profile: string,
+): ShopModel | null {
+  if (model) return model;
+  if (bom.entries.length === 0) return null;
+  return {
+    modelId: '',
+    name: bom.furnitureName,
+    status: 'full',
+    parts: bom.entries.map((entry) => ({
+      name: entry.name,
+      partType: entry.partType,
+      profile,
+      material: entry.material,
+      dimensions: entry.dimensions,
+      massKg: entry.massKg,
+      stlUrl: null,
+      pose: null,
+    })),
+    dimensions: {
+      width: values.width,
+      depth: values.depth,
+      height: values.height,
+      tabletop_thickness: values.tabletop_thickness,
+    },
+    message: null,
+  };
+}
 
 export default BomStep;
