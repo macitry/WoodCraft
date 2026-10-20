@@ -237,6 +237,13 @@ interface ModelState {
    *  remember which one it is, and then the two fields can disagree. */
   sceneId: SceneId | null;
 
+  /** Exploded view: parts separated along their assembly directions.
+   *
+   *  Like `sceneId`, this is a picture of the model, not a property of it:
+   *  session-only, never persisted, and it touches no vertex, BOM row or
+   *  export. The camera's fit scale reads it too (see `CameraController`). */
+  exploded: boolean;
+
   // Mate (SolidWorks-style assembly)
   mateState: MateState;
   /** ID of the bracket being mated. */
@@ -314,6 +321,7 @@ interface ModelState {
   setShowFasteners: (v: boolean) => void;
   setShowInternalFasteners: (v: boolean) => void;
   setSceneId: (id: SceneId | null) => void;
+  setExploded: (exploded: boolean) => void;
   // Mate actions
   startMate: (bracketId: string) => void;
   cancelMate: () => void;
@@ -383,6 +391,7 @@ export const useModelStore = create<ModelState>((set, get) => ({
   showFasteners: true,
   showInternalFasteners: true,
   sceneId: DEFAULT_SCENE_ID,
+  exploded: false,
   tabletopTexture: DEFAULT_TABLETOP_TEXTURE,
   customBoards: [],
   currentParams: {
@@ -821,6 +830,7 @@ export const useModelStore = create<ModelState>((set, get) => ({
   setShowFasteners: (v) => set({ showFasteners: v }),
   setShowInternalFasteners: (v) => set({ showInternalFasteners: v }),
   setSceneId: (id) => set({ sceneId: id }),
+  setExploded: (exploded) => set({ exploded }),
 
   // ---- Mate workflow ----
   mateState: 'idle',

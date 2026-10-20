@@ -67,6 +67,8 @@ export const zh = {
   'view.3d': '3D',
   'view.plan': '平面图',
   'view.orbitHint': '拖动旋转 · 滚轮缩放 · 右键平移',
+  'view.explode': '爆炸图',
+  'view.explodeHint': '把零件沿装配方向分开，连接件跟着走',
 
   // --- scenes (the main viewer's room picker) ----------------------------
   'scene.label': '场景',
@@ -143,6 +145,8 @@ export const en: Record<CommonKey, string> = {
   'view.3d': '3D',
   'view.plan': 'Plan',
   'view.orbitHint': 'Drag to rotate · Scroll to zoom · Right-drag to pan',
+  'view.explode': 'Exploded',
+  'view.explodeHint': 'Separate the parts along their assembly directions; connectors follow',
 
   'scene.label': 'Scene',
   'scene.hint': 'See the piece in a different room',

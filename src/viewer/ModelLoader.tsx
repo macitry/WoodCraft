@@ -1,6 +1,6 @@
-import { useMemo, useEffect, Suspense, useRef } from 'react';
+import { useMemo, useEffect, useState, Suspense, useRef } from 'react';
 import * as THREE from 'three';
-import { useLoader, useThree } from '@react-three/fiber';
+import { useFrame, useLoader, useThree } from '@react-three/fiber';
 import { STLLoader } from 'three-stdlib';
 import type { FurnitureModel, Component, TabletopHole, BracketInstance } from '../types/furniture';
 import type { DxfTabletopShape } from '../utils/dxfImport';
@@ -11,6 +11,7 @@ import { FastenerSet } from './MainFastenerRenderer';
 import { applyBoardUVs, buildBoardMaterials, splitStlByFace, useBoardMaps, METRE_FRAME, STL_FRAME } from '../materials/boardMaterial';
 import { boardById } from '../materials/boardRegistry';
 import type { TabletopTexture } from '../materials/tabletopTextures';
+import { computeFrameLayout } from './frameLayout';
 
 const { Euler, Quaternion } = THREE;
 
@@ -537,100 +538,6 @@ interface PartRendererProps {
   onClick: () => void;
 }
 
-/**
- * Frame-style furniture layout with configurable inset.
- *
- * All positions are Three.js world coords (meters), Y=up.
- */
-function computeFrameLayout(
-  model: FurnitureModel,
-  part: Component,
-  layout: { insetRatioX: number; insetRatioZ: number; profileSize: number; crossBeamHeightRatio: number },
-): { worldPosition: [number, number, number]; zScale: number; xyScale?: [number, number] } | null {
-  const w = getParam(model, 'width', 1200);
-  const d = getParam(model, 'depth', 600);
-  const h = getParam(model, 'height', 750);
-  const tt = getParam(model, 'tabletop_thickness', 18);
-  const ps = layout.profileSize;
-
-  const insetX = w * layout.insetRatioX;
-  const insetZ = d * layout.insetRatioZ;
-  const frameW = w - insetX * 2;
-  const frameD = d - insetZ * 2;
-
-  const extrusionLen = part.dimensions?.extrusion_length ?? part.dimensions?.length;
-
-  // --- Tabletop ---
-  if (part.partType === 'tabletop') {
-    const origW = part.dimensions?.width ?? part.dimensions?.tabletop_width ?? w;
-    const origD = part.dimensions?.depth ?? part.dimensions?.tabletop_depth ?? d;
-    const origT = part.dimensions?.thickness ?? part.dimensions?.tabletop_thickness ?? tt;
-    return {
-      worldPosition: [0, mm(h - tt / 2), 0],
-      zScale: origT > 0 ? tt / origT : 1,
-      xyScale: origW > 0 && origD > 0 ? [w / origW, d / origD] : undefined,
-    };
-  }
-
-  // --- Beams ---
-  if (part.partType === 'beam' && extrusionLen) {
-    const isWidthBeam = part.id.includes('front') || part.id.includes('back');
-    const beamY = mm(h - tt - ps / 2);
-    // Both pairs fit between the legs — the solver's `- 2 * ps` on each.
-    const targetLen = (isWidthBeam ? frameW : frameD) - 2 * ps;
-    const beamZ = d / 2 - insetZ - ps / 2;
-    const beamX = w / 2 - insetX - ps / 2;
-    let bx = 0, bz = 0;
-    if (part.id === 'beam_front')  bz = mm(beamZ);
-    if (part.id === 'beam_back')   bz = -mm(beamZ);
-    if (part.id === 'beam_left')   bx = mm(beamX);
-    if (part.id === 'beam_right')  bx = -mm(beamX);
-    return { worldPosition: [bx, beamY, bz], zScale: targetLen / extrusionLen };
-  }
-
-  // --- Legs ---
-  if (part.partType === 'leg' && extrusionLen) {
-    const legH = h - tt;
-    const lx = w / 2 - insetX - ps / 2;
-    const lz = d / 2 - insetZ - ps / 2;
-    let px = 0, pz = 0;
-    if (part.id.includes('front_left'))  { px = mm(lx); pz = mm(lz); }
-    if (part.id.includes('front_right')) { px = -mm(lx); pz = mm(lz); }
-    if (part.id.includes('back_left'))   { px = mm(lx); pz = -mm(lz); }
-    if (part.id.includes('back_right'))  { px = -mm(lx); pz = -mm(lz); }
-    return { worldPosition: [px, mm(legH / 2), pz], zScale: legH / extrusionLen };
-  }
-
-  // --- Cross beams: additional horizontal rails between leg pairs ---
-  if (part.partType === 'cross_beam' && extrusionLen) {
-    // The ratio is measured on the clear leg below the rail band, one section
-    // shorter than the leg itself — the solver's `clear_leg`.
-    const clearLeg = h - tt - ps;
-    const ratio = layout.crossBeamHeightRatio;
-    const beamCY = Math.max(ps / 2, ratio * (clearLeg - ps / 2));
-    const beamY = mm(beamCY);
-
-    const isFrontBack = part.id.includes('front') || part.id.includes('back');
-    // Each rail spans its own dimension and fits between the legs.
-    const targetLen = (isFrontBack ? frameW : frameD) - 2 * ps;
-
-    if (isFrontBack) {
-      // Span between front/back legs (runs left-right, along the width)
-      const legZ = d / 2 - insetZ - ps / 2;
-      const bz = part.id.includes('front') ? mm(legZ) : -mm(legZ);
-      return { worldPosition: [0, beamY, bz], zScale: targetLen / (extrusionLen || targetLen) };
-    } else {
-      // Span between left/right legs (runs front-back, along the depth)
-      const legX = w / 2 - insetX - ps / 2;
-      const bx = part.id.includes('left') ? mm(legX) : -mm(legX);
-      return { worldPosition: [bx, beamY, 0], zScale: targetLen / (extrusionLen || targetLen) };
-    }
-  }
-
-  return null;
-}
-
-
 // ============================================================
 // DxfTabletopPart — renders imported DXF tabletop shape
 // ============================================================
@@ -822,7 +729,7 @@ const BracketPart: React.FC<BracketPartProps> = ({
 };
 
 
-const PartRenderer: React.FC<PartRendererProps> = ({
+export const PartRenderer: React.FC<PartRendererProps> = ({
   part,
   model,
   isSelected,
@@ -982,6 +889,94 @@ const UserBracketPart: React.FC<UserBracketPartProps> = ({
 };
 
 // ============================================================
+// Exploded view
+// ============================================================
+
+/** Where a part travels when the exploded view opens, in metres.
+ *
+ *  Directions come from the layout the renderer is already using, never from
+ *  the id: the four templates mirror legs and beams differently (see
+ *  `computeFrameLayout`), and a name-based guess would send some of them
+ *  through the desk. The distance scales with the piece so a 1200 and an 1800
+ *  desk open by the same visual amount. */
+function explodeOffsetFor(
+  part: Component,
+  layout: { worldPosition: [number, number, number] } | null,
+  model: FurnitureModel,
+): [number, number, number] {
+  const w = getParam(model, 'width', 1200) / 1000;
+  const d = getParam(model, 'depth', 600) / 1000;
+  const h = getParam(model, 'height', 750) / 1000;
+  const spread = Math.min(0.30, Math.max(0.10, 0.16 * Math.max(w, d, h)));
+
+  // The board is the one part on the centre line with an obvious direction.
+  if (part.partType === 'tabletop') return [0, spread * 1.25, 0];
+
+  const px = layout?.worldPosition[0] ?? 0;
+  const pz = layout?.worldPosition[2] ?? 0;
+  const len = Math.hypot(px, pz);
+  // A rail exactly on the centre line has no radial direction to travel in;
+  // lifting it is the only honest thing left.
+  const dx = len > 1e-6 ? px / len : 0;
+  const dz = len > 1e-6 ? pz / len : 0;
+
+  if (part.partType === 'leg') {
+    return [dx * spread * 0.75, spread * 0.15, dz * spread * 0.75];
+  }
+  if (part.partType === 'beam' || part.partType === 'cross_beam') {
+    return [dx * spread, spread * 0.30, dz * spread];
+  }
+  return [dx * spread * 0.6, spread * 0.4, dz * spread * 0.6];
+}
+
+/** Translates its children between the assembled and exploded positions.
+ *
+ *  One damped progress value per part, driven from `useFrame`: this project has
+ *  no animation library, and `THREE.MathUtils.damp` is the same shape as the
+ *  camera flights in `CameraController`. The initial position goes to React as
+ *  a stable prop so a re-render mid-flight cannot snap the part back; after
+ *  mount only the imperative loop writes the position. */
+const ExplodeGroup: React.FC<{
+  offset: [number, number, number];
+  children: React.ReactNode;
+}> = ({ offset, children }) => {
+  const ref = useRef<THREE.Group>(null);
+  const exploded = useModelStore((s) => s.exploded);
+  const progress = useRef(exploded ? 1 : 0);
+  const [initialPosition] = useState<[number, number, number]>(() => [
+    offset[0] * progress.current,
+    offset[1] * progress.current,
+    offset[2] * progress.current,
+  ]);
+  const reduceMotion = useMemo(
+    () =>
+      typeof window !== 'undefined' &&
+      window.matchMedia('(prefers-reduced-motion: reduce)').matches,
+    [],
+  );
+
+  useFrame((_, delta) => {
+    const group = ref.current;
+    if (!group) return;
+    const target = exploded ? 1 : 0;
+    progress.current = reduceMotion
+      ? target
+      : THREE.MathUtils.damp(progress.current, target, 9, delta);
+    group.position.set(
+      offset[0] * progress.current,
+      offset[1] * progress.current,
+      offset[2] * progress.current,
+    );
+  });
+
+  return (
+    <group ref={ref} position={initialPosition}>
+      {children}
+    </group>
+  );
+};
+
+// ============================================================
 // ModelLoader — main export
 // ============================================================
 
@@ -991,6 +986,7 @@ const ModelLoader: React.FC<ModelLoaderProps> = ({ model }) => {
   const brackets = useModelStore((s) => s.brackets);
   const selectedBracketId = useModelStore((s) => s.selectedBracketId);
   const selectBracket = useModelStore((s) => s.selectBracket);
+  const cp = useModelStore((s) => s.currentParams);
 
   // Debug logging
   const loggedRef = useRef(false);
@@ -1012,6 +1008,65 @@ const ModelLoader: React.FC<ModelLoaderProps> = ({ model }) => {
   }
 
   const visibleParts = model.components.filter((c) => c.visible);
+
+  // Every visible part's assembled centre and its exploded offset. The
+  // renderer already uses this layout, so the explosion starts from the
+  // positions actually drawn rather than from the solver's other frame.
+  const layoutCfg = {
+    insetRatioX: cp.insetRatioX,
+    insetRatioZ: cp.insetRatioZ,
+    profileSize: 30,
+    crossBeamHeightRatio: cp.crossBeamHeightRatio,
+  };
+  const partOffsets = new Map<string, [number, number, number]>();
+  const partCentres = new Map<string, [number, number, number]>();
+  for (const part of visibleParts) {
+    const layout = computeFrameLayout(model, part, layoutCfg);
+    partOffsets.set(part.id, explodeOffsetFor(part, layout, model));
+    if (layout) partCentres.set(part.id, layout.worldPosition);
+  }
+
+  // A bracket's own pose is a joint anchor, so it has no meaningful direction
+  // of its own. Move it with the parts it connects: the average of their
+  // offsets puts it in the gap, where an exploded assembly drawing would put
+  // the connector. Manually added brackets carry no `connectedParts`; fall back
+  // to the nearest visible part so they cannot be left floating.
+  const offsetForBracket = (bracket: BracketInstance): [number, number, number] => {
+    const connected = bracket.connectedParts
+      .map((id) => partOffsets.get(id))
+      .filter((o): o is [number, number, number] => o !== undefined);
+    if (connected.length > 0) {
+      const sum = connected.reduce<[number, number, number]>(
+        (a, o) => [a[0] + o[0], a[1] + o[1], a[2] + o[2]],
+        [0, 0, 0],
+      );
+      return [
+        sum[0] / connected.length,
+        sum[1] / connected.length,
+        sum[2] / connected.length,
+      ];
+    }
+
+    const bx = bracket.position.x / 1000;
+    const by = bracket.position.y / 1000;
+    const bz = bracket.position.z / 1000;
+    let nearest: [number, number, number] = [0, 0, 0];
+    let nearestD2 = Infinity;
+    for (const part of visibleParts) {
+      const centre = partCentres.get(part.id);
+      const offset = partOffsets.get(part.id);
+      if (!centre || !offset) continue;
+      const dx = centre[0] - bx;
+      const dy = centre[1] - by;
+      const dz = centre[2] - bz;
+      const d2 = dx * dx + dy * dy + dz * dz;
+      if (d2 < nearestD2) {
+        nearestD2 = d2;
+        nearest = offset;
+      }
+    }
+    return nearest;
+  };
 
   // Debug: log bracket positions
   const bracketParts = visibleParts.filter((c) => c.partType === 'bracket');
@@ -1037,33 +1092,37 @@ const ModelLoader: React.FC<ModelLoaderProps> = ({ model }) => {
     <group>
       <GroundPlane />
       {visibleParts.map((part) => (
-        <PartRenderer
-          key={part.id}
-          part={part}
-          model={model}
-          isSelected={selectedComponentId === part.id}
-          onClick={() =>
-            selectComponent(
-              selectedComponentId === part.id ? null : part.id,
-            )
-          }
-        />
-      ))}
-
-      {/* User-defined corner brackets — rendered with real cast bracket STL */}
-      {brackets
-        .filter((b) => b.enabled)
-        .map((bracket) => (
-          <UserBracketPart
-            key={bracket.id}
-            bracket={bracket}
-            isSelected={selectedBracketId === bracket.id}
+        <ExplodeGroup key={part.id} offset={partOffsets.get(part.id)!}>
+          <PartRenderer
+            part={part}
+            model={model}
+            isSelected={selectedComponentId === part.id}
             onClick={() =>
-              selectBracket(
-                selectedBracketId === bracket.id ? null : bracket.id,
+              selectComponent(
+                selectedComponentId === part.id ? null : part.id,
               )
             }
           />
+        </ExplodeGroup>
+      ))}
+
+      {/* User-defined corner brackets — rendered with real cast bracket STL.
+          The wrapper moves the bracket body; `FastenerSet` is nested inside
+          `UserBracketPart`, so the hardware inherits the same translation. */}
+      {brackets
+        .filter((b) => b.enabled)
+        .map((bracket) => (
+          <ExplodeGroup key={bracket.id} offset={offsetForBracket(bracket)}>
+            <UserBracketPart
+              bracket={bracket}
+              isSelected={selectedBracketId === bracket.id}
+              onClick={() =>
+                selectBracket(
+                  selectedBracketId === bracket.id ? null : bracket.id,
+                )
+              }
+            />
+          </ExplodeGroup>
         ))}
     </group>
   );

@@ -29,7 +29,7 @@ const MM_TO_M = 0.001;
  *  `useLoader` per URL), so there is no prototype cache any more — but the parts
  *  are still NOT pickable: the bracket itself is what the user selects and drags,
  *  and a fastener that swallowed that click would be a hole in its hit area. */
-const FastenerStl: React.FC<{ fastener: LocalFastener }> = ({ fastener }) => {
+export const FastenerStl: React.FC<{ fastener: LocalFastener }> = ({ fastener }) => {
   const { spec } = fastener;
   const size = spec.size ?? 'M6';
   if (spec.kind === 't_nut') {

@@ -70,6 +70,7 @@ const Scene: React.FC<SceneProps> = ({ viewPreset, onControlsReady }) => {
   const brackets = useModelStore((s) => s.brackets);
   const cp = useModelStore((s) => s.currentParams);
   const sceneId = useModelStore((s) => s.sceneId);
+  const exploded = useModelStore((s) => s.exploded);
   const controlsRef = useRef<OrbitControlsImpl | null>(null);
 
   // Dev-only, same convention as `__wcDiyScene` / `__wcKitEditorScene`: the
@@ -97,6 +98,11 @@ const Scene: React.FC<SceneProps> = ({ viewPreset, onControlsReady }) => {
 
   // Compute focus target from selection
   const focusTarget = useMemo((): [number, number, number] | null => {
+    // The exploded meshes are no longer where the layout data puts them, so a
+    // selection flight would aim at the assembled position and pull the camera
+    // away from the part the user just clicked. Selecting still highlights.
+    if (exploded) return null;
+
     // Priority: selected bracket > selected component
     if (selectedBracketId) {
       const bracket = brackets.find((b) => b.id === selectedBracketId);
@@ -124,7 +130,7 @@ const Scene: React.FC<SceneProps> = ({ viewPreset, onControlsReady }) => {
     }
 
     return null;
-  }, [selectedComponentId, selectedBracketId, model, brackets, cp]);
+  }, [exploded, selectedComponentId, selectedBracketId, model, brackets, cp]);
 
   if (!model && !isLoading) {
     return (
@@ -153,6 +159,7 @@ const Scene: React.FC<SceneProps> = ({ viewPreset, onControlsReady }) => {
         onMounted={handleControlsMounted}
         focusTarget={focusTarget}
         focusDistance={0.25}
+        fitScale={exploded ? 0.6 : 1}
       />
       {/* The grid and a room say the same thing twice — "here is the floor" —
           and they disagree: the grid is a CAD 8 m square floating 15 mm above

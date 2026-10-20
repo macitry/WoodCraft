@@ -1,4 +1,5 @@
 import { useRef, useState, useEffect, useCallback } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { useModelStore, injectVirtualComponents } from '../store/modelStore';
 import { autoGenerateBrackets } from '../diy/mainBracketAuto';
 import { mockTemplates } from '../mock/exampleModel';
@@ -37,11 +38,14 @@ const Toolbar: React.FC<ToolbarProps> = ({
   onViewMode,
 }) => {
   const t = useT();
+  const navigate = useNavigate();
   const loadModelFromApi = useModelStore((s) => s.loadModelFromApi);
   const model = useModelStore((s) => s.model);
   const isLoading = useModelStore((s) => s.isLoading);
   const sceneId = useModelStore((s) => s.sceneId);
   const setSceneId = useModelStore((s) => s.setSceneId);
+  const exploded = useModelStore((s) => s.exploded);
+  const setExploded = useModelStore((s) => s.setExploded);
   const [templateMenuOpen, setTemplateMenuOpen] = useState(false);
   const [sceneMenuOpen, setSceneMenuOpen] = useState(false);
   const [showBom, setShowBom] = useState(false);
@@ -224,6 +228,49 @@ const Toolbar: React.FC<ToolbarProps> = ({
             </button>
           ))}
         </div>
+      )}
+
+      {/* Exploded view. A viewing state, not a camera preset: it changes where
+          the parts are drawn, so it stands apart from the four preset buttons.
+          Turning it on also switches to the isometric camera — a front or top
+          view hides most of the separation the button exists to show. */}
+      {model && viewMode === '3d' && (
+        <button
+          data-explode={exploded ? '1' : '0'}
+          aria-pressed={exploded}
+          className={`px-2.5 py-1.5 text-xs rounded-md transition-colors cursor-pointer
+            ${exploded
+              ? 'bg-blue-800 text-blue-200'
+              : 'text-neutral-500 hover:text-neutral-300 hover:bg-neutral-900'
+            }`}
+          onClick={() => {
+            const next = !exploded;
+            setExploded(next);
+            if (next) onViewPreset('perspective');
+          }}
+          title={t('view.explodeHint')}
+        >
+          <span className="mr-1" aria-hidden="true">⧉</span>
+          {t('view.explode')}
+        </button>
+      )}
+
+      {/* Assembly steps. Not a view state — it leaves the editor entirely and
+          opens the guide — so it sits beside the explode toggle, after the
+          controls that change what is drawn here. Available in plan view too:
+          how you are looking at the desk has nothing to do with wanting the
+          instructions. */}
+      {model && (
+        <button
+          data-assembly
+          className="px-2.5 py-1.5 text-xs rounded-md text-neutral-400
+            hover:text-white hover:bg-neutral-900 transition-colors cursor-pointer"
+          onClick={() => navigate('/assembly')}
+          title={t('assembly.openHint')}
+        >
+          <span className="mr-1" aria-hidden="true">🧩</span>
+          {t('assembly.open')}
+        </button>
       )}
 
       {/* Scene picker. Sits with the camera presets because it is the same kind

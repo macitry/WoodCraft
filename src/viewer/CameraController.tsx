@@ -22,6 +22,10 @@ interface CameraControllerProps {
   focusTarget?: [number, number, number] | null;
   /** How close to zoom to the focus target (meters, default 0.3). */
   focusDistance?: number;
+  /** Scale the preset camera distance around its target. Values below 1 move
+   *  closer. The exploded view passes 0.6 to fill the frame with the
+   *  separated parts instead of the room around them. */
+  fitScale?: number;
 }
 
 const PRESET_POSITIONS: Record<ViewPreset, { pos: [number, number, number]; target: [number, number, number] }> = {
@@ -37,22 +41,28 @@ const CameraController: React.FC<CameraControllerProps> = ({
   onMounted,
   focusTarget,
   focusDistance = 0.3,
+  fitScale = 1,
 }) => {
   const camera = useThree((state) => state.camera);
-  const prevPreset = useRef<ViewPreset>('perspective');
   const prevFocusTarget = useRef<string>('');
 
   // --- View preset animation ---
+  // No first-render skip: `fitScale` is part of the preset state, and opening
+  // the exploded view has to re-frame even when the preset itself is already
+  // 'perspective'. Re-running the same destination on mount is a no-op.
   useEffect(() => {
-    if (prevPreset.current === viewPreset) return;
-    prevPreset.current = viewPreset;
-
     const preset = PRESET_POSITIONS[viewPreset];
     const controls = controlsRef.current;
     if (!controls) return;
 
-    animateCamera(camera, controls, preset.pos, preset.target, 800);
-  }, [viewPreset, camera, controlsRef]);
+    const [tx, ty, tz] = preset.target;
+    const pos: [number, number, number] = [
+      tx + (preset.pos[0] - tx) * fitScale,
+      ty + (preset.pos[1] - ty) * fitScale,
+      tz + (preset.pos[2] - tz) * fitScale,
+    ];
+    animateCamera(camera, controls, pos, preset.target, 800);
+  }, [viewPreset, fitScale, camera, controlsRef]);
 
   // --- Focus on selection ---
   useEffect(() => {
