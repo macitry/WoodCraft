@@ -12,6 +12,12 @@ import type { AssemblyPlan, AssemblyStep } from './assemblyPlan';
 
 const FLOOR = '#14161b';
 
+/** How long the user's last drag/wheel must be idle before the step's camera
+ *  takes the view back. */
+const USER_HOLD_MS = 1000;
+/** Pointer travel that counts as "the user is orbiting", not a click. */
+const DRAG_SLOP_PX = 4;
+
 /**
  * Flies the camera to the current step's shot.
  *
@@ -21,9 +27,11 @@ const FLOOR = '#14161b';
  * `OrbitControls` is written every frame by this loop and then updated by the
  * controller, exactly as it is there.
  *
- * The user can still orbit after the flight lands. The next step's flight takes
- * over; that is deliberate, because leaving the camera where the user parked it
- * would make the next step's close-up miss the piece.
+ * The user's hand outranks the shot. While the pointer is dragging (or the
+ * wheel is spinning) the flight is cancelled and the step camera stays out of
+ * the way; once that interaction has been quiet for `USER_HOLD_MS` the step's
+ * shot flies in again. A plain click is not a hold — clicking a part still
+ * jumps to its step without the camera pausing first.
  */
 const AssemblyCamera: React.FC<{
   step: AssemblyStep;
@@ -33,8 +41,16 @@ const AssemblyCamera: React.FC<{
   reduceMotion: boolean;
 }> = ({ step, stepIndex, clock, resetNonce, reduceMotion }) => {
   const camera = useThree((s) => s.camera);
+  const gl = useThree((s) => s.gl);
   const controlsRef = useRef<OrbitControlsImpl | null>(null);
   const rafRef = useRef<number | null>(null);
+
+  // True while the user is dragging or wheeling. Kept in state because the
+  // flight effect must re-run the moment it ends; a ref alone would leave the
+  // deferred shot sitting there until some other prop changed.
+  const [userHeld, setUserHeld] = useState(false);
+  const userHeldRef = useRef(false);
+  const holdTimer = useRef<number | null>(null);
 
   // Some steps are two shots: a wide one while the piece is carried in, then a
   // close-up once it has landed. The phase is tied to the step id, so jumping
@@ -60,6 +76,93 @@ const AssemblyCamera: React.FC<{
     };
   }, [scene]);
 
+  // Watch the canvas itself rather than OrbitControls' start/end: `start`
+  // fires on every pointer-down, so a click on a part would hold the camera
+  // for a second for no reason. Only real travel (or a wheel) counts.
+  useEffect(() => {
+    const el = gl.domElement;
+    let down = false;
+    let moved = false;
+    let startX = 0;
+    let startY = 0;
+
+    const clearHold = () => {
+      if (holdTimer.current !== null) {
+        window.clearTimeout(holdTimer.current);
+        holdTimer.current = null;
+      }
+    };
+    const take = () => {
+      clearHold();
+      if (!userHeldRef.current) {
+        userHeldRef.current = true;
+        setUserHeld(true);
+      }
+    };
+    const release = () => {
+      clearHold();
+      holdTimer.current = window.setTimeout(() => {
+        holdTimer.current = null;
+        userHeldRef.current = false;
+        setUserHeld(false);
+      }, USER_HOLD_MS);
+    };
+
+    const onDown = (e: PointerEvent) => {
+      down = true;
+      moved = false;
+      startX = e.clientX;
+      startY = e.clientY;
+    };
+    const onMove = (e: PointerEvent) => {
+      if (!down || moved) return;
+      if (Math.hypot(e.clientX - startX, e.clientY - startY) < DRAG_SLOP_PX) return;
+      moved = true;
+      take();
+    };
+    const onUp = () => {
+      if (!down) return;
+      down = false;
+      if (moved) release();
+      moved = false;
+    };
+    const onWheel = () => {
+      take();
+      release();
+    };
+
+    // The drag can leave the canvas, and OrbitControls then keeps receiving
+    // moves through pointer capture — so the release has to be listened for on
+    // the window, not just on the canvas.
+    el.addEventListener('pointerdown', onDown);
+    window.addEventListener('pointermove', onMove);
+    window.addEventListener('pointerup', onUp);
+    window.addEventListener('pointercancel', onUp);
+    el.addEventListener('wheel', onWheel, { passive: true });
+    return () => {
+      el.removeEventListener('pointerdown', onDown);
+      window.removeEventListener('pointermove', onMove);
+      window.removeEventListener('pointerup', onUp);
+      window.removeEventListener('pointercancel', onUp);
+      el.removeEventListener('wheel', onWheel);
+      clearHold();
+    };
+  }, [gl]);
+
+  // "Reset view" is an explicit request for the step camera, so it overrides a
+  // hold that is still ticking down.
+  const prevReset = useRef(resetNonce);
+  useEffect(() => {
+    if (prevReset.current === resetNonce) return;
+    prevReset.current = resetNonce;
+    if (holdTimer.current !== null) {
+      window.clearTimeout(holdTimer.current);
+      holdTimer.current = null;
+    }
+    userHeldRef.current = false;
+    setUserHeld(false);
+  }, [resetNonce]);
+
   useEffect(() => {
     const controls = controlsRef.current;
     if (!controls) return;
@@ -68,6 +171,10 @@ const AssemblyCamera: React.FC<{
       cancelAnimationFrame(rafRef.current);
       rafRef.current = null;
     }
+
+    // The user has the view. Sit this shot out; the effect runs again when
+    // `userHeld` falls back to false and flies to whatever step is current then.
+    if (userHeld) return;
 
     const endPos = new THREE.Vector3(...shot.position);
     const endTarget = new THREE.Vector3(...shot.target);
@@ -104,15 +211,20 @@ const AssemblyCamera: React.FC<{
         rafRef.current = null;
       }
     };
-  }, [step.id, phase, shot.position, shot.target, resetNonce, reduceMotion, camera]);
+  }, [step.id, phase, shot.position, shot.target, resetNonce, reduceMotion, camera, userHeld]);
 
   // Dev-only, same convention as the editor's `__wcMainControls`.
   useEffect(() => {
     if (!import.meta.env.DEV) return;
-    const w = window as unknown as { __wcAssemblyControls?: unknown };
+    const w = window as unknown as {
+      __wcAssemblyControls?: unknown;
+      __wcAssemblyCameraHeld?: () => boolean;
+    };
     w.__wcAssemblyControls = controlsRef.current;
+    w.__wcAssemblyCameraHeld = () => userHeldRef.current;
     return () => {
       delete w.__wcAssemblyControls;
+      delete w.__wcAssemblyCameraHeld;
     };
   }, []);
 
@@ -215,6 +327,8 @@ export interface AssemblyViewerProps {
   resetNonce: number;
   reduceMotion: boolean;
   progressRef?: React.RefObject<HTMLDivElement | null>;
+  /** Clicking a piece in the scene jumps to the step that installs it. */
+  onPickStep?: (index: number) => void;
 }
 
 const AssemblyViewer: React.FC<AssemblyViewerProps> = ({
@@ -228,6 +342,7 @@ const AssemblyViewer: React.FC<AssemblyViewerProps> = ({
   resetNonce,
   reduceMotion,
   progressRef,
+  onPickStep,
 }) => {
   return (
     <Canvas
@@ -254,6 +369,7 @@ const AssemblyViewer: React.FC<AssemblyViewerProps> = ({
         stepIndex={stepIndex}
         clock={clock}
         reduceMotion={reduceMotion}
+        onPickStep={onPickStep}
       />
       <AssemblyCamera
         step={step}
